@@ -6,7 +6,7 @@ import { competitions } from "@/lib/competitions";
 const CompetitionsPage = () => {
   const active = competitions.filter((c) => c.tag === "LIVE");
   const ending = competitions.filter((c) => c.tag === "Ending Soon");
-  const upcoming = competitions.filter((c) => c.tag === "Upcoming");
+  const upcoming = competitions.filter((c) => c.tag === "Coming Soon");
 
   return (
     <div className="min-h-screen bg-background">
