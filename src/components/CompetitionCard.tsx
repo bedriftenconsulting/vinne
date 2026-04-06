@@ -34,6 +34,8 @@ const CompetitionCard = ({ comp, index = 0 }: { comp: Competition; index?: numbe
                 ? "bg-green-500/90 text-foreground"
                 : comp.tag === "Ending Soon"
                 ? "bg-accent text-accent-foreground"
+                : comp.tag === "Coming Soon"
+                ? "bg-blue-500/90 text-foreground"
                 : "bg-secondary text-secondary-foreground"
             }`}
           >
