@@ -48,8 +48,6 @@ const HeroSection = () => {
   const textY  = useTransform(scrollYProgress, [0, 1], ["0%", "12%"]);
   const fadeOut = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
 
-  const soldPct = Math.round((featured.soldTickets / featured.totalTickets) * 100);
-
   return (
     <section
       ref={ref}
