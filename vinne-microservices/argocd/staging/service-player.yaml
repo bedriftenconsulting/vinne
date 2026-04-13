@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: service-player-staging
+  namespace: argocd
+  labels:
+    environment: staging
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: service-player=ghcr.io/nexalabshq/rand-player:staging
+    argocd-image-updater.argoproj.io/service-player.update-strategy: latest
+    argocd-image-updater.argoproj.io/service-player.allow-tags: regexp:^staging-[a-f0-9]{7}$
+    argocd-image-updater.argoproj.io/service-player.helm.image-name: image.tag
+    argocd-image-updater.argoproj.io/service-player.helm.image-spec: tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: microservices-staging
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  source:
+    repoURL: https://github.com/nexalabshq/rand-microservices
+    targetRevision: staging
+    path: helm/microservices/charts/service-player
+    helm:
+      releaseName: service-player-staging
+      valueFiles:
+        - ../../values.yaml
+        - ../../values-staging.yaml
+      values: |
+        fullnameOverride: service-player-staging

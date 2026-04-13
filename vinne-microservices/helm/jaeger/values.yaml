@@ -1,0 +1,55 @@
+# Jaeger configuration
+namespace: observability
+
+image:
+  repository: jaegertracing/all-in-one
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Deployment configuration
+replicaCount: 1
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    ui:
+      port: 16686
+      targetPort: 16686
+    collector:
+      port: 14268
+      targetPort: 14268
+    otlpHttp:
+      port: 4318
+      targetPort: 4318
+    otlpGrpc:
+      port: 4317
+      targetPort: 4317
+
+# Environment variables
+env:
+  - name: COLLECTOR_ZIPKIN_HOST_PORT
+    value: ":9411"
+  - name: COLLECTOR_OTLP_ENABLED
+    value: "true"
+
+# ExternalName service in microservices-dev namespace for easy access
+externalService:
+  enabled: true
+  namespace: microservices-dev
+
+# Pod configuration
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

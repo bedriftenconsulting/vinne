@@ -1,0 +1,406 @@
+#!/bin/bash
+
+# Pre-commit hook for Rand Lottery Microservices
+# Enforces code quality standards as defined in PRD.md
+
+set -e
+
+echo "🔍 Running pre-commit checks for Rand Lottery Microservices..."
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Track if any check fails
+FAILED=0
+
+# Get the root directory of the project
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Determine if we're in the main repo or directly in microservices
+if [[ "$REPO_ROOT" == *"/randco-microservices" ]]; then
+    # We're directly in the microservices directory
+    cd "$REPO_ROOT"
+    GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.go$' || true)
+elif [ -d "$REPO_ROOT/randco-microservices" ]; then
+    # We're in the parent repo, change to microservices
+    cd "$REPO_ROOT/randco-microservices"
+    GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.go$' | grep '^randco-microservices/' | sed 's|^randco-microservices/||' || true)
+else
+    # Default case
+    cd "$REPO_ROOT"
+    GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.go$' || true)
+fi
+
+# Check for proto file changes
+PROTO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.proto$' || true)
+
+if [ -z "$GO_FILES" ] && [ -z "$PROTO_FILES" ]; then
+    echo "✅ No Go or Proto files to check"
+    exit 0
+fi
+
+echo "📝 Files to check:"
+echo "$GO_FILES" | sed 's/^/  - /'
+echo ""
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# 1. Go Format Check
+echo "🎨 Checking Go formatting..."
+UNFORMATTED=$(gofmt -l $GO_FILES 2>&1 || true)
+if [ -n "$UNFORMATTED" ]; then
+    echo -e "${RED}✗ Go files are not formatted:${NC}"
+    echo "$UNFORMATTED" | sed 's/^/  /'
+    echo -e "${YELLOW}Run: go fmt ./...${NC}"
+    FAILED=1
+else
+    echo -e "${GREEN}✓ Go formatting check passed${NC}"
+fi
+
+# 2. Go Vet Check
+echo "🔎 Running go vet..."
+VET_FAILED=0
+
+# Get unique directories containing changed files
+DIRS_TO_VET=$(echo "$GO_FILES" | xargs -n1 dirname | sort -u)
+
+# Run go vet on each unique directory
+for dir in $DIRS_TO_VET; do
+    # Skip proto directories with separate go.mod files that are imported by parent modules
+    if echo "$dir" | grep -q "/proto$" && [ -f "$dir/go.mod" ]; then
+        echo "  Skipping go vet for proto directory: $dir (separate module)"
+        continue
+    fi
+
+    # Try to find the module root (directory containing go.mod)
+    module_dir="$dir"
+    while [ "$module_dir" != "." ] && [ "$module_dir" != "/" ]; do
+        if [ -f "$module_dir/go.mod" ]; then
+            break
+        fi
+        module_dir=$(dirname "$module_dir")
+    done
+
+    # Run go vet from the module directory
+    if [ -f "$module_dir/go.mod" ]; then
+        # Calculate relative path from module_dir to dir
+        # Remove the module_dir prefix from dir
+        rel_dir="${dir#$module_dir/}"
+        # If rel_dir equals dir, it means module_dir is not a prefix, so use .
+        if [ "$rel_dir" = "$dir" ]; then
+            rel_dir="."
+        fi
+        if ! (cd "$module_dir" && go vet "./$rel_dir" 2>&1); then
+            echo -e "${RED}✗ go vet failed for $dir${NC}"
+            VET_FAILED=1
+        fi
+    else
+        # Fallback: run go vet on the directory directly
+        if ! go vet "./$dir" 2>&1; then
+            echo -e "${RED}✗ go vet failed for $dir${NC}"
+            VET_FAILED=1
+        fi
+    fi
+done
+
+# Also run go vet on the entire module if we can find it, but skip if proto directories exist
+if [ -f "go.mod" ]; then
+    # Check if there are any proto subdirectories with their own go.mod files
+    PROTO_MODULES=$(find . -path "./proto/go.mod" -o -path "./*/proto/go.mod" 2>/dev/null | wc -l)
+    if [ "$PROTO_MODULES" -gt 0 ]; then
+        echo "  Skipping module-wide go vet (proto subdirectories with separate modules detected)"
+    else
+        echo "  Running go vet on entire module..."
+        if ! go vet ./... 2>&1; then
+            echo -e "${RED}✗ go vet failed for module${NC}"
+            VET_FAILED=1
+        fi
+    fi
+fi
+
+if [ $VET_FAILED -eq 0 ]; then
+    echo -e "${GREEN}✓ go vet check passed${NC}"
+else
+    FAILED=1
+fi
+
+# 3. Check for golangci-lint
+if command_exists golangci-lint; then
+    echo "🚨 Running golangci-lint..."
+    # Run golangci-lint only on changed files' directories, but skip proto directories
+    DIRS=$(echo "$GO_FILES" | xargs -n1 dirname | sort -u)
+    LINT_FAILED=0
+    for dir in $DIRS; do
+        # Skip proto directories with separate go.mod files
+        if [ -f "$dir/go.mod" ] && echo "$dir" | grep -q "/proto$"; then
+            echo "  Skipping golangci-lint for proto directory: $dir"
+            continue
+        fi
+        if ! golangci-lint run "./$dir" --timeout=5m 2>/dev/null; then
+            echo -e "${RED}✗ golangci-lint failed for $dir${NC}"
+            LINT_FAILED=1
+        fi
+    done
+    if [ $LINT_FAILED -eq 0 ]; then
+        echo -e "${GREEN}✓ golangci-lint check passed${NC}"
+    else
+        FAILED=1
+    fi
+else
+    echo -e "${YELLOW}⚠ golangci-lint not installed, skipping lint checks${NC}"
+    echo "  Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+fi
+
+# 4. Check for staticcheck
+if command_exists staticcheck; then
+    echo "🔍 Running staticcheck..."
+    # Run staticcheck on the entire module or specific packages
+    STATICCHECK_FAILED=0
+    
+    # Get unique module paths from changed files
+    MODULES=$(for file in $GO_FILES; do
+        # Find the nearest go.mod file
+        dir=$(dirname "$file")
+        while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+            if [ -f "$dir/go.mod" ]; then
+                echo "$dir"
+                break
+            fi
+            dir=$(dirname "$dir")
+        done
+    done | sort -u)
+    
+    if [ -n "$MODULES" ]; then
+        for module in $MODULES; do
+            if ! staticcheck "$module/..." 2>/dev/null; then
+                echo -e "${RED}✗ staticcheck failed for $module${NC}"
+                STATICCHECK_FAILED=1
+            fi
+        done
+    else
+        # Fallback to running on all files if no modules found
+        if ! staticcheck ./... 2>/dev/null; then
+            echo -e "${RED}✗ staticcheck failed${NC}"
+            STATICCHECK_FAILED=1
+        fi
+    fi
+    
+    if [ $STATICCHECK_FAILED -eq 0 ]; then
+        echo -e "${GREEN}✓ staticcheck passed${NC}"
+    else
+        FAILED=1
+    fi
+else
+    echo -e "${YELLOW}⚠ staticcheck not installed, skipping static analysis${NC}"
+    echo "  Install with: go install honnef.co/go/tools/cmd/staticcheck@latest"
+fi
+
+# 5. Check for database migration file format (Goose single-file format)
+echo "📁 Checking migration file format..."
+MIGRATION_FILES=$(echo "$GO_FILES" | grep -E 'migrations/.*\.sql$' || true)
+if [ -n "$MIGRATION_FILES" ]; then
+    for file in $MIGRATION_FILES; do
+        # Check if migration uses single-file format
+        if echo "$file" | grep -qE '\.(up|down)\.sql$'; then
+            echo -e "${RED}✗ Migration file $file uses split format. Use single-file format instead.${NC}"
+            echo "  Migration files should be: YYYYMMDDHHMMSS_description.sql"
+            FAILED=1
+        fi
+        
+        # Check if file contains both Up and Down directives
+        if [ -f "$file" ]; then
+            if ! grep -q "^-- +goose Up" "$file"; then
+                echo -e "${RED}✗ Migration file $file missing '-- +goose Up' directive${NC}"
+                FAILED=1
+            fi
+            if ! grep -q "^-- +goose Down" "$file"; then
+                echo -e "${RED}✗ Migration file $file missing '-- +goose Down' directive${NC}"
+                FAILED=1
+            fi
+        fi
+    done
+    if [ $FAILED -eq 0 ]; then
+        echo -e "${GREEN}✓ Migration file format check passed${NC}"
+    fi
+else
+    echo -e "${GREEN}✓ No migration files to check${NC}"
+fi
+
+# 6. Check repository/service interface patterns
+echo "🏗️  Checking architectural patterns..."
+PATTERN_ISSUES=0
+
+# Check repository files for interface definitions
+REPO_FILES=$(echo "$GO_FILES" | grep -E 'repositories/.*\.go$' | grep -v '_test\.go$' || true)
+if [ -n "$REPO_FILES" ]; then
+    for file in $REPO_FILES; do
+        # Check if repository file contains interface definition
+        if ! grep -qE 'type \w+Repository interface \{' "$file"; then
+            echo -e "${YELLOW}⚠ Repository file $file might be missing interface definition${NC}"
+            echo "  Repositories should define their own interfaces (max 8-10 methods)"
+        fi
+        
+        # Check for NewRepository constructor pattern
+        if ! grep -qE 'func New\w+Repository\(' "$file"; then
+            echo -e "${YELLOW}⚠ Repository file $file might be missing constructor pattern${NC}"
+            echo "  Use pattern: func NewXxxRepository(db *sql.DB) XxxRepository"
+        fi
+    done
+fi
+
+# Check service files for interface definitions
+SERVICE_FILES=$(echo "$GO_FILES" | grep -E 'services/.*\.go$' | grep -v '_test\.go$' || true)
+if [ -n "$SERVICE_FILES" ]; then
+    for file in $SERVICE_FILES; do
+        # Check if service file contains interface definition
+        if ! grep -qE 'type \w+Service interface \{' "$file"; then
+            echo -e "${YELLOW}⚠ Service file $file might be missing interface definition${NC}"
+            echo "  Services should define their own interfaces (max 8-10 methods)"
+        fi
+        
+        # Check for NewService constructor pattern
+        if ! grep -qE 'func New\w+Service\(' "$file"; then
+            echo -e "${YELLOW}⚠ Service file $file might be missing constructor pattern${NC}"
+            echo "  Use pattern: func NewXxxService(deps...) XxxService"
+        fi
+    done
+fi
+
+# 7. Check for sensitive data in code (excluding test files, config files, and scripts)
+echo "🔒 Checking for sensitive data..."
+SENSITIVE_PATTERNS=(
+    "password[[:space:]]*:?=[[:space:]]*['\"][A-Za-z0-9@#\$%^&*]{8,}['\"]"
+    "secret[[:space:]]*:?=[[:space:]]*['\"][A-Za-z0-9]{16,}['\"]"
+    "api[_-]?key[[:space:]]*:?=[[:space:]]*['\"][A-Za-z0-9-]{20,}['\"]"
+    "token[[:space:]]*:?=[[:space:]]*['\"]eyJ[A-Za-z0-9+/=]+['\"]"
+    "private[_-]?key[[:space:]]*:?=[[:space:]]*['\"]-----BEGIN"
+)
+
+SENSITIVE_FOUND=0
+for file in $GO_FILES; do
+    # Skip test files, config files, and scripts
+    if echo "$file" | grep -qE '(_test\.go|/config/|/scripts/|/test_helper\.go)$'; then
+        continue
+    fi
+    
+    # Skip checking field definitions and comparisons (only check assignments with actual values)
+    for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+        if grep -qE "$pattern" "$file"; then
+            echo -e "${RED}✗ Potential sensitive data found in $file${NC}"
+            echo "  Pattern matched: $pattern"
+            SENSITIVE_FOUND=1
+        fi
+    done
+done
+
+if [ $SENSITIVE_FOUND -eq 1 ]; then
+    echo -e "${RED}✗ Sensitive data check failed${NC}"
+    echo "  Never commit passwords, tokens, or API keys directly in code"
+    FAILED=1
+else
+    echo -e "${GREEN}✓ No sensitive data detected${NC}"
+fi
+
+# 8. Check for proper Viper configuration usage
+echo "📋 Checking configuration patterns..."
+CONFIG_FILES=$(echo "$GO_FILES" | grep -E 'config/.*\.go$' || true)
+if [ -n "$CONFIG_FILES" ]; then
+    for file in $CONFIG_FILES; do
+        # Check for os.Getenv usage (should use Viper instead)
+        if grep -q 'os\.Getenv' "$file"; then
+            echo -e "${YELLOW}⚠ File $file uses os.Getenv directly${NC}"
+            echo "  Use Viper configuration management instead"
+        fi
+        
+        # Check for proper Viper setup
+        if ! grep -qE 'viper\.(SetConfigType|AutomaticEnv|SetEnvKeyReplacer)' "$file"; then
+            echo -e "${YELLOW}⚠ File $file might be missing proper Viper setup${NC}"
+        fi
+    done
+fi
+
+# 9. Check for proper error handling in repositories
+echo "⚠️  Checking error handling patterns..."
+if [ -n "$REPO_FILES" ]; then
+    for file in $REPO_FILES; do
+        # Check for proper error wrapping
+        if grep -q 'return err$' "$file" && ! grep -q 'fmt\.Errorf' "$file"; then
+            echo -e "${YELLOW}⚠ Repository $file might not be wrapping errors properly${NC}"
+            echo "  Use fmt.Errorf(\"description: %w\", err) for error context"
+        fi
+    done
+fi
+
+# 10. Check test file placement
+echo "🧪 Checking test file placement..."
+TEST_FILES=$(echo "$GO_FILES" | grep '_test\.go$' || true)
+if [ -n "$TEST_FILES" ]; then
+    for file in $TEST_FILES; do
+        # Check if test file is next to implementation
+        impl_file="${file%_test.go}.go"
+        if [ ! -f "$impl_file" ]; then
+            echo -e "${YELLOW}⚠ Test file $file doesn't have corresponding implementation file${NC}"
+            echo "  Tests should be placed next to implementation files"
+        fi
+    done
+fi
+
+# 11. Check for proper gRPC/proto patterns
+echo "🔌 Checking gRPC patterns..."
+HANDLER_FILES=$(echo "$GO_FILES" | grep -E 'handlers/.*\.go$' || true)
+
+if [ -n "$PROTO_FILES" ]; then
+    for file in $PROTO_FILES; do
+        # Check for proper proto syntax
+        if ! grep -q 'syntax = "proto3"' "$file"; then
+            echo -e "${RED}✗ Proto file $file missing proto3 syntax declaration${NC}"
+            FAILED=1
+        fi
+
+        # Check for proper package declaration (including versioned packages like v1)
+        if ! grep -qE '^package [a-z]+(\.[a-z0-9]+)*;' "$file"; then
+            echo -e "${YELLOW}⚠ Proto file $file has non-standard package declaration${NC}"
+        fi
+
+        # Check for go_package option
+        if ! grep -q 'option go_package' "$file"; then
+            echo -e "${RED}✗ Proto file $file missing go_package option${NC}"
+            FAILED=1
+        fi
+    done
+
+    # 12. Check if proto files need regeneration
+    echo "🔄 Checking proto file generation..."
+
+    # Check if generated files are staged with proto changes
+    GENERATED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.pb\.go$' || true)
+
+    if [ -z "$GENERATED_FILES" ]; then
+        echo -e "${YELLOW}⚠ Proto files changed but no generated .pb.go files staged${NC}"
+        echo "  Run 'make proto' to regenerate proto files"
+        echo "  Then stage the generated files: git add proto/**/*.pb.go"
+        FAILED=1
+    else
+        echo -e "${GREEN}✓ Generated proto files are staged${NC}"
+    fi
+fi
+
+# Final result
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [ $FAILED -ne 0 ]; then
+    echo -e "${RED}✗ Pre-commit checks failed!${NC}"
+    echo "Please fix the issues above before committing."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exit 1
+else
+    echo -e "${GREEN}✓ All pre-commit checks passed!${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exit 0
+fi

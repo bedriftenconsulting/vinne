@@ -1,0 +1,426 @@
+syntax = "proto3";
+
+package payment.v1;
+
+option go_package = "github.com/randco/randco-microservices/services/service-payment/proto/payment/v1;paymentv1";
+
+import "google/protobuf/timestamp.proto";
+
+// PaymentService defines the payment service
+service PaymentService {
+  // Deposits: Mobile Money -> Stake Wallet
+  rpc InitiateDeposit(InitiateDepositRequest) returns (InitiateDepositResponse);
+  rpc GetDepositStatus(GetDepositStatusRequest) returns (GetDepositStatusResponse);
+  rpc VerifyDepositStatus(VerifyDepositStatusRequest) returns (VerifyDepositStatusResponse);
+
+  // Withdrawals: Winning Wallet -> Mobile Money
+  rpc InitiateWithdrawal(InitiateWithdrawalRequest) returns (InitiateWithdrawalResponse);
+  rpc GetWithdrawalStatus(GetWithdrawalStatusRequest) returns (GetWithdrawalStatusResponse);
+
+  // Bank Transfers
+  rpc InitiateBankTransfer(InitiateBankTransferRequest) returns (InitiateBankTransferResponse);
+  rpc GetBankTransferStatus(GetBankTransferStatusRequest) returns (GetBankTransferStatusResponse);
+
+  // Verification (Enquiry)
+  rpc VerifyWallet(VerifyWalletRequest) returns (VerifyWalletResponse);
+  rpc VerifyBankAccount(VerifyBankAccountRequest) returns (VerifyBankAccountResponse);
+  rpc VerifyIdentity(VerifyIdentityRequest) returns (VerifyIdentityResponse);
+
+  // Transaction Management
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse);
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse);
+  rpc CancelTransaction(CancelTransactionRequest) returns (CancelTransactionResponse);
+
+  // Provider Management
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc GetProviderHealth(GetProviderHealthRequest) returns (GetProviderHealthResponse);
+
+  // Webhooks (for provider callbacks)
+  rpc ProcessWebhook(ProcessWebhookRequest) returns (ProcessWebhookResponse);
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+enum TransactionStatus {
+  TRANSACTION_STATUS_UNSPECIFIED = 0;
+  TRANSACTION_STATUS_PENDING = 1;
+  TRANSACTION_STATUS_PROCESSING = 2;
+  TRANSACTION_STATUS_SUCCESS = 3;
+  TRANSACTION_STATUS_FAILED = 4;
+  TRANSACTION_STATUS_VERIFYING = 5;
+  TRANSACTION_STATUS_DUPLICATE = 6;
+}
+
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  TRANSACTION_TYPE_DEPOSIT = 1;      // Mobile Money -> Stake Wallet
+  TRANSACTION_TYPE_WITHDRAWAL = 2;   // Winning Wallet -> Mobile Money
+  TRANSACTION_TYPE_BANK_TRANSFER = 3; // Wallet -> Bank Account
+}
+
+enum WalletProvider {
+  WALLET_PROVIDER_UNSPECIFIED = 0;
+  WALLET_PROVIDER_MTN = 1;
+  WALLET_PROVIDER_TELECEL = 2;
+  WALLET_PROVIDER_AIRTELTIGO = 3;
+}
+
+enum IdentityType {
+  IDENTITY_TYPE_UNSPECIFIED = 0;
+  IDENTITY_TYPE_GHANA_CARD = 1;
+  IDENTITY_TYPE_PASSPORT = 2;
+  IDENTITY_TYPE_DRIVERS_LICENSE = 3;
+}
+
+// ============================================================
+// Deposit Operations
+// ============================================================
+
+message InitiateDepositRequest {
+  string user_id = 1;                    // User initiating deposit
+  string wallet_number = 2;              // Mobile money wallet number
+  WalletProvider wallet_provider = 3;    // MTN, Telecel, AirtelTigo
+  int64 amount = 4;                      // Amount in pesewas
+  string currency = 5;                   // Currency code (GHS)
+  string narration = 6;                  // Transaction narration
+  string reference = 7;                  // Client reference (idempotency key)
+  string customer_name = 8;              // Customer name
+  map<string, string> metadata = 9;      // Additional metadata
+}
+
+message InitiateDepositResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+message GetDepositStatusRequest {
+  string reference = 1;  // Client reference or transaction ID
+}
+
+message GetDepositStatusResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+message VerifyDepositStatusRequest {
+  string transaction_id = 1;  // Optional if reference provided
+  string reference = 2;       // Client reference from original request
+  bool force_refresh = 3;     // Force provider status check (bypass cache)
+}
+
+message VerifyDepositStatusResponse {
+  bool success = 1;
+  string message = 2;
+  TransactionStatusInfo status_info = 3;
+  Transaction transaction = 4;
+}
+
+message TransactionStatusInfo {
+  string transaction_id = 1;
+  string reference = 2;
+  TransactionStatus status = 3;
+  string provider_status_code = 4;  // Raw provider status code
+  google.protobuf.Timestamp requested_at = 5;
+  google.protobuf.Timestamp completed_at = 6;  // Null if still pending
+  string error_message = 7;
+}
+
+// ============================================================
+// Withdrawal Operations
+// ============================================================
+
+message InitiateWithdrawalRequest {
+  string user_id = 1;                    // User initiating withdrawal
+  string wallet_number = 2;              // Mobile money wallet number
+  WalletProvider wallet_provider = 3;    // MTN, Telecel, AirtelTigo
+  int64 amount = 4;                      // Amount in pesewas
+  string currency = 5;                   // Currency code (GHS)
+  string narration = 6;                  // Transaction narration
+  string reference = 7;                  // Client reference (idempotency key)
+  string customer_name = 8;              // Customer name
+  map<string, string> metadata = 9;      // Additional metadata
+}
+
+message InitiateWithdrawalResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+message GetWithdrawalStatusRequest {
+  string reference = 1;  // Client reference or transaction ID
+}
+
+message GetWithdrawalStatusResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+// ============================================================
+// Bank Transfer Operations
+// ============================================================
+
+message InitiateBankTransferRequest {
+  string user_id = 1;                    // User initiating transfer
+  string account_number = 2;             // Bank account number
+  string bank_code = 3;                  // Bank sort code
+  int64 amount = 4;                      // Amount in pesewas
+  string currency = 5;                   // Currency code (GHS)
+  string narration = 6;                  // Transaction narration
+  string reference = 7;                  // Client reference (idempotency key)
+  string beneficiary_name = 8;           // Beneficiary name
+  map<string, string> metadata = 9;      // Additional metadata
+}
+
+message InitiateBankTransferResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+message GetBankTransferStatusRequest {
+  string reference = 1;  // Client reference or transaction ID
+}
+
+message GetBankTransferStatusResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+// ============================================================
+// Verification (Enquiry) Operations
+// ============================================================
+
+message VerifyWalletRequest {
+  string wallet_number = 1;              // Mobile money wallet number
+  WalletProvider wallet_provider = 2;    // MTN, Telecel, AirtelTigo
+  string reference = 3;                  // Request reference
+}
+
+message VerifyWalletResponse {
+  bool success = 1;
+  string message = 2;
+  WalletVerification verification = 3;
+}
+
+message WalletVerification {
+  bool is_valid = 1;
+  string account_name = 2;
+  string wallet_number = 3;
+  string wallet_provider = 4;
+  string reference = 5;
+}
+
+message VerifyBankAccountRequest {
+  string account_number = 1;             // Bank account number
+  string bank_code = 2;                  // Bank sort code
+  string reference = 3;                  // Request reference
+}
+
+message VerifyBankAccountResponse {
+  bool success = 1;
+  string message = 2;
+  BankAccountVerification verification = 3;
+}
+
+message BankAccountVerification {
+  bool is_valid = 1;
+  string account_name = 2;
+  string account_number = 3;
+  string bank_code = 4;
+  string bank_name = 5;
+  string reference = 6;
+}
+
+message VerifyIdentityRequest {
+  IdentityType identity_type = 1;        // GHANA_CARD, PASSPORT, DRIVERS_LICENSE
+  string identity_number = 2;            // Identity document number
+  bool full_kyc = 3;                     // Request full KYC data
+  string reference = 4;                  // Request reference
+}
+
+message VerifyIdentityResponse {
+  bool success = 1;
+  string message = 2;
+  IdentityVerification verification = 3;
+}
+
+message IdentityVerification {
+  bool is_valid = 1;
+  string full_name = 2;
+  google.protobuf.Timestamp date_of_birth = 3;
+  string nationality = 4;
+  string identity_number = 5;
+  google.protobuf.Timestamp card_valid_from = 6;
+  google.protobuf.Timestamp card_valid_to = 7;
+  string reference = 8;
+  map<string, string> kyc_data = 9;      // Additional KYC data if full_kyc = true
+}
+
+// ============================================================
+// Transaction Management
+// ============================================================
+
+message GetTransactionRequest {
+  string reference = 1;  // Client reference or transaction ID
+}
+
+message GetTransactionResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+message ListTransactionsRequest {
+  string user_id = 1;                    // Filter by user ID
+  TransactionType type = 2;              // Filter by transaction type
+  TransactionStatus status = 3;          // Filter by status
+  google.protobuf.Timestamp start_date = 4;  // Filter by date range
+  google.protobuf.Timestamp end_date = 5;
+  int32 page = 6;                        // Page number (default: 1)
+  int32 page_size = 7;                   // Page size (default: 50, max: 100)
+}
+
+message ListTransactionsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Transaction transactions = 3;
+  PaginationMetadata pagination = 4;
+}
+
+message PaginationMetadata {
+  int32 current_page = 1;
+  int32 page_size = 2;
+  int64 total_items = 3;
+  int32 total_pages = 4;
+}
+
+message CancelTransactionRequest {
+  string reference = 1;                  // Client reference or transaction ID
+  string reason = 2;                     // Cancellation reason
+}
+
+message CancelTransactionResponse {
+  bool success = 1;
+  string message = 2;
+  Transaction transaction = 3;
+}
+
+// ============================================================
+// Provider Management
+// ============================================================
+
+message ListProvidersRequest {
+  bool enabled_only = 1;  // Only list enabled providers
+}
+
+message ListProvidersResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Provider providers = 3;
+}
+
+message Provider {
+  string name = 1;
+  string type = 2;
+  bool is_enabled = 3;
+  bool is_healthy = 4;
+  repeated string supported_operations = 5;
+  repeated string supported_currencies = 6;
+  TransactionLimits limits = 7;
+}
+
+message TransactionLimits {
+  int64 min_amount = 1;
+  int64 max_amount = 2;
+  int64 daily_limit = 3;
+  int64 monthly_limit = 4;
+  string currency = 5;
+}
+
+message GetProviderHealthRequest {
+  string provider_name = 1;  // Provider name (empty for all)
+}
+
+message GetProviderHealthResponse {
+  bool success = 1;
+  string message = 2;
+  repeated ProviderHealth health_checks = 3;
+}
+
+message ProviderHealth {
+  string provider_name = 1;
+  bool is_healthy = 2;
+  string circuit_state = 3;              // CLOSED, OPEN, HALF_OPEN
+  int32 failure_count = 4;
+  int32 response_time_ms = 5;
+  google.protobuf.Timestamp last_checked = 6;
+  string error_message = 7;
+}
+
+// ============================================================
+// Webhook Processing
+// ============================================================
+
+message ProcessWebhookRequest {
+  string provider_name = 1;              // Provider name
+  string event_type = 2;                 // Event type
+  bytes payload = 3;                     // Raw webhook payload
+  map<string, string> headers = 4;       // HTTP headers
+}
+
+message ProcessWebhookResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// ============================================================
+// Common Messages
+// ============================================================
+
+message Transaction {
+  string id = 1;                         // Transaction ID
+  string reference = 2;                  // Client reference
+  string provider_transaction_id = 3;    // Provider's transaction ID
+  TransactionType type = 4;
+  TransactionStatus status = 5;
+  int64 amount = 6;                      // Amount in pesewas
+  string currency = 7;
+  string narration = 8;
+
+  // Provider information
+  string provider_name = 9;
+
+  // Source information
+  string source_type = 10;
+  string source_identifier = 11;
+  string source_name = 12;
+
+  // Destination information
+  string destination_type = 13;
+  string destination_identifier = 14;
+  string destination_name = 15;
+
+  // User information
+  string user_id = 16;
+
+  // Error information
+  string error_message = 17;
+  string error_code = 18;
+  int32 retry_count = 19;
+
+  // Timestamps
+  google.protobuf.Timestamp requested_at = 20;
+  google.protobuf.Timestamp completed_at = 21;
+  google.protobuf.Timestamp created_at = 22;
+  google.protobuf.Timestamp updated_at = 23;
+
+  // Metadata
+  map<string, string> metadata = 24;
+}

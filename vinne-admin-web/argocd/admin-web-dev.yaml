@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: admin-web-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: admin-web=ghcr.io/nexalabshq/rand-admin-web:develop
+    argocd-image-updater.argoproj.io/admin-web.update-strategy: latest
+    argocd-image-updater.argoproj.io/admin-web.allow-tags: regexp:^develop-[a-f0-9]{7}$
+    argocd-image-updater.argoproj.io/admin-web.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/admin-web.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/nexalabshq/rand-admin-web
+    targetRevision: develop
+    path: helm/admin-web
+    helm:
+      valueFiles:
+        - values-dev.yaml
+      parameters:
+        - name: image.tag
+          value: develop  # ArgoCD Image Updater will manage this
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: randlottery-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

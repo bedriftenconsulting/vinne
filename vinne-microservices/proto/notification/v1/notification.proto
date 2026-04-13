@@ -1,0 +1,260 @@
+syntax = "proto3";
+package notification.v1;
+
+import "google/protobuf/timestamp.proto";
+option go_package = "github.com/randco/randco-microservices/proto/notification/v1;notificationv1";
+
+
+// notification service handles sending notifications to users via 
+// email, SMS, or push notifications.
+service NotificationService {
+  rpc HealthCheck(EmptyRequest) returns (HealthCheckResponse);
+
+  // Send single email
+  rpc SendEmail(SendEmailRequest) returns (SendResponse);
+
+  // Send single SMS
+  rpc SendSMS(SendSMSRequest) returns (SendResponse);
+
+  // Send bulk emails
+  rpc SendBulkEmail(SendBulkEmailRequest) returns (GenericResponse);
+
+  // Send bulk SMS
+  rpc SendBulkSMS(SendBulkSMSRequest) returns (GenericResponse);
+
+  // Send bulk push notifications
+  rpc SendBulkPush(SendBulkPushRequest) returns (GenericResponse);
+
+  // Send mobile push notification
+  rpc SendMobilePushNotification(SendPushNotificationRequest) returns (SendResponse);
+
+  // Get notification status
+  rpc GetNotificationStatus(GetStatusRequest) returns (NotificationStatus);
+
+  // List notifications
+  rpc ListNotifications(ListRequest) returns (ListResponse);
+
+  // Retry failed notification
+  rpc RetryNotification(RetryRequest) returns (SendResponse);
+
+  // Register device FCM token for push notifications
+  rpc RegisterDeviceToken(RegisterDeviceTokenRequest) returns (RegisterDeviceTokenResponse);
+
+  // Get retailer notifications (for POS app notification history)
+  rpc GetRetailerNotifications(GetRetailerNotificationsRequest) returns (GetRetailerNotificationsResponse);
+
+  // Mark notification as read
+  rpc MarkNotificationAsRead(MarkNotificationAsReadRequest) returns (GenericResponse);
+
+  // Mark all notifications as read
+  rpc MarkAllNotificationsAsRead(MarkAllNotificationsAsReadRequest) returns (GenericResponse);
+
+  // Get unread notification count
+  rpc GetUnreadCount(GetUnreadCountRequest) returns (GetUnreadCountResponse);
+
+}
+
+message EmptyRequest {  
+
+}
+
+message GenericResponse {
+  string message = 1;
+}
+
+message SendPushNotificationRequest {
+  string idempotency_key = 1;
+  string to = 2; // device token
+  string title = 3;
+  string body = 4;
+  map<string, string> data = 5; // additional data
+  Priority priority = 6;
+  string template_id = 7;
+  google.protobuf.Timestamp scheduled_for = 8;
+  map<string, string> variables = 9;
+}
+
+message SendBulkSMSRequest {
+  repeated SendSMSRequest requests = 1;
+  string template_id = 2;
+  google.protobuf.Timestamp scheduled_for = 3; 
+  string content = 4; 
+  string idempotency_key = 5;
+}
+
+message SendBulkPushRequest {
+  repeated SendPushNotificationRequest requests = 1;
+  string template_id = 2;
+  string title = 3;
+  string body = 4;
+  google.protobuf.Timestamp scheduled_for = 5;
+  string idempotency_key = 6;
+}
+
+message SendBulkEmailRequest {
+  repeated SendEmailRequest requests = 1;
+  string template_id = 2;
+  string subject = 3;
+  google.protobuf.Timestamp scheduled_for = 4;
+  string idempotency_key = 5;
+}
+
+
+message SendBulkResponse {
+  repeated SendResponse responses = 1;
+}
+
+message GetStatusRequest {
+  string notification_id = 1;
+}
+
+message NotificationStatus {
+  string notification_id = 1;
+  string status = 2; // "pending", "sent", "failed"
+  string error_message = 3; // if failed
+  google.protobuf.Timestamp sent_at = 4; // timestamp
+}
+
+message HealthCheckResponse {
+  string status = 1; // e.g., "SERVING"
+}
+
+message RetryRequest {
+  string notification_id = 1;
+}
+
+message ListRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  string status = 3; // e.g., "status:failed"
+}
+
+message ListResponse {
+  repeated Notification notifications = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message Notification {
+  string id = 1;
+  string type = 2; // "email", "sms", "push"
+  string to = 3; // email address or phone number or device token
+  string subject = 4; // for email
+  string content = 5;
+  string status = 6; // "pending", "sent", "failed"
+  string error_message = 7; // if failed
+  google.protobuf.Timestamp created_at = 8; // timestamp
+  google.protobuf.Timestamp updated_at = 9; // timestamp
+  Priority priority = 10;
+  google.protobuf.Timestamp sent_at = 11; // timestamp
+}
+
+message SendEmailRequest {
+  string idempotency_key = 1;
+  string to = 2;
+  repeated string cc = 3;
+  repeated string bcc = 4;
+  string subject = 5;
+  string template_id = 6;
+  map<string, string> variables = 7;
+  string html_content = 8; // if not using template
+  string text_content = 9; // if not using template
+  repeated Attachment attachments = 10;
+  Priority priority = 11;
+  google.protobuf.Timestamp scheduled_for = 12; 
+}
+
+message Attachment {
+  string filename = 1;
+  string content_type = 2;
+  bytes data = 3; // base64 encoded
+}
+
+message SendSMSRequest {
+  string idempotency_key = 1;
+  string to = 2;
+  string template_id = 3;
+  map<string, string> variables = 4;
+  string content = 5; // if not using template
+  Priority priority = 6;
+  google.protobuf.Timestamp scheduled_for = 7;
+}
+
+message SendResponse {
+  string notification_id = 1;
+  string status = 2;
+  string message = 3;
+  bool is_duplicate = 4;
+}
+
+message Priority {
+  enum Level {
+    LEVEL_UNSPECIFIED = 0;
+    LEVEL_LOW = 1;
+    LEVEL_NORMAL = 2;
+    LEVEL_HIGH = 3;
+    LEVEL_CRITICAL = 4;
+  }
+  Level level = 1;
+}
+
+// Device token registration messages
+message RegisterDeviceTokenRequest {
+  string retailer_id = 1; // 8-digit retailer code (from JWT context)
+  string device_id = 2; // Android device ID
+  string fcm_token = 3; // Firebase Cloud Messaging token
+  string platform = 4; // 'android' or 'ios'
+  string app_version = 5; // App version
+}
+
+message RegisterDeviceTokenResponse {
+  bool success = 1;
+  string message = 2;
+  string token_id = 3; // UUID of registered token
+}
+
+// Retailer notification messages
+message GetRetailerNotificationsRequest {
+  string retailer_id = 1; // 8-digit retailer code (from JWT context)
+  int32 page = 2;
+  int32 page_size = 3;
+  bool unread_only = 4; // Filter for unread only
+}
+
+message GetRetailerNotificationsResponse {
+  repeated RetailerNotification notifications = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+  int32 unread_count = 6;
+}
+
+message RetailerNotification {
+  string id = 1;
+  string type = 2; // 'stake', 'winning', 'commission', 'low_balance', 'general'
+  string title = 3;
+  string body = 4;
+  int64 amount = 5; // Amount in pesewas (GHS * 100), 0 if not applicable
+  string transaction_id = 6; // Related transaction ID
+  bool is_read = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message MarkNotificationAsReadRequest {
+  string retailer_id = 1; // 8-digit retailer code (from JWT context)
+  string notification_id = 2; // UUID of notification
+}
+
+message MarkAllNotificationsAsReadRequest {
+  string retailer_id = 1; // 8-digit retailer code (from JWT context)
+}
+
+message GetUnreadCountRequest {
+  string retailer_id = 1; // 8-digit retailer code (from JWT context)
+}
+
+message GetUnreadCountResponse {
+  int32 unread_count = 1;
+}

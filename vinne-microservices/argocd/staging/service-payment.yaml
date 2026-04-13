@@ -1,0 +1,63 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: service-payment-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: service-payment=ghcr.io/nexalabshq/rand-payment:staging
+    argocd-image-updater.argoproj.io/service-payment.update-strategy: latest
+    argocd-image-updater.argoproj.io/service-payment.allow-tags: regexp:^staging-[a-f0-9]{7}$
+    argocd-image-updater.argoproj.io/service-payment.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/service-payment.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/nexalabshq/rand-microservices
+    targetRevision: staging
+    path: helm/microservices/charts/service-payment
+    helm:
+      valueFiles:
+        - ../../values.yaml
+        - ../../values-staging.yaml
+      values: |
+        global:
+          registry: ghcr.io
+          imagePrefix: nexalabshq
+          imagePullSecrets:
+            - name: ghcr-secret
+          environment: staging
+          database:
+            host: postgres.database.svc.cluster.local
+            port: 5432
+          redis:
+            host: redis.cache.svc.cluster.local
+            port: 6379
+          kafka:
+            bootstrapServers: kafka-bootstrap.kafka.svc.cluster.local:9092
+          vault:
+            enabled: true
+            address: http://vault.vault.svc.cluster.local:8200
+            authPath: auth/kubernetes
+            role: microservices
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: microservices-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

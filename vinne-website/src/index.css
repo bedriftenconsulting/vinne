@@ -1,0 +1,94 @@
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 10%;
+
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 10%;
+
+    /* RED — used for buttons, CTAs, glows */
+    --primary: 0 80% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    /* GOLD — used for display text in dark hero */
+    --gold: 44 100% 52%;
+    --gold-dim: 44 90% 44%;
+
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 50%;
+
+    --accent: 22 100% 52%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 0 80% 45%;
+
+    --radius: 0.75rem;
+
+    --red-glow: 0 0 28px hsl(0 80% 45% / 0.5);
+    --card-glow: 0 0 24px hsl(0 80% 45% / 0.18);
+
+    --sidebar-background: 0 0% 8%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 0 80% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 14%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 0 0% 18%;
+    --sidebar-ring: 0 80% 45%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground font-body antialiased; }
+  h1, h2, h3, h4, h5, h6 { @apply font-heading font-bold tracking-tight; }
+}
+
+@layer utilities {
+  /* Gold text for hero headlines */
+  .text-gold {
+    color: hsl(44 100% 52%);
+  }
+  .text-gradient-gold {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(48 100% 58%), hsl(38 100% 50%));
+  }
+  /* Red glow utility */
+  .glow-red { box-shadow: var(--red-glow); }
+  .glow-card { box-shadow: var(--card-glow); }
+
+  /* CTA button glow */
+  .btn-glow {
+    box-shadow: 0 0 22px hsl(0 80% 45% / 0.5), 0 0 44px hsl(0 80% 45% / 0.22);
+    transition: box-shadow 0.3s ease;
+  }
+  .btn-glow:hover {
+    box-shadow: 0 0 32px hsl(0 80% 45% / 0.7), 0 0 64px hsl(0 80% 45% / 0.35);
+  }
+
+  /* Light-section cards */
+  .section-light {
+    background: hsl(40 25% 94%);
+  }
+  .card-light {
+    background: hsl(0 0% 100%);
+    color: hsl(0 0% 10%);
+  }
+}

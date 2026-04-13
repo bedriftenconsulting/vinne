@@ -1,0 +1,25 @@
+replicaCount: 1
+
+image:
+  repository: rand-agent-auth
+  tag: develop
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 50052
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+migrations:
+  skip: false

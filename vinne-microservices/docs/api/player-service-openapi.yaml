@@ -1,0 +1,2492 @@
+openapi: 3.0.3
+info:
+  title: Player Service API
+  description: |
+    REST API for player authentication, profile management, wallet operations, and lottery ticket staking.
+    This API exposes all player service functionality through the API Gateway.
+  version: 1.0.0
+  contact:
+    name: RandCo Lottery Platform
+    url: https://randco.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Development server
+  - url: https://api.dev.randlottery.com/api/v1
+    description: Production server
+
+security:
+  - BearerAuth: []
+  - AdminAuth: []
+
+paths:
+  # Public Game Information Endpoints
+  /players/games:
+    get:
+      tags:
+        - Game Information
+      summary: List all active games
+      description: Get a list of all active games available for players to participate in
+      security: []
+      responses:
+        '200':
+          description: Active games retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Game'
+              example:
+                - id: "game-uuid-1"
+                  code: "MON-5/90"
+                  name: "Monday 5/90"
+                  status: "ACTIVE"
+                  description: "Monday lottery game"
+                  ticket_price: 2.0
+                  currency: "GHS"
+                - id: "game-uuid-2"
+                  code: "WED-5/90"
+                  name: "Wednesday 5/90"
+                  status: "ACTIVE"
+                  description: "Wednesday lottery game"
+                  ticket_price: 2.0
+                  currency: "GHS"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/games/{id}:
+    get:
+      tags:
+        - Game Information
+      summary: Get specific game details
+      description: Get detailed information about a specific game including rules and prize structure
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Game UUID
+          example: "game-uuid-1"
+      responses:
+        '200':
+          description: Game details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameDetails'
+              example:
+                id: "game-uuid-1"
+                code: "MON-5/90"
+                name: "Monday 5/90"
+                status: "ACTIVE"
+                description: "Monday lottery game"
+                ticket_price: 2.0
+                currency: "GHS"
+                rules: "Select 5 numbers from 1-90"
+                prize_structure:
+                  first_prize: 1000000
+                  second_prize: 100000
+                  third_prize: 10000
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/games/schedules/weekly:
+    get:
+      tags:
+        - Game Information
+      summary: Get all game schedules for current week
+      description: Get all game schedules for the current week, showing only games players can still buy tickets for
+      security: []
+      parameters:
+        - name: week_start
+          in: query
+          schema:
+            type: string
+            format: date
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+          description: Week start date in YYYY-MM-DD format (defaults to current week)
+          example: "2024-01-15"
+      responses:
+        '200':
+          description: Weekly schedules retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklySchedulesResponse'
+              example:
+                schedules:
+                  - id: "schedule-uuid-1"
+                    game_id: "game-uuid-1"
+                    game_code: "MON-5/90"
+                    game_name: "Monday 5/90"
+                    scheduled_start: "2024-01-15T09:00:00Z"
+                    scheduled_end: "2024-01-15T18:00:00Z"
+                    scheduled_draw: "2024-01-15T19:00:00Z"
+                    frequency: "WEEKLY"
+                    status: "SCHEDULED"
+                week_start: "2024-01-15"
+                server_time: "2024-01-15T10:30:00Z"
+        '400':
+          description: Bad request - invalid week_start format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Public Authentication Endpoints
+  /players/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new player
+      description: Register a new player account with phone number and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterPlayerRequest'
+            example:
+              phone_number: "+233241234567"
+              password: "securePassword123"
+              device_id: "device-123"
+              channel: "mobile"
+              terms_accepted: true
+              marketing_consent: false
+              device_info:
+                device_type: "mobile"
+                os: "Android"
+                os_version: "13"
+                app_version: "1.0.0"
+                user_agent: "RandCoApp/1.0"
+      responses:
+        '200':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterPlayerResponse'
+        '400':
+          description: Bad request - validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/verify-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Verify OTP code
+      description: Verify the OTP code sent during registration
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOTPRequest'
+            example:
+              session_id: "session-123"
+              otp: "123456"
+      responses:
+        '200':
+          description: OTP verification successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyOTPResponse'
+        '400':
+          description: Bad request - invalid OTP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/resend-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Resend OTP code
+      description: Resend the OTP code to the registered phone number
+      security: []
+      parameters:
+        - name: phone_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^\+?[1-9]\d{1,14}$'
+          description: Phone number to resend OTP to
+          example: "+233241234567"
+      responses:
+        '200':
+          description: OTP resent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                message: "OTP resent successfully"
+        '400':
+          description: Bad request - phone number required or player already verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Player not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/login:
+    post:
+      tags:
+        - Authentication
+      summary: Player login
+      description: Authenticate player with phone number and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              phone_number: "+233241234567"
+              password: "securePassword123"
+              device_id: "device-123"
+              channel: "mobile"
+              device_info:
+                device_type: "mobile"
+                os: "Android"
+                os_version: "13"
+                app_version: "1.0.0"
+                user_agent: "RandCoApp/1.0"
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Unauthorized - invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/refresh-token:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Get a new access token using refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+            example:
+              refresh_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      responses:
+        '200':
+          description: Token refresh successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshTokenResponse'
+        '401':
+          description: Unauthorized - invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Password Reset (Public)
+  /players/password-reset/request:
+    post:
+      tags:
+        - Authentication
+      summary: Request password reset
+      description: Initiate password reset by sending an OTP to the registered phone number
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestPasswordResetRequest'
+            example:
+              phone_number: "+233241234567"
+      responses:
+        '200':
+          description: Password reset initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestPasswordResetResponse'
+        '400':
+          description: Bad request - phone number not registered or account inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/password-reset/validate-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Validate password reset OTP
+      description: Validate the OTP code before confirming password reset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidatePasswordResetOTPRequest'
+            example:
+              session_id: "player-uuid"
+              otp: "123456"
+      responses:
+        '200':
+          description: OTP validation response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatePasswordResetOTPResponse'
+        '400':
+          description: Bad request - invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/password-reset/confirm:
+    post:
+      tags:
+        - Authentication
+      summary: Confirm password reset
+      description: Confirm password reset with session ID, OTP, and new password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmPasswordResetRequest'
+            example:
+              session_id: "player-uuid"
+              otp: "123456"
+              new_password: "NewPassword123"
+      responses:
+        '200':
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - invalid OTP or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/password-reset/resend-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Resend password reset OTP
+      description: Resend the password reset OTP to the player's phone number
+      security: []
+      parameters:
+        - name: phone_number
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^\+[1-9]\d{1,14}$'
+          description: Phone number to resend OTP to
+          example: "+233241234567"
+      responses:
+        '200':
+          description: OTP resent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - phone number missing or player not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/ussd/register:
+    post:
+      tags:
+        - Authentication
+      summary: USSD registration
+      description: Register player through USSD channel
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/USSDRegisterRequest'
+            example:
+              phone_number: "+233241234567"
+              password: "securePassword123"
+              session_id: "ussd-session-123"
+      responses:
+        '200':
+          description: USSD registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/USSDAuthResponse'
+        '400':
+          description: Bad request - registration failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/ussd/login:
+    post:
+      tags:
+        - Authentication
+      summary: USSD login
+      description: Login player through USSD channel
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/USSDLoginRequest'
+            example:
+              phone_number: "+233241234567"
+              password: "securePassword123"
+              session_id: "ussd-session-123"
+      responses:
+        '200':
+          description: USSD login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/USSDAuthResponse'
+        '401':
+          description: Unauthorized - invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Authenticated Player Endpoints
+  /players/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Player logout
+      description: Logout player and invalidate tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+            example:
+              refresh_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - logout failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/profile:
+    get:
+      tags:
+        - Profile Management
+      summary: Get player profile
+      description: Retrieve player profile information
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      responses:
+        '200':
+          description: Profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlayerProfile'
+        '404':
+          description: Player not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Profile Management
+      summary: Update player profile
+      description: Update player profile information
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+            example:
+              first_name: "John"
+              last_name: "Doe"
+              email: "john.doe@example.com"
+              date_of_birth: "1990-01-01T00:00:00Z"
+              national_id: "GHA-123456789-0"
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    $ref: '#/components/schemas/PlayerProfile'
+        '400':
+          description: Bad request - update failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/change-password:
+    post:
+      tags:
+        - Profile Management
+      summary: Change password
+      description: Change player password
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+            example:
+              current_password: "oldPassword123"
+              new_password: "newPassword456"
+      responses:
+        '200':
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - password change failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/mobile-money-phone:
+    put:
+      tags:
+        - Profile Management
+      summary: Update mobile money phone
+      description: Update player's mobile money phone number
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePhoneRequest'
+            example:
+              phone_number: "+233241234567"
+              otp: "123456"
+      responses:
+        '200':
+          description: Mobile money phone updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - phone update failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Wallet Operations
+  /players/{id}/deposit:
+    post:
+      tags:
+        - Wallet Operations
+      summary: Initiate deposit
+      description: Initiate a deposit from mobile money to stake wallet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+            example:
+              amount: 10000
+              mobile_money_phone: "+233241234567"
+              payment_method: "MTN"
+      responses:
+        '200':
+          description: Deposit initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositResponse'
+        '400':
+          description: Bad request - deposit initiation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/withdrawal:
+    post:
+      tags:
+        - Wallet Operations
+      summary: Initiate withdrawal
+      description: Initiate a withdrawal from winning wallet to mobile money
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalRequest'
+            example:
+              amount: 5000
+              mobile_money_phone: "+233241234567"
+      responses:
+        '200':
+          description: Withdrawal initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalResponse'
+        '400':
+          description: Bad request - withdrawal initiation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/transactions:
+    get:
+      tags:
+        - Wallet Operations
+      summary: Get transaction history
+      description: Retrieve player's transaction history with optional filters
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Number of transactions per page
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [DEPOSIT, WITHDRAWAL, BET, WIN, REFUND]
+          description: Filter by transaction type
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter transactions from this date
+        - name: to_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter transactions to this date
+      responses:
+        '200':
+          description: Transaction history retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionHistoryResponse'
+        '400':
+          description: Bad request - failed to get transaction history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/wallet/balance:
+    get:
+      tags:
+        - Wallet Operations
+      summary: Get wallet balance
+      description: Retrieve player's wallet balance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      responses:
+        '200':
+          description: Wallet balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletBalanceResponse'
+        '400':
+          description: Bad request - failed to get wallet balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Player Ticket Operations
+  /players/{id}/tickets:
+    post:
+      tags:
+        - Ticket Operations
+      summary: Issue a lottery ticket
+      description: Create a new lottery ticket for the player using their wallet balance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueTicketRequest'
+            example:
+              game_code: "MON-5/90"
+              game_schedule_id: "schedule-uuid-1"
+              draw_number: 1001
+              selected_numbers: [5, 12, 23, 34, 45]
+              bet_lines:
+                - line_number: 1
+                  bet_type: "DIRECT-5"
+                  selected_numbers: [5, 12, 23, 34, 45]
+                  total_amount: 200
+              customer_phone: "+233241234567"
+              customer_email: "player@example.com"
+              payment_method: "WALLET"
+      responses:
+        '201':
+          description: Ticket issued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketResponse'
+        '400':
+          description: Bad request - invalid ticket data or insufficient funds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - player ID mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - Ticket Operations
+      summary: List player tickets
+      description: Get a paginated list of tickets for the authenticated player
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [issued, validated, won, paid, cancelled, expired, void]
+          description: Filter by ticket status
+        - name: game_code
+          in: query
+          schema:
+            type: string
+          description: Filter by game code
+          example: "MON-5/90"
+        - name: schedule_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by game schedule ID
+        - name: draw_number
+          in: query
+          schema:
+            type: integer
+          description: Filter by draw number
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number for pagination
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          description: Number of tickets per page
+      responses:
+        '200':
+          description: Player tickets retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketListResponse'
+        '400':
+          description: Bad request - invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - player ID mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/tickets/{ticket_id}:
+    get:
+      tags:
+        - Ticket Operations
+      summary: Get specific ticket
+      description: Retrieve details of a specific ticket belonging to the player
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+        - name: ticket_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Ticket UUID
+          example: "ticket-uuid-1"
+      responses:
+        '200':
+          description: Ticket retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketResponse'
+        '400':
+          description: Bad request - invalid ticket ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - ticket does not belong to player
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - Ticket Operations
+      summary: Validate ticket
+      description: Validate a ticket and check for winnings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+        - name: ticket_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Ticket UUID
+          example: "ticket-uuid-1"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateTicketRequest'
+            example:
+              validator_id: "player-123"
+              validator_type: "PLAYER"
+      responses:
+        '200':
+          description: Ticket validated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateTicketResponse'
+        '400':
+          description: Bad request - invalid validation request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - ticket does not belong to player
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/tickets/serial/{serial}:
+    get:
+      tags:
+        - Ticket Operations
+      summary: Get ticket by serial number
+      description: Retrieve ticket details using the serial number
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+        - name: serial
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Ticket serial number
+          example: "TKT-12345"
+      responses:
+        '200':
+          description: Ticket retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketResponse'
+        '400':
+          description: Bad request - invalid serial number
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - ticket does not belong to player
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /players/{id}/tickets/{ticket_id}/winnings:
+    get:
+      tags:
+        - Ticket Operations
+      summary: Check ticket winnings
+      description: Check if a ticket has winnings without validating it
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+        - name: ticket_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Ticket UUID
+          example: "ticket-uuid-1"
+      responses:
+        '200':
+          description: Winnings checked successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WinningsResponse'
+        '400':
+          description: Bad request - invalid ticket ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - ticket does not belong to player
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Admin Endpoints
+  /admin/players/{id}:
+    get:
+      tags:
+        - Admin Operations
+      summary: Get player by ID (Admin)
+      description: Retrieve player information by ID (admin only)
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      responses:
+        '200':
+          description: Player information retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  player:
+                    $ref: '#/components/schemas/PlayerProfile'
+        '404':
+          description: Player not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/players/search:
+    get:
+      tags:
+        - Admin Operations
+      summary: Search players (Admin)
+      description: Search players with optional filters (admin only)
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+          description: Search query (phone number, name, email)
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Number of players per page
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, SUSPENDED, BANNED]
+          description: Filter by player status
+      responses:
+        '200':
+          description: Players retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchPlayersResponse'
+        '400':
+          description: Bad request - search failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/players/{id}/suspend:
+    post:
+      tags:
+        - Admin Operations
+      summary: Suspend player (Admin)
+      description: Suspend a player account (admin only)
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspendPlayerRequest'
+            example:
+              reason: "Violation of terms of service"
+              suspended_by: "admin-456"
+      responses:
+        '200':
+          description: Player suspended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - suspension failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/players/{id}/activate:
+    post:
+      tags:
+        - Admin Operations
+      summary: Activate player (Admin)
+      description: Activate a suspended player account (admin only)
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Player ID
+          example: "player-123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivatePlayerRequest'
+            example:
+              activated_by: "admin-456"
+      responses:
+        '200':
+          description: Player activated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request - activation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for player authentication
+    AdminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for admin authentication
+
+  schemas:
+    # Request Schemas
+    RegisterPlayerRequest:
+      type: object
+      required:
+        - phone_number
+        - password
+        - channel
+        - terms_accepted
+      properties:
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Phone number in E.164 format
+          example: "+233241234567"
+        password:
+          type: string
+          minLength: 6
+          description: Player password
+          example: "securePassword123"
+        device_id:
+          type: string
+          description: Device identifier
+          example: "device-123"
+        channel:
+          type: string
+          enum: [mobile, web, telegram]
+          description: Registration channel
+          example: "mobile"
+        terms_accepted:
+          type: boolean
+          description: Whether terms and conditions are accepted
+          example: true
+        marketing_consent:
+          type: boolean
+          description: Whether marketing communications are consented
+          example: false
+        device_info:
+          $ref: '#/components/schemas/DeviceInfo'
+
+    VerifyOTPRequest:
+      type: object
+      required:
+        - session_id
+        - otp
+      properties:
+        session_id:
+          type: string
+          description: Session ID from registration
+          example: "session-123"
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+          description: 6-digit OTP code
+          example: "123456"
+
+    LoginRequest:
+      type: object
+      required:
+        - phone_number
+        - password
+        - channel
+      properties:
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Phone number in E.164 format
+          example: "+233241234567"
+        password:
+          type: string
+          description: Player password
+          example: "securePassword123"
+        device_id:
+          type: string
+          description: Device identifier
+          example: "device-123"
+        channel:
+          type: string
+          enum: [mobile, web, telegram, ussd]
+          description: Login channel
+          example: "mobile"
+        device_info:
+          $ref: '#/components/schemas/DeviceInfo'
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    LogoutRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token to invalidate
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    USSDRegisterRequest:
+      type: object
+      required:
+        - phone_number
+        - password
+        - session_id
+      properties:
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Phone number in E.164 format
+          example: "+233241234567"
+        password:
+          type: string
+          minLength: 6
+          description: Player password
+          example: "securePassword123"
+        session_id:
+          type: string
+          description: USSD session identifier
+          example: "ussd-session-123"
+
+    USSDLoginRequest:
+      type: object
+      required:
+        - phone_number
+        - password
+        - session_id
+      properties:
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Phone number in E.164 format
+          example: "+233241234567"
+        password:
+          type: string
+          description: Player password
+          example: "securePassword123"
+        session_id:
+          type: string
+          description: USSD session identifier
+          example: "ussd-session-123"
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Player's first name
+          example: "John"
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Player's last name
+          example: "Doe"
+        email:
+          type: string
+          format: email
+          description: Player's email address
+          example: "john.doe@example.com"
+        date_of_birth:
+          type: string
+          format: date-time
+          description: Player's date of birth
+          example: "1990-01-01T00:00:00Z"
+        national_id:
+          type: string
+          description: Player's national ID
+          example: "GHA-123456789-0"
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - current_password
+        - new_password
+      properties:
+        current_password:
+          type: string
+          description: Current password
+          example: "oldPassword123"
+        new_password:
+          type: string
+          minLength: 6
+          description: New password
+          example: "newPassword456"
+
+    RequestPasswordResetRequest:
+      type: object
+      required:
+        - phone_number
+      properties:
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Registered phone number in E.164 format
+          example: "+233241234567"
+
+    RequestPasswordResetResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          description: Session ID (player ID) used in subsequent steps
+          example: "player-uuid"
+        message:
+          type: string
+          description: Informational message
+          example: "Password reset OTP sent"
+
+    ValidatePasswordResetOTPRequest:
+      type: object
+      required:
+        - session_id
+        - otp
+      properties:
+        session_id:
+          type: string
+          description: Session ID (player ID)
+          example: "player-uuid"
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+          description: 6-digit OTP code
+          example: "123456"
+
+    ValidatePasswordResetOTPResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        session_id:
+          type: string
+          description: Session ID to be used for confirmation step
+          example: "player-uuid"
+        message:
+          type: string
+          example: "Ready to reset password."
+
+    ConfirmPasswordResetRequest:
+      type: object
+      required:
+        - session_id
+        - new_password
+        - otp
+      properties:
+        session_id:
+          type: string
+          description: Session ID (player ID)
+          example: "player-uuid"
+        new_password:
+          type: string
+          minLength: 6
+          description: New password to set
+          example: "NewPassword123"
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+          description: 6-digit OTP code
+          example: "123456"
+
+    UpdatePhoneRequest:
+      type: object
+      required:
+        - phone_number
+        - otp
+      properties:
+        phone_number:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: New mobile money phone number
+          example: "+233241234567"
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+          description: 6-digit OTP code
+          example: "123456"
+
+    DepositRequest:
+      type: object
+      required:
+        - amount
+        - mobile_money_phone
+        - payment_method
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Amount in pesewas
+          example: 10000
+        mobile_money_phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Mobile money phone number
+          example: "+233241234567"
+        payment_method:
+          type: string
+          enum: [MTN, Telecel, AirtelTigo]
+          description: Payment method provider
+          example: "MTN"
+
+    WithdrawalRequest:
+      type: object
+      required:
+        - amount
+        - mobile_money_phone
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Amount in pesewas
+          example: 5000
+        mobile_money_phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Mobile money phone number
+          example: "+233241234567"
+
+    SuspendPlayerRequest:
+      type: object
+      required:
+        - reason
+        - suspended_by
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Reason for suspension
+          example: "Violation of terms of service"
+        suspended_by:
+          type: string
+          description: Admin user ID who suspended the player
+          example: "admin-456"
+
+    ActivatePlayerRequest:
+      type: object
+      required:
+        - activated_by
+      properties:
+        activated_by:
+          type: string
+          description: Admin user ID who activated the player
+          example: "admin-456"
+
+    # Response Schemas
+    RegisterPlayerResponse:
+      type: object
+      properties:
+        requires_otp:
+          type: boolean
+          description: Whether OTP verification is required
+          example: true
+        session_id:
+          type: string
+          description: Session ID for OTP verification
+          example: "session-123"
+        message:
+          type: string
+          description: Response message
+          example: "Registration successful. Please verify your phone number."
+
+    VerifyOTPResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether OTP verification was successful
+          example: true
+        access_token:
+          type: string
+          description: JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: JWT refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        profile:
+          $ref: '#/components/schemas/PlayerProfile'
+
+    LoginResponse:
+      type: object
+      properties:
+        requires_otp:
+          type: boolean
+          description: Whether OTP verification is required
+          example: false
+        access_token:
+          type: string
+          description: JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: JWT refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        profile:
+          $ref: '#/components/schemas/PlayerProfile'
+
+    RefreshTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: New JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          description: New JWT refresh token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    USSDAuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether authentication was successful
+          example: true
+        access_token:
+          type: string
+          description: JWT access token
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        session_token:
+          type: string
+          description: Short-lived token for USSD session
+          example: "ussd-token-123"
+        profile:
+          $ref: '#/components/schemas/PlayerProfile'
+        message:
+          type: string
+          description: Response message
+          example: "USSD authentication successful"
+
+    DepositResponse:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+          description: Transaction ID
+          example: "txn-123"
+        status:
+          type: string
+          description: Transaction status
+          example: "PENDING"
+        message:
+          type: string
+          description: Response message
+          example: "Deposit initiated successfully"
+
+    WithdrawalResponse:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+          description: Transaction ID
+          example: "txn-456"
+        status:
+          type: string
+          description: Transaction status
+          example: "PENDING"
+        message:
+          type: string
+          description: Response message
+          example: "Withdrawal initiated successfully"
+
+    TransactionHistoryResponse:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+        total:
+          type: integer
+          description: Total number of transactions
+          example: 150
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        per_page:
+          type: integer
+          description: Number of transactions per page
+          example: 50
+
+    WalletBalanceResponse:
+      type: object
+      properties:
+        balance:
+          type: integer
+          description: Available balance in pesewas
+          example: 25000
+        pending_balance:
+          type: integer
+          description: Pending balance in pesewas
+          example: 5000
+        currency:
+          type: string
+          description: Currency code
+          example: "GHS"
+
+    # Ticket-related Schemas
+    IssueTicketRequest:
+      type: object
+      required:
+        - game_code
+        - game_schedule_id
+        - draw_number
+        - bet_lines
+        - payment_method
+      properties:
+        game_code:
+          type: string
+          description: Game code identifier
+          example: "MON-5/90"
+        game_schedule_id:
+          type: string
+          format: uuid
+          description: Game schedule UUID
+          example: "schedule-uuid-1"
+        draw_number:
+          type: integer
+          description: Draw number
+          example: 1001
+        selected_numbers:
+          type: array
+          items:
+            type: integer
+          description: Selected numbers for the ticket
+          example: [5, 12, 23, 34, 45]
+        bet_lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/BetLine'
+          description: Bet lines for the ticket
+        customer_phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Customer phone number
+          example: "+233241234567"
+        customer_email:
+          type: string
+          format: email
+          description: Customer email address
+          example: "player@example.com"
+        payment_method:
+          type: string
+          enum: [WALLET]
+          description: Payment method (always WALLET for players)
+          example: "WALLET"
+
+    BetLine:
+      type: object
+      required:
+        - line_number
+        - bet_type
+        - total_amount
+      properties:
+        line_number:
+          type: integer
+          description: Line number within the ticket
+          example: 1
+        bet_type:
+          type: string
+          enum: [DIRECT-1, DIRECT-2, DIRECT-3, DIRECT-4, DIRECT-5, PERM-2, PERM-3, PERM-4, PERM-5, BANKER ALL, BANKER AG]
+          description: Type of bet
+          example: "DIRECT-5"
+        selected_numbers:
+          type: array
+          items:
+            type: integer
+          description: Selected numbers for this bet line
+          example: [5, 12, 23, 34, 45]
+        banker:
+          type: array
+          items:
+            type: integer
+          description: Banker numbers (for BANKER bets)
+          example: [5, 12]
+        opposed:
+          type: array
+          items:
+            type: integer
+          description: Opposed numbers (for BANKER bets)
+          example: [23, 34, 45]
+        number_of_combinations:
+          type: integer
+          description: Number of combinations (for PERM bets)
+          example: 10
+        amount_per_combination:
+          type: integer
+          description: Amount per combination in pesewas
+          example: 20
+        total_amount:
+          type: integer
+          description: Total bet amount in pesewas
+          example: 200
+
+    TicketResponse:
+      type: object
+      properties:
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+
+    TicketListResponse:
+      type: object
+      properties:
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ticket'
+        total:
+          type: integer
+          description: Total number of tickets
+          example: 50
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        page_size:
+          type: integer
+          description: Number of tickets per page
+          example: 10
+
+    Ticket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Ticket UUID
+          example: "ticket-uuid-1"
+        serial_number:
+          type: string
+          description: Human-readable serial number
+          example: "TKT-12345"
+        game_code:
+          type: string
+          description: Game code
+          example: "MON-5/90"
+        game_name:
+          type: string
+          description: Game name
+          example: "Monday 5/90"
+        game_schedule_id:
+          type: string
+          format: uuid
+          description: Game schedule UUID
+          example: "schedule-uuid-1"
+        draw_number:
+          type: integer
+          description: Draw number
+          example: 1001
+        selected_numbers:
+          type: array
+          items:
+            type: integer
+          description: Selected numbers
+          example: [5, 12, 23, 34, 45]
+        bet_lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/BetLine'
+          description: Bet lines
+        issuer_type:
+          type: string
+          description: Issuer type
+          example: "PLAYER"
+        issuer_id:
+          type: string
+          description: Issuer ID
+          example: "player-123"
+        customer_phone:
+          type: string
+          description: Customer phone number
+          example: "+233241234567"
+        customer_email:
+          type: string
+          description: Customer email
+          example: "player@example.com"
+        payment_method:
+          type: string
+          description: Payment method
+          example: "WALLET"
+        total_amount:
+          type: integer
+          description: Total ticket amount in pesewas
+          example: 200
+        status:
+          type: string
+          enum: [issued, validated, won, paid, cancelled, expired, void]
+          description: Ticket status
+          example: "issued"
+        is_winning:
+          type: boolean
+          description: Whether ticket is a winner
+          example: false
+        winning_amount:
+          type: integer
+          description: Winning amount in pesewas
+          example: 0
+        prize_tier:
+          type: string
+          description: Prize tier
+          example: null
+        matches:
+          type: integer
+          description: Number of matching numbers
+          example: 0
+        issued_at:
+          type: string
+          format: date-time
+          description: When ticket was issued
+          example: "2024-01-15T10:30:00Z"
+        validated_at:
+          type: string
+          format: date-time
+          description: When ticket was validated
+          example: null
+        security_features:
+          $ref: '#/components/schemas/SecurityFeatures'
+
+    SecurityFeatures:
+      type: object
+      properties:
+        qr_code:
+          type: string
+          description: QR code data
+          example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+        barcode:
+          type: string
+          description: Barcode data
+          example: "123456789012"
+        verification_code:
+          type: string
+          description: Verification code
+          example: "ABC123"
+
+    ValidateTicketRequest:
+      type: object
+      required:
+        - validator_id
+        - validator_type
+      properties:
+        validator_id:
+          type: string
+          description: ID of the validator
+          example: "player-123"
+        validator_type:
+          type: string
+          enum: [PLAYER, RETAILER, AGENT, ADMIN]
+          description: Type of validator
+          example: "PLAYER"
+
+    ValidateTicketResponse:
+      type: object
+      properties:
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+        winning_amount:
+          type: integer
+          description: Winning amount in pesewas
+          example: 0
+        is_valid:
+          type: boolean
+          description: Whether ticket is valid
+          example: true
+        message:
+          type: string
+          description: Validation message
+          example: "Ticket validated successfully"
+
+    WinningsResponse:
+      type: object
+      properties:
+        is_winning:
+          type: boolean
+          description: Whether ticket is a winner
+          example: false
+        winning_amount:
+          type: integer
+          description: Winning amount in pesewas
+          example: 0
+        prize_tier:
+          type: string
+          description: Prize tier
+          example: null
+        matches:
+          type: integer
+          description: Number of matching numbers
+          example: 0
+        message:
+          type: string
+          description: Winnings check message
+          example: "No winnings found"
+
+    SearchPlayersResponse:
+      type: object
+      properties:
+        players:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlayerProfile'
+        total:
+          type: integer
+          description: Total number of players
+          example: 1000
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        per_page:
+          type: integer
+          description: Number of players per page
+          example: 50
+
+    SuccessResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "Operation completed successfully"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Invalid request parameters"
+        code:
+          type: string
+          description: Error code
+          example: "VALIDATION_ERROR"
+
+    # Data Models
+    PlayerProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Player ID
+          example: "player-123"
+        phone_number:
+          type: string
+          description: Player's phone number
+          example: "+233241234567"
+        email:
+          type: string
+          format: email
+          description: Player's email address
+          example: "john.doe@example.com"
+        first_name:
+          type: string
+          description: Player's first name
+          example: "John"
+        last_name:
+          type: string
+          description: Player's last name
+          example: "Doe"
+        date_of_birth:
+          type: string
+          format: date-time
+          description: Player's date of birth
+          example: "1990-01-01T00:00:00Z"
+        national_id:
+          type: string
+          description: Player's national ID
+          example: "GHA-123456789-0"
+        wallet_id:
+          type: string
+          description: Player's wallet ID
+          example: "wallet-123"
+        mobile_money_phone:
+          type: string
+          description: Player's mobile money phone number
+          example: "+233241234567"
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, BANNED]
+          description: Player status
+          example: "ACTIVE"
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: "2024-01-01T00:00:00Z"
+        last_login:
+          type: string
+          format: date-time
+          description: Last login timestamp
+          example: "2024-01-15T10:30:00Z"
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Transaction ID
+          example: "txn-123"
+        player_id:
+          type: string
+          description: Player ID
+          example: "player-123"
+        type:
+          type: string
+          enum: [DEPOSIT, WITHDRAWAL, BET, WIN, REFUND]
+          description: Transaction type
+          example: "DEPOSIT"
+        amount:
+          type: integer
+          description: Amount in pesewas
+          example: 10000
+        reference:
+          type: string
+          description: Transaction reference
+          example: "ref-123"
+        status:
+          type: string
+          description: Transaction status
+          example: "SUCCESS"
+        created_at:
+          type: string
+          format: date-time
+          description: Transaction creation timestamp
+          example: "2024-01-15T10:30:00Z"
+
+    DeviceInfo:
+      type: object
+      properties:
+        device_type:
+          type: string
+          description: Type of device
+          example: "mobile"
+        os:
+          type: string
+          description: Operating system
+          example: "Android"
+        os_version:
+          type: string
+          description: Operating system version
+          example: "13"
+        app_version:
+          type: string
+          description: Application version
+          example: "1.0.0"
+        user_agent:
+          type: string
+          description: User agent string
+          example: "RandCoApp/1.0"
+
+    # Game Information Schemas
+    Game:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Game UUID
+          example: "game-uuid-1"
+        code:
+          type: string
+          description: Game code
+          example: "MON-5/90"
+        name:
+          type: string
+          description: Game name
+          example: "Monday 5/90"
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, TERMINATED]
+          description: Game status
+          example: "ACTIVE"
+        description:
+          type: string
+          description: Game description
+          example: "Monday lottery game"
+        ticket_price:
+          type: number
+          format: float
+          description: Ticket price in GHS
+          example: 2.0
+        currency:
+          type: string
+          description: Currency code
+          example: "GHS"
+
+    GameDetails:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Game UUID
+          example: "game-uuid-1"
+        code:
+          type: string
+          description: Game code
+          example: "MON-5/90"
+        name:
+          type: string
+          description: Game name
+          example: "Monday 5/90"
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, TERMINATED]
+          description: Game status
+          example: "ACTIVE"
+        description:
+          type: string
+          description: Game description
+          example: "Monday lottery game"
+        ticket_price:
+          type: number
+          format: float
+          description: Ticket price in GHS
+          example: 2.0
+        currency:
+          type: string
+          description: Currency code
+          example: "GHS"
+        rules:
+          type: string
+          description: Game rules
+          example: "Select 5 numbers from 1-90"
+        prize_structure:
+          type: object
+          description: Prize structure for the game
+          properties:
+            first_prize:
+              type: integer
+              description: First prize amount in pesewas
+              example: 1000000
+            second_prize:
+              type: integer
+              description: Second prize amount in pesewas
+              example: 100000
+            third_prize:
+              type: integer
+              description: Third prize amount in pesewas
+              example: 10000
+
+    WeeklySchedulesResponse:
+      type: object
+      properties:
+        schedules:
+          type: array
+          items:
+            $ref: '#/components/schemas/GameSchedule'
+          description: Array of game schedules for the week
+        week_start:
+          type: string
+          format: date
+          description: Week start date in YYYY-MM-DD format
+          example: "2024-01-15"
+        server_time:
+          type: string
+          format: date-time
+          description: Current server time in GMT/UTC
+          example: "2024-01-15T10:30:00Z"
+
+    GameSchedule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Schedule UUID
+          example: "schedule-uuid-1"
+        game_id:
+          type: string
+          format: uuid
+          description: Game UUID
+          example: "game-uuid-1"
+        game_code:
+          type: string
+          description: Game code
+          example: "MON-5/90"
+        game_name:
+          type: string
+          description: Game name
+          example: "Monday 5/90"
+        scheduled_start:
+          type: string
+          format: date-time
+          description: When ticket sales start
+          example: "2024-01-15T09:00:00Z"
+        scheduled_end:
+          type: string
+          format: date-time
+          description: When ticket sales end
+          example: "2024-01-15T18:00:00Z"
+        scheduled_draw:
+          type: string
+          format: date-time
+          description: When the draw takes place
+          example: "2024-01-15T19:00:00Z"
+        frequency:
+          type: string
+          enum: [DAILY, WEEKLY, MONTHLY]
+          description: Schedule frequency
+          example: "WEEKLY"
+        status:
+          type: string
+          enum: [SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, FAILED]
+          description: Schedule status
+          example: "SCHEDULED"
+
+tags:
+  - name: Game Information
+    description: Public game information and schedules for players
+  - name: Authentication
+    description: Player authentication and session management
+  - name: Profile Management
+    description: Player profile and account management
+  - name: Wallet Operations
+    description: Wallet transactions and balance management
+  - name: Ticket Operations
+    description: Lottery ticket issuance, validation, and winnings management
+  - name: Admin Operations
+    description: Administrative operations for player management

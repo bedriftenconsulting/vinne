@@ -1,0 +1,312 @@
+syntax = "proto3";
+
+package wallet;
+
+option go_package = "github.com/randco/service-wallet/proto";
+
+import "google/protobuf/timestamp.proto";
+
+// WalletService provides wallet and commission management operations
+service WalletService {
+  // Wallet creation operations
+  rpc CreateAgentWallet(CreateAgentWalletRequest) returns (CreateAgentWalletResponse);
+  rpc CreateRetailerWallets(CreateRetailerWalletsRequest) returns (CreateRetailerWalletsResponse);
+  
+  // Agent wallet operations
+  rpc CreditAgentWallet(CreditAgentWalletRequest) returns (CreditAgentWalletResponse);
+  rpc GetAgentWalletBalance(GetAgentWalletBalanceRequest) returns (GetAgentWalletBalanceResponse);
+  
+  // Retailer wallet operations  
+  rpc CreditRetailerWallet(CreditRetailerWalletRequest) returns (CreditRetailerWalletResponse);
+  rpc GetRetailerWalletBalance(GetRetailerWalletBalanceRequest) returns (GetRetailerWalletBalanceResponse);
+  
+  // Transaction history
+  rpc GetTransactionHistory(GetTransactionHistoryRequest) returns (GetTransactionHistoryResponse);
+  
+  // Commission operations
+  rpc SetCommissionRate(SetCommissionRateRequest) returns (SetCommissionRateResponse);
+  rpc GetCommissionRate(GetCommissionRateRequest) returns (GetCommissionRateResponse);
+  rpc GetCommissionReport(GetCommissionReportRequest) returns (GetCommissionReportResponse);
+  rpc UpdateAgentCommission(UpdateAgentCommissionRequest) returns (UpdateAgentCommissionResponse);
+  
+  // Transfer operations
+  rpc TransferAgentToRetailer(TransferAgentToRetailerRequest) returns (TransferAgentToRetailerResponse);
+}
+
+// Wallet types
+enum WalletType {
+  WALLET_TYPE_UNSPECIFIED = 0;
+  AGENT_STAKE = 1;
+  RETAILER_STAKE = 2;
+  RETAILER_WINNING = 3;
+}
+
+// Transaction types
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  CREDIT = 1;
+  DEBIT = 2;
+  TRANSFER = 3;
+  COMMISSION = 4;
+  PAYOUT = 5;
+}
+
+// Transaction status
+enum TransactionStatus {
+  TRANSACTION_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  COMPLETED = 2;
+  FAILED = 3;
+  REVERSED = 4;
+}
+
+// Create agent wallet request
+message CreateAgentWalletRequest {
+  string agent_id = 1;
+  string agent_code = 2;
+  double initial_commission_rate = 3; // As decimal (0.30 for 30%)
+  string created_by = 4;
+}
+
+// Create agent wallet response
+message CreateAgentWalletResponse {
+  bool success = 1;
+  string wallet_id = 2;
+  string agent_id = 3;
+  double balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// Create retailer wallets request
+message CreateRetailerWalletsRequest {
+  string retailer_id = 1;
+  string retailer_code = 2;
+  string parent_agent_id = 3; // Optional, for agent-managed retailers
+  string created_by = 4;
+}
+
+// Create retailer wallets response
+message CreateRetailerWalletsResponse {
+  bool success = 1;
+  string stake_wallet_id = 2;
+  string winning_wallet_id = 3;
+  string retailer_id = 4;
+  string message = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// Agent wallet credit request
+message CreditAgentWalletRequest {
+  string agent_id = 1;
+  double amount = 2;
+  string reference = 3;
+  string payment_method = 4;
+  string notes = 5;
+  string idempotency_key = 6;
+}
+
+// Agent wallet credit response
+message CreditAgentWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double credited_amount = 3;
+  double commission_amount = 4;
+  double total_amount = 5;
+  double new_balance = 6;
+  string message = 7;
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// Get agent wallet balance request
+message GetAgentWalletBalanceRequest {
+  string agent_id = 1;
+}
+
+// Get agent wallet balance response
+message GetAgentWalletBalanceResponse {
+  string agent_id = 1;
+  double balance = 2;
+  double pending_balance = 3;
+  double available_balance = 4;
+  google.protobuf.Timestamp last_updated = 5;
+}
+
+// Retailer wallet credit request
+message CreditRetailerWalletRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+  double amount = 3;
+  string reference = 4;
+  string agent_id = 5; // If credited by agent
+  string notes = 6;
+  string idempotency_key = 7;
+}
+
+// Retailer wallet credit response
+message CreditRetailerWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double credited_amount = 3;
+  double agent_commission = 4; // Commission charged to agent if applicable
+  double new_balance = 5;
+  string message = 6;
+  google.protobuf.Timestamp timestamp = 7;
+}
+
+// Get retailer wallet balance request
+message GetRetailerWalletBalanceRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+}
+
+// Get retailer wallet balance response  
+message GetRetailerWalletBalanceResponse {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+  double balance = 3;
+  double pending_balance = 4;
+  double available_balance = 5;
+  google.protobuf.Timestamp last_updated = 6;
+}
+
+// Transaction history request
+message GetTransactionHistoryRequest {
+  string wallet_owner_id = 1; // Agent or Retailer ID
+  WalletType wallet_type = 2;
+  google.protobuf.Timestamp start_date = 3;
+  google.protobuf.Timestamp end_date = 4;
+  TransactionType transaction_type = 5;
+  int32 page = 6;
+  int32 page_size = 7;
+}
+
+// Transaction record
+message Transaction {
+  string id = 1;
+  string wallet_owner_id = 2;
+  WalletType wallet_type = 3;
+  TransactionType type = 4;
+  double amount = 5;
+  double balance_before = 6;
+  double balance_after = 7;
+  string reference = 8;
+  string description = 9;
+  TransactionStatus status = 10;
+  google.protobuf.Timestamp created_at = 11;
+  map<string, string> metadata = 12;
+}
+
+// Transaction history response
+message GetTransactionHistoryResponse {
+  repeated Transaction transactions = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  bool has_more = 5;
+}
+
+// Set commission rate request
+message SetCommissionRateRequest {
+  string agent_id = 1;
+  double rate = 2; // Percentage as decimal (e.g., 0.30 for 30%)
+  string effective_from = 3;
+  string notes = 4;
+  string set_by = 5; // Admin user ID
+}
+
+// Set commission rate response
+message SetCommissionRateResponse {
+  bool success = 1;
+  string message = 2;
+  double new_rate = 3;
+  google.protobuf.Timestamp effective_from = 4;
+}
+
+// Get commission rate request
+message GetCommissionRateRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp as_of_date = 2; // Optional: get rate as of specific date
+}
+
+// Get commission rate response
+message GetCommissionRateResponse {
+  string agent_id = 1;
+  double rate = 2;
+  google.protobuf.Timestamp effective_from = 3;
+  google.protobuf.Timestamp created_at = 4;
+  string created_by = 5;
+}
+
+// Commission report request
+message GetCommissionReportRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+// Commission entry
+message CommissionEntry {
+  string id = 1;
+  string transaction_id = 2;
+  string agent_id = 3;
+  double original_amount = 4;
+  double gross_amount = 5;
+  double commission_amount = 6;
+  double commission_rate = 7;
+  string type = 8; // DEPOSIT, TRANSFER, etc.
+  google.protobuf.Timestamp created_at = 9;
+  string reference = 10;
+}
+
+// Commission report response
+message GetCommissionReportResponse {
+  repeated CommissionEntry entries = 1;
+  double total_commission = 2;
+  int32 total_count = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+  bool has_more = 6;
+}
+
+// Agent to retailer transfer request
+message TransferAgentToRetailerRequest {
+  string agent_id = 1;
+  string retailer_id = 2;
+  double amount = 3;
+  string reference = 4;
+  string notes = 5;
+  string idempotency_key = 6;
+}
+
+// Agent to retailer transfer response
+message TransferAgentToRetailerResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double transferred_amount = 3;
+  double commission_charged = 4;
+  double total_deducted = 5;
+  double agent_new_balance = 6;
+  double retailer_new_balance = 7;
+  string message = 8;
+  google.protobuf.Timestamp timestamp = 9;
+}
+
+// Update agent commission request - Called by agent management service
+message UpdateAgentCommissionRequest {
+  string agent_id = 1;
+  double new_rate = 2; // Percentage as decimal (e.g., 0.30 for 30%)
+  string updated_by = 3; // System or admin user who triggered the update
+  string reason = 4; // Reason for the commission update
+}
+
+// Update agent commission response
+message UpdateAgentCommissionResponse {
+  bool success = 1;
+  string message = 2;
+  double previous_rate = 3;
+  double new_rate = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}

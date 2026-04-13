@@ -1,0 +1,32 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git ca-certificates
+
+ENV GOFLAGS="-mod=mod"
+ENV GOPROXY="https://proxy.golang.org,direct"
+ENV GONOSUMCHECK="*"
+
+# Copy only mod files first for better layer caching
+COPY services/service-agent-management/go.mod services/service-agent-management/go.sum ./services/service-agent-management/
+COPY proto ./proto
+COPY shared ./shared
+
+WORKDIR /app/services/service-agent-management
+RUN go mod download
+
+# Now copy full source
+WORKDIR /app
+COPY services/service-agent-management ./services/service-agent-management
+
+WORKDIR /app/services/service-agent-management
+RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/server/main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /app/services/service-agent-management/main .
+COPY --from=builder /app/services/service-agent-management/migrations ./migrations
+EXPOSE 50058
+CMD ["./main"]

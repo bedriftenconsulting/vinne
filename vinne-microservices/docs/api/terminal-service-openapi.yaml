@@ -1,0 +1,469 @@
+openapi: 3.0.3
+info:
+  title: Terminal Management API
+  version: 1.0.0
+  description: API for managing terminals, assignments, health, configurations, and retailer POS login
+
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Development server
+  - url: https://api.dev.randlottery.com/api/v1
+    description: Production server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Terminal:
+      type: object
+      properties:
+        device_id:
+          type: string
+        name:
+          type: string
+        model:
+          type: string
+        serial_number:
+          type: string
+        imei:
+          type: string
+        android_version:
+          type: string
+        app_version:
+          type: string
+        vendor:
+          type: string
+        manufacturer:
+          type: string
+        purchase_date:
+          type: string
+          format: date
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+
+    TerminalListResponse:
+      type: object
+      properties:
+        terminals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Terminal'
+        total_count:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    TerminalConfig:
+      type: object
+      properties:
+        transaction_limit:
+          type: integer
+        daily_limit:
+          type: integer
+        offline_mode_enabled:
+          type: boolean
+        offline_sync_interval:
+          type: integer
+        auto_update_enabled:
+          type: boolean
+        minimum_app_version:
+          type: string
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+
+    TerminalHealth:
+      type: object
+      properties:
+        battery_level:
+          type: integer
+        signal_strength:
+          type: integer
+        storage_available:
+          type: integer
+        last_heartbeat:
+          type: string
+          format: date-time
+
+    POSLoginRequest:
+      type: object
+      required:
+        - retailer_code
+        - pin
+      properties:
+        retailer_code:
+          type: string
+        pin:
+          type: string
+        device_imei:
+          type: string
+
+    POSLoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+        device_registered:
+          type: boolean
+        retailer:
+          type: object
+          properties:
+            id:
+              type: string
+            retailer_code:
+              type: string
+            name:
+              type: string
+            phone:
+              type: string
+            email:
+              type: string
+            is_active:
+              type: boolean
+            address:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+paths:
+  /admin/terminals:
+    post:
+      summary: Register a new terminal
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Terminal'
+      responses:
+        '201':
+          description: Terminal registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Terminal'
+        '400':
+          description: Validation error
+
+    get:
+      summary: List terminals
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE, FAULTY, MAINTENANCE, SUSPENDED, DECOMMISSIONED]
+      responses:
+        '200':
+          description: List of terminals
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalListResponse'
+
+  /admin/terminals/{id}:
+    get:
+      summary: Get terminal by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Terminal'
+        '404':
+          description: Terminal not found
+
+    put:
+      summary: Update a terminal
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                model:
+                  type: string
+                android_version:
+                  type: string
+                app_version:
+                  type: string
+      responses:
+        '200':
+          description: Terminal updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Terminal'
+
+    delete:
+      summary: Delete a terminal
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal deleted successfully
+
+  /admin/terminals/{id}/assign:
+    post:
+      summary: Assign terminal to retailer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - retailer_id
+                - assigned_by
+              properties:
+                retailer_id:
+                  type: string
+                assigned_by:
+                  type: string
+      responses:
+        '200':
+          description: Terminal assigned successfully
+
+  /admin/terminals/{id}/unassign:
+    post:
+      summary: Unassign terminal from retailer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal unassigned successfully
+
+  /admin/terminals/{id}/health:
+    get:
+      summary: Get terminal health
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalHealth'
+
+  /admin/terminals/{id}/status:
+    put:
+      summary: Update terminal status
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [ACTIVE, INACTIVE, FAULTY, MAINTENANCE, SUSPENDED, DECOMMISSIONED]
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Terminal status updated successfully
+
+  /admin/terminals/{id}/config:
+    get:
+      summary: Get terminal configuration
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalConfig'
+
+    put:
+      summary: Update terminal configuration
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminalConfig'
+      responses:
+        '200':
+          description: Terminal configuration updated successfully
+
+  /retailer/terminal:
+    get:
+      summary: Get assigned terminal
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Assigned terminal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  terminal:
+                    $ref: '#/components/schemas/Terminal'
+                  configuration:
+                    $ref: '#/components/schemas/TerminalConfig'
+                  health:
+                    $ref: '#/components/schemas/TerminalHealth'
+
+    put:
+      summary: Update terminal heartbeat
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                battery_level:
+                  type: integer
+                signal_strength:
+                  type: integer
+                storage_available:
+                  type: integer
+      responses:
+        '200':
+          description: Heartbeat updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalHealth'
+
+  /retailer/terminal/config:
+    get:
+      summary: Get assigned terminal configuration
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Terminal configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalConfig'
+
+  /api/v1/retailer/auth/pos-login:
+    post:
+      summary: Retailer POS login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/POSLoginRequest'
+      responses:
+        '200':
+          description: POS login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/POSLoginResponse'
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized

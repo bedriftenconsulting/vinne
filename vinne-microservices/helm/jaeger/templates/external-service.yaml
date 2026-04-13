@@ -1,0 +1,23 @@
+{{- if .Values.externalService.enabled }}
+---
+# ExternalName service in microservices-dev namespace for easy access
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: {{ .Values.externalService.namespace }}
+  labels:
+    {{- include "jaeger.labels" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: {{ include "jaeger.fullname" . }}.{{ .Values.namespace }}.svc.cluster.local
+  ports:
+  - name: otlp-http
+    port: {{ .Values.service.ports.otlpHttp.port }}
+    targetPort: {{ .Values.service.ports.otlpHttp.port }}
+    protocol: TCP
+  - name: collector
+    port: {{ .Values.service.ports.collector.port }}
+    targetPort: {{ .Values.service.ports.collector.port }}
+    protocol: TCP
+{{- end }}

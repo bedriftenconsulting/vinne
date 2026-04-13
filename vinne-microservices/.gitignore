@@ -1,0 +1,102 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test binary, built with go test -c
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file - NOTE: go.work should be committed for team consistency
+# go.work and go.work.sum are now tracked
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# VS Code debug binaries
+**/__debug_bin*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Generated GraphQL files
+graph/generated/
+graph/model/models_gen.go
+*.generated.go
+*.resolvers.go
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+build/
+
+# Air (hot reload)
+.air.toml.tmp
+
+# Test coverage
+coverage.txt
+coverage.html
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Kafka logs
+kafka-logs/
+
+# Prometheus data
+prometheus-data/
+
+# Grafana data
+grafana-data/
+# Service binaries
+services/*/server
+services/*/main
+services/api-gateway/api-gateway
+
+# Environment files
+.env.*
+
+# Helm package artifacts
+*.tgz
+charts/*.tgz
+
+.cursorrules
+services/service-notification/context.txt
+docker-compose-dev.yml
+.build
+note.txt
+# Service configuration files (use config.env.example as template)
+config.env
+**/config.env
+scripts/test-payment-topup.sh

@@ -1,0 +1,567 @@
+syntax = "proto3";
+
+package draw.v1;
+option go_package = "github.com/randco/randco-microservices/proto/draw/v1;drawv1";
+
+import "google/protobuf/timestamp.proto";
+
+service DrawService {
+  // Draw management
+  rpc CreateDraw(CreateDrawRequest) returns (CreateDrawResponse);
+  rpc GetDraw(GetDrawRequest) returns (GetDrawResponse);
+  rpc ListDraws(ListDrawsRequest) returns (ListDrawsResponse);
+  rpc UpdateDraw(UpdateDrawRequest) returns (UpdateDrawResponse);
+
+  // Public-facing methods (no auth required)
+  rpc GetPublicCompletedDraws(GetPublicCompletedDrawsRequest) returns (GetPublicCompletedDrawsResponse);
+  
+  // Draw scheduling
+  rpc ScheduleDraw(ScheduleDrawRequest) returns (ScheduleDrawResponse);
+  rpc GetScheduledDraws(GetScheduledDrawsRequest) returns (GetScheduledDrawsResponse);
+  rpc CancelScheduledDraw(CancelScheduledDrawRequest) returns (CancelScheduledDrawResponse);
+  
+  // Draw results (from physical draws at NLA)
+  rpc RecordDrawResults(RecordDrawResultsRequest) returns (RecordDrawResultsResponse);
+  rpc GetDrawResults(GetDrawResultsRequest) returns (GetDrawResultsResponse);
+  rpc PublishDrawResults(PublishDrawResultsRequest) returns (PublishDrawResultsResponse);
+  rpc ValidateDrawResults(ValidateDrawResultsRequest) returns (ValidateDrawResultsResponse);
+
+  // Draw execution workflow (4-stage process)
+  // Stage 1: Preparation
+  rpc StartDrawPreparation(StartDrawPreparationRequest) returns (StartDrawPreparationResponse);
+  rpc CompleteDrawPreparation(CompleteDrawPreparationRequest) returns (CompleteDrawPreparationResponse);
+
+  // Stage 2: Number Selection
+  rpc StartNumberSelection(StartNumberSelectionRequest) returns (StartNumberSelectionResponse);
+  rpc SubmitVerificationAttempt(SubmitVerificationAttemptRequest) returns (SubmitVerificationAttemptResponse);
+  rpc ValidateVerificationAttempts(ValidateVerificationAttemptsRequest) returns (ValidateVerificationAttemptsResponse);
+  rpc ResetVerificationAttempts(ResetVerificationAttemptsRequest) returns (ResetVerificationAttemptsResponse);
+  rpc CompleteNumberSelection(CompleteNumberSelectionRequest) returns (CompleteNumberSelectionResponse);
+
+  // Stage 3: Result Calculation
+  rpc CommitResults(CommitResultsRequest) returns (CommitResultsResponse);
+
+  // Stage 4: Payout Processing
+  rpc ProcessPayouts(ProcessPayoutsRequest) returns (ProcessPayoutsResponse);
+  rpc ProcessBigWinPayout(ProcessBigWinPayoutRequest) returns (ProcessBigWinPayoutResponse);
+  rpc CompleteDraw(CompleteDrawRequest) returns (CompleteDrawResponse);
+
+  // Machine Numbers (cosmetic, entered after draw completion)
+  rpc UpdateMachineNumbers(UpdateMachineNumbersRequest) returns (UpdateMachineNumbersResponse);
+}
+
+// Draw message definitions
+message Draw {
+  string id = 1;
+  string game_id = 2;
+  int32 draw_number = 3; // Sequential number per game (e.g., 1, 2, 3...)
+  string game_name = 4; // Denormalized game name for faster queries
+  string draw_name = 5;
+  DrawStatus status = 6;
+  google.protobuf.Timestamp scheduled_time = 7;
+  google.protobuf.Timestamp executed_time = 8;
+  repeated int32 winning_numbers = 9;
+  repeated int32 machine_numbers = 21; // Cosmetic machine numbers (not used in calculations)
+  string nla_draw_reference = 10; // Official NLA draw reference number
+  string draw_location = 11; // Physical location where draw was conducted
+  string nla_official_signature = 12; // NLA official who supervised the draw
+  int64 total_tickets_sold = 13;
+  int64 total_prize_pool = 14; // in pesewas
+  string verification_hash = 15; // Hash for result integrity
+  google.protobuf.Timestamp created_at = 16;
+  google.protobuf.Timestamp updated_at = 17;
+  DrawStage stage = 18; // Execution workflow stage data
+  string game_code = 19; // Game code for efficient lookups (e.g., FRIBON, MONSPC)
+  string game_schedule_id = 20; // Game schedule ID this draw was created from
+}
+
+message DrawStage {
+  int32 current_stage = 1; // 1: Preparation, 2: Number Selection, 3: Result Calculation, 4: Payout
+  string stage_name = 2;
+  StageStatus stage_status = 3;
+  google.protobuf.Timestamp stage_started_at = 4;
+  google.protobuf.Timestamp stage_completed_at = 5;
+  PreparationStageData preparation_data = 6;
+  NumberSelectionStageData number_selection_data = 7;
+  ResultCalculationStageData result_calculation_data = 8;
+  PayoutStageData payout_data = 9;
+}
+
+message PreparationStageData {
+  int64 tickets_locked = 1;
+  int64 total_stakes = 2; // in pesewas
+  bool sales_locked = 3;
+  google.protobuf.Timestamp lock_time = 4;
+}
+
+message NumberSelectionStageData {
+  repeated int32 winning_numbers = 1;
+  repeated VerificationAttempt verification_attempts = 2;
+  bool is_verified = 3;
+  string verified_by = 4;
+  google.protobuf.Timestamp verified_at = 5;
+}
+
+message VerificationAttempt {
+  int32 attempt_number = 1;
+  repeated int32 numbers = 2;
+  string submitted_by = 3;
+  google.protobuf.Timestamp submitted_at = 4;
+}
+
+message ResultCalculationStageData {
+  int64 winning_tickets_count = 1;
+  int64 total_winnings = 2; // in pesewas
+  repeated WinningTier winning_tiers = 3;
+  repeated WinningTicketDetail winning_tickets = 4; // Individual winning ticket details
+  google.protobuf.Timestamp calculated_at = 5;
+}
+
+message WinningTier {
+  string bet_type = 1; // "Direct 1", "Perm 2", etc.
+  int64 winners_count = 2;
+  int64 total_amount = 3; // in pesewas
+}
+
+message WinningTicketDetail {
+  string ticket_id = 1;
+  string serial_number = 2;
+  string retailer_id = 3;
+  repeated int32 numbers = 4; // The numbers the player selected
+  string bet_type = 5;
+  int64 stake_amount = 6; // in pesewas
+  int64 winning_amount = 7; // in pesewas
+  int32 matches_count = 8; // How many numbers matched
+  bool is_big_win = 9; // true if winning amount > 25,000 GHS (2,500,000 pesewas)
+
+  // Additional ticket details from ticket service
+  string agent_code = 10;       // Agent code who issued the ticket
+  string terminal_id = 11;      // Terminal ID where ticket was issued
+  string customer_phone = 12;   // Customer phone number
+  string payment_method = 13;   // Payment method used
+  string status = 14;           // Ticket status (active, validated, paid, etc.)
+}
+
+message PayoutStageData {
+  int64 auto_processed_count = 1; // Tickets <= 25k GHS
+  int64 manual_approval_count = 2; // Tickets > 25k GHS
+  int64 auto_processed_amount = 3; // in pesewas
+  int64 manual_approval_amount = 4; // in pesewas
+  int64 processed_count = 5;
+  int64 pending_count = 6;
+  repeated BigWinPayout big_win_payouts = 7;
+}
+
+message BigWinPayout {
+  string ticket_id = 1;
+  int64 amount = 2; // in pesewas
+  string status = 3; // "pending", "approved", "rejected"
+  string approved_by = 4;
+  string rejection_reason = 5;
+  google.protobuf.Timestamp processed_at = 6;
+}
+
+message DrawSchedule {
+  string id = 1;
+  string game_id = 2;
+  string draw_name = 3;
+  google.protobuf.Timestamp scheduled_time = 4;
+  ScheduleFrequency frequency = 5;
+  bool is_active = 6;
+  string created_by = 7;
+  string notes = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message DrawResult {
+  string id = 1;
+  string draw_id = 2;
+  repeated int32 winning_numbers = 3;
+  repeated int32 machine_numbers = 10; // Cosmetic machine numbers
+  repeated PrizeDistribution prize_distributions = 4;
+  int64 total_winners = 5;
+  int64 total_prize_paid = 6; // in pesewas
+  bool is_published = 7;
+  google.protobuf.Timestamp published_at = 8;
+  string verification_hash = 9;
+}
+
+message PrizeDistribution {
+  int32 tier = 1;
+  string tier_name = 2;
+  int32 matches_required = 3;
+  int64 winners_count = 4;
+  int64 prize_per_winner = 5; // in pesewas
+  int64 total_prize_amount = 6; // in pesewas
+}
+
+message DrawValidation {
+  string nla_reference = 1; // Official NLA reference for verification
+  string draw_certificate = 2; // Digital certificate from NLA
+  string witness_signature = 3; // Independent witness signature
+  repeated string supporting_documents = 4; // Document hashes for audit trail
+}
+
+// Enums
+enum DrawStatus {
+  DRAW_STATUS_UNSPECIFIED = 0;
+  DRAW_STATUS_SCHEDULED = 1;
+  DRAW_STATUS_IN_PROGRESS = 2;
+  DRAW_STATUS_COMPLETED = 3;
+  DRAW_STATUS_FAILED = 4;
+  DRAW_STATUS_CANCELLED = 5;
+}
+
+enum ScheduleFrequency {
+  FREQUENCY_UNSPECIFIED = 0;
+  FREQUENCY_ONE_TIME = 1;
+  FREQUENCY_DAILY = 2;
+  FREQUENCY_WEEKLY = 3;
+  FREQUENCY_MONTHLY = 4;
+  FREQUENCY_CUSTOM = 5;
+}
+
+enum StageStatus {
+  STAGE_STATUS_UNSPECIFIED = 0;
+  STAGE_STATUS_PENDING = 1;
+  STAGE_STATUS_IN_PROGRESS = 2;
+  STAGE_STATUS_COMPLETED = 3;
+  STAGE_STATUS_FAILED = 4;
+}
+
+// Request/Response messages
+message CreateDrawRequest {
+  string game_id = 1;
+  string game_name = 2; // Game name for denormalization
+  string game_code = 9; // Game code for efficient ticket querying
+  string draw_name = 3;
+  google.protobuf.Timestamp scheduled_time = 4;
+  string draw_location = 5;
+  int64 total_tickets_sold = 6; // Number of tickets sold for this game schedule
+  int64 total_prize_pool = 7; // Total stakes in pesewas
+  string game_schedule_id = 8; // The game schedule this draw is created from
+}
+
+message CreateDrawResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdateDrawRequest {
+  string id = 1;
+  string draw_name = 2;
+  google.protobuf.Timestamp scheduled_time = 3;
+  string draw_location = 4;
+}
+
+message UpdateDrawResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetDrawRequest {
+  string id = 1;
+}
+
+message GetDrawResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message ListDrawsRequest {
+  string game_id = 1;
+  DrawStatus status_filter = 2;
+  google.protobuf.Timestamp start_date = 3;
+  google.protobuf.Timestamp end_date = 4;
+  int32 page = 5;
+  int32 per_page = 6;
+}
+
+message ListDrawsResponse {
+  repeated Draw draws = 1;
+  int64 total_count = 2;
+  int32 page = 3;
+  int32 per_page = 4;
+  bool success = 5;
+  string message = 6;
+}
+
+message ScheduleDrawRequest {
+  string game_id = 1;
+  string draw_name = 2;
+  google.protobuf.Timestamp scheduled_time = 3;
+  ScheduleFrequency frequency = 4;
+  string created_by = 5;
+  string notes = 6;
+}
+
+message ScheduleDrawResponse {
+  DrawSchedule schedule = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetScheduledDrawsRequest {
+  string game_id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3;
+  bool active_only = 4;
+}
+
+message GetScheduledDrawsResponse {
+  repeated DrawSchedule schedules = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message CancelScheduledDrawRequest {
+  string schedule_id = 1;
+  string cancelled_by = 2;
+  string reason = 3;
+}
+
+message CancelScheduledDrawResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message RecordDrawResultsRequest {
+  string draw_id = 1;
+  repeated int32 winning_numbers = 2;
+  string nla_draw_reference = 3;
+  string nla_official_signature = 4;
+  DrawValidation validation = 5;
+  string recorded_by = 6;
+}
+
+message RecordDrawResultsResponse {
+  DrawResult result = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message ValidateDrawResultsRequest {
+  string draw_id = 1;
+  DrawValidation validation = 2;
+}
+
+message ValidateDrawResultsResponse {
+  bool is_valid = 1;
+  repeated string validation_errors = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message GetDrawResultsRequest {
+  string draw_id = 1;
+}
+
+message GetDrawResultsResponse {
+  DrawResult result = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message PublishDrawResultsRequest {
+  string draw_id = 1;
+  string published_by = 2;
+  bool notify_winners = 3;
+}
+
+message PublishDrawResultsResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Draw execution workflow messages
+// Stage 1: Preparation
+message StartDrawPreparationRequest {
+  string draw_id = 1;
+  string initiated_by = 2;
+}
+
+message StartDrawPreparationResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message CompleteDrawPreparationRequest {
+  string draw_id = 1;
+  string completed_by = 2;
+}
+
+message CompleteDrawPreparationResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Stage 2: Number Selection
+message StartNumberSelectionRequest {
+  string draw_id = 1;
+  string initiated_by = 2;
+}
+
+message StartNumberSelectionResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message SubmitVerificationAttemptRequest {
+  string draw_id = 1;
+  repeated int32 numbers = 2;
+  string submitted_by = 3;
+}
+
+message SubmitVerificationAttemptResponse {
+  Draw draw = 1;
+  int32 attempt_number = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message ValidateVerificationAttemptsRequest {
+  string draw_id = 1;
+  string validated_by = 2;
+}
+
+message ValidateVerificationAttemptsResponse {
+  bool is_valid = 1;
+  repeated int32 winning_numbers = 2;
+  string validation_error = 3;
+  bool success = 4;
+  string message = 5;
+}
+
+message ResetVerificationAttemptsRequest {
+  string draw_id = 1;
+  string reset_by = 2;
+  string reason = 3;
+}
+
+message ResetVerificationAttemptsResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message CompleteNumberSelectionRequest {
+  string draw_id = 1;
+  repeated int32 winning_numbers = 2;
+  string completed_by = 3;
+}
+
+message CompleteNumberSelectionResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Stage 3: Result Calculation
+message CommitResultsRequest {
+  string draw_id = 1;
+  string committed_by = 2;
+}
+
+message CommitResultsResponse {
+  Draw draw = 1;
+  int64 winning_tickets_count = 2;
+  int64 total_winnings = 3;
+  repeated WinningTier winning_tiers = 4;
+  bool success = 5;
+  string message = 6;
+}
+
+// Stage 4: Payout Processing
+message ProcessPayoutsRequest {
+  string draw_id = 1;
+  string processed_by = 2;
+}
+
+message ProcessPayoutsResponse {
+  Draw draw = 1;
+  int64 auto_processed_count = 2;
+  int64 manual_approval_count = 3;
+  int64 auto_processed_amount = 4;
+  int64 manual_approval_amount = 5;
+  bool success = 6;
+  string message = 7;
+}
+
+message ProcessBigWinPayoutRequest {
+  string draw_id = 1;
+  string ticket_id = 2;
+  bool approve = 3;
+  string processed_by = 4;
+  string rejection_reason = 5;
+}
+
+message ProcessBigWinPayoutResponse {
+  BigWinPayout payout = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message CompleteDrawRequest {
+  string draw_id = 1;
+  string completed_by = 2;
+}
+
+message CompleteDrawResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Public-facing draw result for end users
+message PublicDrawResult {
+  string draw_id = 1;
+  string game_id = 2;
+  string game_name = 3;
+  string game_schedule_id = 4;
+  int32 draw_number = 5;
+  repeated int32 winning_numbers = 6;
+  repeated int32 machine_numbers = 9; // Cosmetic machine numbers
+  google.protobuf.Timestamp draw_date = 7; // scheduled_time
+  string draw_name = 8;
+  string game_logo_url = 10; // Game logo URL for branding
+  string game_brand_color = 11; // Game brand color in HEX format (e.g., #FF5733)
+}
+
+message GetPublicCompletedDrawsRequest {
+  string game_id = 1; // Optional: filter by game
+  string game_code = 2; // Optional: filter by game code (e.g., "FRIBON")
+  bool latest_only = 3; // If true, returns only the latest completed draw per game
+  int32 page = 4; // Page number (default: 1)
+  int32 per_page = 5; // Items per page (default: 10, max: 50)
+  google.protobuf.Timestamp start_date = 6; // Optional: filter draws from this date
+  google.protobuf.Timestamp end_date = 7; // Optional: filter draws until this date
+}
+
+message GetPublicCompletedDrawsResponse {
+  repeated PublicDrawResult draws = 1;
+  int64 total_count = 2;
+  int32 page = 3;
+  int32 per_page = 4;
+  int64 total_pages = 5;
+  bool success = 6;
+  string message = 7;
+}
+
+// Machine Numbers (entered after draw completion)
+message UpdateMachineNumbersRequest {
+  string draw_id = 1;
+  repeated int32 machine_numbers = 2;
+  string updated_by = 3;
+}
+
+message UpdateMachineNumbersResponse {
+  Draw draw = 1;
+  bool success = 2;
+  string message = 3;
+}

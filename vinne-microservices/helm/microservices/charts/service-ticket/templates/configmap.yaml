@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chart.fullname" . }}-config
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+data:
+  # Service configuration
+  SERVICE_NAME: "service-ticket"
+  SERVER_PORT: "50062"
+  SERVER_MODE: "dev"
+  ENVIRONMENT: "dev"
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+
+  # Database configuration
+  DATABASE_HOST: "postgres-ticket.external-services.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "ticket_service"
+  DATABASE_USER: "ticket"
+  DATABASE_SSL_MODE: "disable"
+  DATABASE_MAX_OPEN_CONNS: "25"
+  DATABASE_MAX_IDLE_CONNS: "10"
+  DATABASE_CONN_MAX_LIFETIME: "1800s"
+  DATABASE_CONN_MAX_IDLE_TIME: "600s"
+
+  # Redis configuration
+  REDIS_HOST: "redis-ticket.external-services.svc.cluster.local"
+  REDIS_PORT: "6389"
+  REDIS_DB: "0"
+
+  # Tracing configuration
+  TRACING_ENABLED: "true"
+  TRACING_JAEGER_ENDPOINT: "jaeger.observability.svc.cluster.local:4318"
+  TRACING_SERVICE_NAME: "ticket-service"
+  TRACING_SERVICE_VERSION: "1.0.0"
+  TRACING_SAMPLE_RATE: "1.0"
+  TRACING_ENVIRONMENT: "dev"
+
+  # Kafka configuration
+  KAFKA_BROKERS: "kafka.external-services.svc.cluster.local:9092"
+  KAFKA_CONSUMER_GROUP: "ticket-service-group"
+  KAFKA_TOPIC_PREFIX: "randco"
+
+  # Service dependencies
+  SERVICES_GAME_HOST: "service-game-dev"
+  SERVICES_GAME_PORT: "50053"
+  SERVICES_DRAW_HOST: "service-draw-dev"
+  SERVICES_DRAW_PORT: "50060"
+  SERVICES_PAYMENT_HOST: "service-payment-dev"
+  SERVICES_PAYMENT_PORT: "50061"
+  SERVICES_WALLET_HOST: "service-wallet-dev"
+  SERVICES_WALLET_PORT: "50059"
+  SERVICES_AGENT_MANAGEMENT_HOST: "service-agent-management-dev"
+  SERVICES_AGENT_MANAGEMENT_PORT: "50058"
+
+  # Jaeger configuration
+  JAEGER_ENDPOINT: "jaeger.observability.svc.cluster.local:4318"

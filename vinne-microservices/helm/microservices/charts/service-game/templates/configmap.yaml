@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chart.fullname" . }}-config
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+data:
+  # Service configuration
+  SERVICE_NAME: "service-game"
+  SERVER_PORT: "50053"
+  SERVER_READ_TIMEOUT: "30s"
+  SERVER_WRITE_TIMEOUT: "30s"
+  SERVER_IDLE_TIMEOUT: "120s"
+  SERVER_MODE: "dev"
+  ENVIRONMENT: "dev"
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+
+  # Database configuration
+  DATABASE_HOST: "postgres-game.external-services.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "game_service"
+  DATABASE_USER: "game"
+  DATABASE_SSL_MODE: "disable"
+  DATABASE_MAX_OPEN_CONNS: "25"
+  DATABASE_MAX_IDLE_CONNS: "10"
+  DATABASE_CONN_MAX_LIFETIME: "1800s"
+  DATABASE_CONN_MAX_IDLE_TIME: "600s"
+
+  # Redis configuration
+  REDIS_HOST: "redis-game.external-services.svc.cluster.local"
+  REDIS_PORT: "6388"
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "10"
+  REDIS_MIN_IDLE_CONNS: "5"
+
+  # Security configuration
+  SECURITY_JWT_ISSUER: "randlotteryltd"
+  SECURITY_ACCESS_TOKEN_EXPIRY: "900s"
+  SECURITY_REFRESH_TOKEN_EXPIRY: "168h"
+
+  # Tracing configuration
+  TRACING_ENABLED: "true"
+  TRACING_JAEGER_ENDPOINT: "http://jaeger.observability.svc.cluster.local:4318"
+  TRACING_SERVICE_NAME: "game-service"
+  TRACING_SERVICE_VERSION: "1.0.0"
+  TRACING_SAMPLE_RATE: "1.0"
+  TRACING_ENVIRONMENT: "dev"
+
+  # Kafka configuration
+  KAFKA_BROKERS: "kafka.external-services.svc.cluster.local:9092"
+  KAFKA_CONSUMER_GROUP: "game-service-group"
+  KAFKA_TOPIC_PREFIX: "randco"
+
+  # Scheduler configuration
+  SCHEDULER_ENABLED: "true"
+  SCHEDULER_INTERVAL: "1m"
+  SCHEDULER_WINDOW_MINUTES: "2"
+  SCHEDULER_TIMEZONE: "Africa/Accra"
+
+  # Service dependencies
+  SERVICES_DRAW_HOST: "service-draw-dev"
+  SERVICES_DRAW_PORT: "50060"
+  SERVICES_DRAW_TIMEOUT: "10s"
+  SERVICES_DRAW_MAX_RETRIES: "3"
+  SERVICES_DRAW_RETRY_BACKOFF: "1s"
+
+  SERVICES_TICKET_HOST: "service-ticket-dev"
+  SERVICES_TICKET_PORT: "50062"
+  SERVICES_TICKET_TIMEOUT: "10s"
+  SERVICES_TICKET_MAX_RETRIES: "3"
+  SERVICES_TICKET_RETRY_BACKOFF: "1s"
+
+  SERVICES_NOTIFICATION_HOST: "service-notification-dev"
+  SERVICES_NOTIFICATION_PORT: "50063"
+  SERVICES_NOTIFICATION_TIMEOUT: "10s"
+  SERVICES_NOTIFICATION_MAX_RETRIES: "3"
+  SERVICES_NOTIFICATION_RETRY_BACKOFF: "1s"
+
+  SERVICES_ADMIN_HOST: "service-admin-management-dev"
+  SERVICES_ADMIN_PORT: "50057"
+  SERVICES_ADMIN_TIMEOUT: "10s"
+  SERVICES_ADMIN_MAX_RETRIES: "3"
+  SERVICES_ADMIN_RETRY_BACKOFF: "1s"
+
+  # Notification fallback configuration
+  NOTIFICATION_FALLBACK_EMAILS: "ops@randlottery.com,admin@randlottery.com"
+
+  # Jaeger configuration
+  JAEGER_ENDPOINT: "http://jaeger.observability.svc.cluster.local:4318"
+
+  # Storage configuration (DigitalOcean Spaces)
+  STORAGE_PROVIDER: "spaces"
+  STORAGE_ENDPOINT: "https://lon1.digitaloceanspaces.com"
+  STORAGE_REGION: "lon1"
+  STORAGE_BUCKET: "rand-dev-static"
+  STORAGE_CDN_ENDPOINT: ""
+  STORAGE_FORCE_PATH_STYLE: "false"

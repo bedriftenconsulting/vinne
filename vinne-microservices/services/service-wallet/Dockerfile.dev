@@ -1,0 +1,30 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git ca-certificates
+
+ENV GOFLAGS="-mod=mod"
+ENV GOPROXY="https://proxy.golang.org,direct"
+ENV GONOSUMCHECK="*"
+
+COPY services/service-wallet/go.mod services/service-wallet/go.sum ./services/service-wallet/
+COPY proto ./proto
+COPY shared ./shared
+
+WORKDIR /app/services/service-wallet
+RUN go mod download
+
+WORKDIR /app
+COPY services/service-wallet ./services/service-wallet
+
+WORKDIR /app/services/service-wallet
+RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/server/main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /app/services/service-wallet/main .
+COPY --from=builder /app/services/service-wallet/migrations ./migrations
+EXPOSE 50059 8080
+CMD ["./main"]

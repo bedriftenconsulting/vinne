@@ -1,0 +1,760 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/response"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
+	gamepb "github.com/randco/randco-microservices/services/service-game/proto"
+	"github.com/randco/randco-microservices/shared/common/logger"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// GameHandler defines game management operations
+type GameHandler interface {
+	CreateGame(w http.ResponseWriter, r *http.Request) error
+	GetGame(w http.ResponseWriter, r *http.Request) error
+	ListGames(w http.ResponseWriter, r *http.Request) error
+	UpdateGame(w http.ResponseWriter, r *http.Request) error
+	DeleteGame(w http.ResponseWriter, r *http.Request) error
+	ApproveGame(w http.ResponseWriter, r *http.Request) error
+	RejectGame(w http.ResponseWriter, r *http.Request) error
+	GetPrizeStructure(w http.ResponseWriter, r *http.Request) error
+	UpdatePrizeStructure(w http.ResponseWriter, r *http.Request) error
+	ScheduleGame(w http.ResponseWriter, r *http.Request) error
+	GetGameSchedule(w http.ResponseWriter, r *http.Request) error
+	UpdateGameStatus(w http.ResponseWriter, r *http.Request) error
+	GetGameStatistics(w http.ResponseWriter, r *http.Request) error
+	CloneGame(w http.ResponseWriter, r *http.Request) error
+	GetGameRules(w http.ResponseWriter, r *http.Request) error
+	UpdateGameRules(w http.ResponseWriter, r *http.Request) error
+}
+
+type gameHandlerImpl struct {
+	grpcManager *grpc.ClientManager
+	log         logger.Logger
+}
+
+// NewGameHandler creates a new game handler
+func NewGameHandler(grpcManager *grpc.ClientManager, log logger.Logger) GameHandler {
+	return &gameHandlerImpl{
+		grpcManager: grpcManager,
+		log:         log,
+	}
+}
+
+// CreateGame handles game creation
+func (h *gameHandlerImpl) CreateGame(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Name        string  `json:"name"`
+		Type        string  `json:"type"`
+		Description string  `json:"description"`
+		Organizer   string  `json:"organizer"`
+		MinPrice    float64 `json:"min_price"`
+		MaxPrice    float64 `json:"max_price"`
+		DrawType    string  `json:"draw_type"`
+		MaxNumbers  int32   `json:"max_numbers"`
+		NumberRange struct {
+			Min int32 `json:"min"`
+			Max int32 `json:"max"`
+		} `json:"number_range"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Validate required fields
+	if req.Name == "" || req.Type == "" || req.Organizer == "" {
+		return response.ValidationError(w, "Missing required fields", map[string]string{
+			"required": "name, type, organizer",
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Convert prices to pesewas (smallest unit)
+	minPricePesewas := int64(req.MinPrice * 100)
+	maxPricePesewas := int64(req.MaxPrice * 100)
+
+	grpcReq := &gamepb.CreateGameRequest{
+		Name:        req.Name,
+		Type:        req.Type,
+		Description: req.Description,
+		Organizer:   req.Organizer,
+		MinPrice:    minPricePesewas,
+		MaxPrice:    maxPricePesewas,
+		DrawType:    req.DrawType,
+		MaxNumbers:  req.MaxNumbers,
+		MinNumber:   req.NumberRange.Min,
+		MaxNumber:   req.NumberRange.Max,
+	}
+
+	resp, err := client.CreateGame(ctx, grpcReq)
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to create game")
+	}
+
+	return response.Success(w, http.StatusCreated, "Game created successfully", h.convertGame(resp.Game))
+}
+
+// GetGame retrieves a game by ID
+func (h *gameHandlerImpl) GetGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetGame(ctx, &gamepb.GetGameRequest{
+		GameId: gameID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get game")
+	}
+
+	return response.Success(w, http.StatusOK, "Game retrieved successfully", h.convertGame(resp.Game))
+}
+
+// ListGames retrieves all games with pagination
+func (h *gameHandlerImpl) ListGames(w http.ResponseWriter, r *http.Request) error {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.ListGames(ctx, &gamepb.ListGamesRequest{
+		Page:      int32(page),
+		PageSize:  int32(perPage),
+		Organizer: r.URL.Query().Get("organizer"),
+		Type:      r.URL.Query().Get("type"),
+		Status:    r.URL.Query().Get("status"),
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to list games")
+	}
+
+	games := make([]interface{}, 0, len(resp.Games))
+	for _, g := range resp.Games {
+		games = append(games, h.convertGame(g))
+	}
+
+	return response.SuccessWithPagination(w, "Games retrieved successfully", games, page, perPage, int(resp.Total))
+}
+
+// UpdateGame updates game information
+func (h *gameHandlerImpl) UpdateGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		MinPrice    float64 `json:"min_price"`
+		MaxPrice    float64 `json:"max_price"`
+		MaxNumbers  int32   `json:"max_numbers"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Convert prices to pesewas
+	minPricePesewas := int64(req.MinPrice * 100)
+	maxPricePesewas := int64(req.MaxPrice * 100)
+
+	grpcReq := &gamepb.UpdateGameRequest{
+		GameId:      gameID,
+		Name:        &req.Name,
+		Description: &req.Description,
+		MinPrice:    &minPricePesewas,
+		MaxPrice:    &maxPricePesewas,
+		MaxNumbers:  &req.MaxNumbers,
+	}
+
+	resp, err := client.UpdateGame(ctx, grpcReq)
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update game")
+	}
+
+	return response.Success(w, http.StatusOK, "Game updated successfully", h.convertGame(resp.Game))
+}
+
+// DeleteGame deletes a game
+func (h *gameHandlerImpl) DeleteGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.DeleteGame(ctx, &gamepb.DeleteGameRequest{
+		GameId: gameID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to delete game")
+	}
+
+	return response.Success(w, http.StatusOK, "Game deleted successfully", nil)
+}
+
+// ApproveGame approves a game for operation
+func (h *gameHandlerImpl) ApproveGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		ApprovedBy string `json:"approved_by"`
+		Comments   string `json:"comments"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context (set by auth middleware)
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.ApprovedBy
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.ApproveGame(ctx, &gamepb.ApproveGameRequest{
+		GameId:     gameID,
+		ApprovedBy: userID,
+		Comments:   req.Comments,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to approve game")
+	}
+
+	return response.Success(w, http.StatusOK, "Game approved successfully", h.convertGame(resp.Game))
+}
+
+// RejectGame rejects a game
+func (h *gameHandlerImpl) RejectGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		RejectedBy string `json:"rejected_by"`
+		Reason     string `json:"reason"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.RejectedBy
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.RejectGame(ctx, &gamepb.RejectGameRequest{
+		GameId:     gameID,
+		RejectedBy: userID,
+		Reason:     req.Reason,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to reject game")
+	}
+
+	return response.Success(w, http.StatusOK, "Game rejected", h.convertGame(resp.Game))
+}
+
+// GetPrizeStructure retrieves game prize structure
+func (h *gameHandlerImpl) GetPrizeStructure(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetPrizeStructure(ctx, &gamepb.GetPrizeStructureRequest{
+		GameId: gameID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get prize structure")
+	}
+
+	tiers := make([]map[string]interface{}, 0, len(resp.Tiers))
+	for _, tier := range resp.Tiers {
+		tiers = append(tiers, map[string]interface{}{
+			"tier":             tier.Tier,
+			"matching_numbers": tier.MatchingNumbers,
+			"prize_amount":     float64(tier.PrizeAmount) / 100, // Convert from pesewas to GHS
+			"prize_percentage": tier.PrizePercentage,
+			"odds":             tier.Odds,
+			"is_jackpot":       tier.IsJackpot,
+			"pari_mutuel":      tier.PariMutuel,
+		})
+	}
+
+	return response.Success(w, http.StatusOK, "Prize structure retrieved successfully", map[string]interface{}{
+		"game_id":          gameID,
+		"tiers":            tiers,
+		"total_prize_pool": float64(resp.TotalPrizePool) / 100,
+	})
+}
+
+// UpdatePrizeStructure updates game prize structure
+func (h *gameHandlerImpl) UpdatePrizeStructure(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		Tiers []struct {
+			Tier            int32   `json:"tier"`
+			MatchingNumbers int32   `json:"matching_numbers"`
+			PrizeAmount     float64 `json:"prize_amount"`
+			PrizePercentage float32 `json:"prize_percentage"`
+			Odds            string  `json:"odds"`
+			IsJackpot       bool    `json:"is_jackpot"`
+			PariMutuel      bool    `json:"pari_mutuel"`
+		} `json:"tiers"`
+		TotalPrizePool float64 `json:"total_prize_pool"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Convert tiers
+	tiers := make([]*gamepb.PrizeTier, 0, len(req.Tiers))
+	for _, t := range req.Tiers {
+		tiers = append(tiers, &gamepb.PrizeTier{
+			Tier:            t.Tier,
+			MatchingNumbers: t.MatchingNumbers,
+			PrizeAmount:     int64(t.PrizeAmount * 100), // Convert to pesewas
+			PrizePercentage: t.PrizePercentage,
+			Odds:            t.Odds,
+			IsJackpot:       t.IsJackpot,
+			PariMutuel:      t.PariMutuel,
+		})
+	}
+
+	_, err = client.UpdatePrizeStructure(ctx, &gamepb.UpdatePrizeStructureRequest{
+		GameId:         gameID,
+		Tiers:          tiers,
+		TotalPrizePool: int64(req.TotalPrizePool * 100),
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update prize structure")
+	}
+
+	return response.Success(w, http.StatusOK, "Prize structure updated successfully", nil)
+}
+
+// ScheduleGame schedules a game
+func (h *gameHandlerImpl) ScheduleGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		StartDate  string   `json:"start_date"`
+		EndDate    string   `json:"end_date"`
+		DrawTime   string   `json:"draw_time"`
+		DrawDays   []string `json:"draw_days"`
+		Frequency  string   `json:"frequency"`
+		CutoffTime string   `json:"cutoff_time"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.ScheduleGame(ctx, &gamepb.ScheduleGameRequest{
+		GameId:     gameID,
+		StartDate:  req.StartDate,
+		EndDate:    req.EndDate,
+		DrawTime:   req.DrawTime,
+		DrawDays:   req.DrawDays,
+		Frequency:  req.Frequency,
+		CutoffTime: req.CutoffTime,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to schedule game")
+	}
+
+	return response.Success(w, http.StatusOK, "Game scheduled successfully", nil)
+}
+
+// GetGameSchedule retrieves game schedule
+func (h *gameHandlerImpl) GetGameSchedule(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetGameSchedule(ctx, &gamepb.GetGameScheduleRequest{
+		GameId: gameID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get game schedule")
+	}
+
+	return response.Success(w, http.StatusOK, "Game schedule retrieved successfully", map[string]interface{}{
+		"game_id":     gameID,
+		"start_date":  resp.StartDate,
+		"end_date":    resp.EndDate,
+		"draw_time":   resp.DrawTime,
+		"draw_days":   resp.DrawDays,
+		"frequency":   resp.Frequency,
+		"cutoff_time": resp.CutoffTime,
+		"next_draw":   resp.NextDraw,
+	})
+}
+
+// UpdateGameStatus updates game status
+func (h *gameHandlerImpl) UpdateGameStatus(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.UpdateGameStatus(ctx, &gamepb.UpdateGameStatusRequest{
+		GameId: gameID,
+		Status: req.Status,
+		Reason: req.Reason,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update game status")
+	}
+
+	return response.Success(w, http.StatusOK, "Game status updated successfully", h.convertGame(resp.Game))
+}
+
+// GetGameStatistics retrieves game statistics
+func (h *gameHandlerImpl) GetGameStatistics(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetGameStatistics(ctx, &gamepb.GetGameStatisticsRequest{
+		GameId: gameID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get game statistics")
+	}
+
+	return response.Success(w, http.StatusOK, "Game statistics retrieved successfully", map[string]interface{}{
+		"game_id":         gameID,
+		"total_tickets":   resp.TotalTickets,
+		"total_sales":     float64(resp.TotalSales) / 100,
+		"total_prizes":    float64(resp.TotalPrizes) / 100,
+		"total_draws":     resp.TotalDraws,
+		"average_jackpot": float64(resp.AverageJackpot) / 100,
+		"highest_jackpot": float64(resp.HighestJackpot) / 100,
+		"last_draw_date":  resp.LastDrawDate,
+	})
+}
+
+// CloneGame clones an existing game
+func (h *gameHandlerImpl) CloneGame(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		NewName      string `json:"new_name"`
+		NewOrganizer string `json:"new_organizer"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.CloneGame(ctx, &gamepb.CloneGameRequest{
+		GameId:       gameID,
+		NewName:      req.NewName,
+		NewOrganizer: req.NewOrganizer,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to clone game")
+	}
+
+	return response.Success(w, http.StatusCreated, "Game cloned successfully", h.convertGame(resp.Game))
+}
+
+// GetGameRules retrieves game rules
+func (h *gameHandlerImpl) GetGameRules(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetGameRules(ctx, &gamepb.GetGameRulesRequest{
+		GameId: gameID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get game rules")
+	}
+
+	return response.Success(w, http.StatusOK, "Game rules retrieved successfully", map[string]interface{}{
+		"game_id":      gameID,
+		"rules":        resp.Rules,
+		"version":      resp.Version,
+		"last_updated": resp.LastUpdated,
+	})
+}
+
+// UpdateGameRules updates game rules
+func (h *gameHandlerImpl) UpdateGameRules(w http.ResponseWriter, r *http.Request) error {
+	gameID := router.GetParam(r, "id")
+	if gameID == "" {
+		return response.ValidationError(w, "Game ID is required", nil)
+	}
+
+	var req struct {
+		Rules map[string]string `json:"rules"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getGameClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Game")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.UpdateGameRules(ctx, &gamepb.UpdateGameRulesRequest{
+		GameId: gameID,
+		Rules:  req.Rules,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update game rules")
+	}
+
+	return response.Success(w, http.StatusOK, "Game rules updated successfully", nil)
+}
+
+// Helper methods
+
+func (h *gameHandlerImpl) getGameClient() (gamepb.GameServiceClient, error) {
+	conn, err := h.grpcManager.GetConnection("game")
+	if err != nil {
+		h.log.Error("Failed to get game service connection", "error", err)
+		return nil, err
+	}
+	return gamepb.NewGameServiceClient(conn), nil
+}
+
+func (h *gameHandlerImpl) convertGame(g *gamepb.Game) map[string]interface{} {
+	if g == nil {
+		return nil
+	}
+
+	return map[string]interface{}{
+		"id":          g.Id,
+		"name":        g.Name,
+		"type":        g.Type,
+		"description": g.Description,
+		"organizer":   g.Organizer,
+		"min_price":   float64(g.MinPrice) / 100, // Convert from pesewas to GHS
+		"max_price":   float64(g.MaxPrice) / 100, // Convert from pesewas to GHS
+		"status":      g.Status,
+		"draw_type":   g.DrawType,
+		"max_numbers": g.MaxNumbers,
+		"number_range": map[string]int32{
+			"min": g.MinNumber,
+			"max": g.MaxNumber,
+		},
+		"created_at":  g.CreatedAt,
+		"updated_at":  g.UpdatedAt,
+		"approved_at": g.ApprovedAt,
+		"approved_by": g.ApprovedBy,
+	}
+}
+
+func (h *gameHandlerImpl) handleGRPCError(w http.ResponseWriter, err error, defaultMsg string) error {
+	st, ok := status.FromError(err)
+	if !ok {
+		h.log.Error(defaultMsg, "error", err)
+		return response.InternalError(w, defaultMsg)
+	}
+
+	switch st.Code() {
+	case codes.NotFound:
+		return response.NotFoundError(w, "Game")
+	case codes.InvalidArgument:
+		return response.ValidationError(w, st.Message(), nil)
+	case codes.AlreadyExists:
+		return response.ConflictError(w, st.Message())
+	case codes.PermissionDenied:
+		return response.ForbiddenError(w, st.Message())
+	case codes.Unauthenticated:
+		return response.UnauthorizedError(w, st.Message())
+	case codes.Unavailable:
+		return response.ServiceUnavailableError(w, "Game")
+	default:
+		h.log.Error(defaultMsg, "error", err, "code", st.Code())
+		return response.InternalError(w, defaultMsg)
+	}
+}

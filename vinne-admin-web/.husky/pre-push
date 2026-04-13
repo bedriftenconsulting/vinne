@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔍 Running pre-push validation..."
+
+# First run type check
+echo "📝 Type checking..."
+if ! npm run type-check; then
+  echo "❌ Type check failed! Fix TypeScript errors before pushing."
+  exit 1
+fi
+
+# Then run build
+echo "🔨 Building project..."
+if ! npm run build; then
+  echo "❌ Build failed! Fix build errors before pushing."
+  exit 1
+fi
+
+echo "✅ All checks passed! Ready to push."

@@ -1,0 +1,9 @@
+**/.git
+**/node_modules
+**/*.exe
+**/*.test
+**/tmp
+**/logs
+**/.env
+**/.idea
+**/.vscode

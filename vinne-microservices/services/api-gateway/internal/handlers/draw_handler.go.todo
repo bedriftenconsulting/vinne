@@ -1,0 +1,804 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/response"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
+	drawpb "github.com/randco/randco-microservices/services/service-draw/proto"
+	"github.com/randco/randco-microservices/shared/common/logger"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+// DrawHandler defines draw management operations
+type DrawHandler interface {
+	CreateDraw(w http.ResponseWriter, r *http.Request) error
+	GetDraw(w http.ResponseWriter, r *http.Request) error
+	ListDraws(w http.ResponseWriter, r *http.Request) error
+	UpdateDraw(w http.ResponseWriter, r *http.Request) error
+	DeleteDraw(w http.ResponseWriter, r *http.Request) error
+	PrepareDraw(w http.ResponseWriter, r *http.Request) error
+	ExecuteDraw(w http.ResponseWriter, r *http.Request) error
+	SaveDrawProgress(w http.ResponseWriter, r *http.Request) error
+	RestartDraw(w http.ResponseWriter, r *http.Request) error
+	CommitDrawResults(w http.ResponseWriter, r *http.Request) error
+	ProcessPayout(w http.ResponseWriter, r *http.Request) error
+	GetDrawResults(w http.ResponseWriter, r *http.Request) error
+	ValidateDraw(w http.ResponseWriter, r *http.Request) error
+	GetDrawStatistics(w http.ResponseWriter, r *http.Request) error
+	GetWinningNumbers(w http.ResponseWriter, r *http.Request) error
+	RecordPhysicalDraw(w http.ResponseWriter, r *http.Request) error
+}
+
+type drawHandlerImpl struct {
+	grpcManager *grpc.ClientManager
+	log         logger.Logger
+}
+
+// NewDrawHandler creates a new draw handler
+func NewDrawHandler(grpcManager *grpc.ClientManager, log logger.Logger) DrawHandler {
+	return &drawHandlerImpl{
+		grpcManager: grpcManager,
+		log:         log,
+	}
+}
+
+// CreateDraw creates a new draw
+func (h *drawHandlerImpl) CreateDraw(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		GameID        string `json:"game_id"`
+		DrawName      string `json:"draw_name"`
+		ScheduledTime string `json:"scheduled_time"`
+		DrawLocation  string `json:"draw_location"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	if req.GameID == "" || req.DrawName == "" {
+		return response.ValidationError(w, "Missing required fields", map[string]string{
+			"required": "game_id, draw_name",
+		})
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Parse scheduled time if provided
+	var scheduledTime *timestamppb.Timestamp
+	if req.ScheduledTime != "" {
+		parsedTime, err := time.Parse(time.RFC3339, req.ScheduledTime)
+		if err != nil {
+			return response.ValidationError(w, "Invalid scheduled_time format", map[string]string{
+				"error": "scheduled_time must be in RFC3339 format",
+			})
+		}
+		scheduledTime = timestamppb.New(parsedTime)
+	}
+
+	grpcReq := &drawpb.CreateDrawRequest{
+		GameId:        req.GameID,
+		DrawName:      req.DrawName,
+		ScheduledTime: scheduledTime,
+		DrawLocation:  req.DrawLocation,
+	}
+
+	resp, err := client.CreateDraw(ctx, grpcReq)
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to create draw")
+	}
+
+	return response.Success(w, http.StatusCreated, "Draw created successfully", h.convertDraw(resp.Draw))
+}
+
+// GetDraw retrieves a draw by ID
+func (h *drawHandlerImpl) GetDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetDraw(ctx, &drawpb.GetDrawRequest{
+		DrawId: drawID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw retrieved successfully", h.convertDraw(resp.Draw))
+}
+
+// ListDraws retrieves all draws with pagination
+func (h *drawHandlerImpl) ListDraws(w http.ResponseWriter, r *http.Request) error {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.ListDraws(ctx, &drawpb.ListDrawsRequest{
+		Page:     int32(page),
+		PageSize: int32(perPage),
+		GameId:   r.URL.Query().Get("game_id"),
+		Status:   r.URL.Query().Get("status"),
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to list draws")
+	}
+
+	draws := make([]interface{}, 0, len(resp.Draws))
+	for _, d := range resp.Draws {
+		draws = append(draws, h.convertDraw(d))
+	}
+
+	return response.SuccessWithPagination(w, "Draws retrieved successfully", draws, page, perPage, int(resp.Total))
+}
+
+// UpdateDraw updates draw information
+func (h *drawHandlerImpl) UpdateDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		StartDate   string `json:"start_date"`
+		EndDate     string `json:"end_date"`
+		DrawTime    string `json:"draw_time"`
+		Description string `json:"description"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &drawpb.UpdateDrawRequest{
+		DrawId:      drawID,
+		StartDate:   &req.StartDate,
+		EndDate:     &req.EndDate,
+		DrawTime:    &req.DrawTime,
+		Description: &req.Description,
+	}
+
+	resp, err := client.UpdateDraw(ctx, grpcReq)
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw updated successfully", h.convertDraw(resp.Draw))
+}
+
+// DeleteDraw deletes a draw
+func (h *drawHandlerImpl) DeleteDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.DeleteDraw(ctx, &drawpb.DeleteDrawRequest{
+		DrawId: drawID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to delete draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw deleted successfully", nil)
+}
+
+// PrepareDraw prepares a draw for execution (Stage 1)
+func (h *drawHandlerImpl) PrepareDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.PrepareDraw(ctx, &drawpb.PrepareDrawRequest{
+		DrawId: drawID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to prepare draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw prepared successfully", map[string]interface{}{
+		"draw_id":       drawID,
+		"stage":         resp.Stage,
+		"status":        resp.Status,
+		"total_entries": resp.TotalEntries,
+		"valid_entries": resp.ValidEntries,
+		"locked_at":     resp.LockedAt,
+		"can_proceed":   resp.CanProceed,
+	})
+}
+
+// ExecuteDraw executes the draw (Stage 2)
+func (h *drawHandlerImpl) ExecuteDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		DrawMethod string  `json:"draw_method"` // "RNG" or "PHYSICAL"
+		Numbers    []int32 `json:"numbers"`     // For physical draw
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.ExecuteDraw(ctx, &drawpb.ExecuteDrawRequest{
+		DrawId:     drawID,
+		DrawMethod: req.DrawMethod,
+		Numbers:    req.Numbers,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to execute draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw executed successfully", map[string]interface{}{
+		"draw_id":         drawID,
+		"stage":           resp.Stage,
+		"status":          resp.Status,
+		"winning_numbers": resp.WinningNumbers,
+		"draw_method":     resp.DrawMethod,
+		"executed_at":     resp.ExecutedAt,
+	})
+}
+
+// SaveDrawProgress saves draw progress for resumption
+func (h *drawHandlerImpl) SaveDrawProgress(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		Stage    string                 `json:"stage"`
+		Progress map[string]interface{} `json:"progress"`
+		Notes    string                 `json:"notes"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Convert progress map to string (in real implementation, use proper serialization)
+	progressStr := ""
+	for k, v := range req.Progress {
+		progressStr += k + "=" + v.(string) + ";"
+	}
+
+	_, err = client.SaveDrawProgress(ctx, &drawpb.SaveDrawProgressRequest{
+		DrawId:   drawID,
+		Stage:    req.Stage,
+		Progress: progressStr,
+		Notes:    req.Notes,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to save draw progress")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw progress saved successfully", nil)
+}
+
+// RestartDraw restarts a draw (requires special permission)
+func (h *drawHandlerImpl) RestartDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		Reason      string `json:"reason"`
+		RestartedBy string `json:"restarted_by"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.RestartedBy
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.RestartDraw(ctx, &drawpb.RestartDrawRequest{
+		DrawId:      drawID,
+		Reason:      req.Reason,
+		RestartedBy: userID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to restart draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw restarted successfully", h.convertDraw(resp.Draw))
+}
+
+// CommitDrawResults commits draw results (Stage 3)
+func (h *drawHandlerImpl) CommitDrawResults(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		WinningNumbers []int32 `json:"winning_numbers"`
+		CommittedBy    string  `json:"committed_by"`
+		NLAReference   string  `json:"nla_reference"`
+		NLASignature   string  `json:"nla_signature"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.CommittedBy
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.CommitDrawResults(ctx, &drawpb.CommitDrawResultsRequest{
+		DrawId:         drawID,
+		WinningNumbers: req.WinningNumbers,
+		CommittedBy:    userID,
+		NlaReference:   req.NLAReference,
+		NlaSignature:   req.NLASignature,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to commit draw results")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw results committed successfully", map[string]interface{}{
+		"draw_id":        drawID,
+		"stage":          resp.Stage,
+		"status":         resp.Status,
+		"total_winners":  resp.TotalWinners,
+		"total_payout":   float64(resp.TotalPayout) / 100,
+		"big_wins_count": resp.BigWinsCount,
+		"committed_at":   resp.CommittedAt,
+	})
+}
+
+// ProcessPayout processes draw payouts (Stage 4)
+func (h *drawHandlerImpl) ProcessPayout(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		ExcludeBigWins bool   `json:"exclude_big_wins"`
+		ProcessedBy    string `json:"processed_by"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.ProcessedBy
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second) // Longer timeout for payout processing
+	defer cancel()
+
+	resp, err := client.ProcessPayout(ctx, &drawpb.ProcessPayoutRequest{
+		DrawId:         drawID,
+		ExcludeBigWins: req.ExcludeBigWins,
+		ProcessedBy:    userID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to process payout")
+	}
+
+	return response.Success(w, http.StatusOK, "Payout processed successfully", map[string]interface{}{
+		"draw_id":           drawID,
+		"processed_count":   resp.ProcessedCount,
+		"failed_count":      resp.FailedCount,
+		"total_amount":      float64(resp.TotalAmount) / 100,
+		"big_wins_excluded": resp.BigWinsExcluded,
+		"big_wins_amount":   float64(resp.BigWinsAmount) / 100,
+		"status":            resp.Status,
+		"processed_at":      resp.ProcessedAt,
+	})
+}
+
+// GetDrawResults retrieves draw results
+func (h *drawHandlerImpl) GetDrawResults(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetDrawResults(ctx, &drawpb.GetDrawResultsRequest{
+		DrawId: drawID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get draw results")
+	}
+
+	// Convert prize distributions
+	distributions := make([]map[string]interface{}, 0, len(resp.PrizeDistributions))
+	for _, pd := range resp.PrizeDistributions {
+		distributions = append(distributions, map[string]interface{}{
+			"tier":          pd.Tier,
+			"winners_count": pd.WinnersCount,
+			"prize_amount":  float64(pd.PrizeAmount) / 100,
+			"total_payout":  float64(pd.TotalPayout) / 100,
+		})
+	}
+
+	return response.Success(w, http.StatusOK, "Draw results retrieved successfully", map[string]interface{}{
+		"draw_id":             drawID,
+		"winning_numbers":     resp.WinningNumbers,
+		"total_winners":       resp.TotalWinners,
+		"total_payout":        float64(resp.TotalPayout) / 100,
+		"prize_distributions": distributions,
+		"draw_date":           resp.DrawDate,
+		"nla_reference":       resp.NlaReference,
+		"validated":           resp.Validated,
+	})
+}
+
+// ValidateDraw validates draw results with NLA
+func (h *drawHandlerImpl) ValidateDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		NLAReference   string `json:"nla_reference"`
+		NLASignature   string `json:"nla_signature"`
+		ValidatedBy    string `json:"validated_by"`
+		ValidationNote string `json:"validation_note"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.ValidatedBy
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.ValidateDraw(ctx, &drawpb.ValidateDrawRequest{
+		DrawId:         drawID,
+		NlaReference:   req.NLAReference,
+		NlaSignature:   req.NLASignature,
+		ValidatedBy:    userID,
+		ValidationNote: req.ValidationNote,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to validate draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw validated successfully", map[string]interface{}{
+		"draw_id":      drawID,
+		"validated":    resp.Validated,
+		"validated_at": resp.ValidatedAt,
+		"validated_by": resp.ValidatedBy,
+	})
+}
+
+// GetDrawStatistics retrieves draw statistics
+func (h *drawHandlerImpl) GetDrawStatistics(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetDrawStatistics(ctx, &drawpb.GetDrawStatisticsRequest{
+		DrawId: drawID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get draw statistics")
+	}
+
+	return response.Success(w, http.StatusOK, "Draw statistics retrieved successfully", map[string]interface{}{
+		"draw_id":           drawID,
+		"total_tickets":     resp.TotalTickets,
+		"total_sales":       float64(resp.TotalSales) / 100,
+		"total_prizes":      float64(resp.TotalPrizes) / 100,
+		"jackpot_winners":   resp.JackpotWinners,
+		"jackpot_amount":    float64(resp.JackpotAmount) / 100,
+		"average_win":       float64(resp.AverageWin) / 100,
+		"highest_win":       float64(resp.HighestWin) / 100,
+		"payout_percentage": resp.PayoutPercentage,
+	})
+}
+
+// GetWinningNumbers retrieves winning numbers for a draw
+func (h *drawHandlerImpl) GetWinningNumbers(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetWinningNumbers(ctx, &drawpb.GetWinningNumbersRequest{
+		DrawId: drawID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get winning numbers")
+	}
+
+	return response.Success(w, http.StatusOK, "Winning numbers retrieved successfully", map[string]interface{}{
+		"draw_id":         drawID,
+		"winning_numbers": resp.WinningNumbers,
+		"bonus_numbers":   resp.BonusNumbers,
+		"draw_method":     resp.DrawMethod,
+		"draw_date":       resp.DrawDate,
+	})
+}
+
+// RecordPhysicalDraw records results from a physical draw conducted at NLA premises
+func (h *drawHandlerImpl) RecordPhysicalDraw(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "Draw ID is required", nil)
+	}
+
+	var req struct {
+		WinningNumbers []int32  `json:"winning_numbers"`
+		BonusNumbers   []int32  `json:"bonus_numbers"`
+		NLAOfficials   []string `json:"nla_officials"`
+		WitnessNames   []string `json:"witness_names"`
+		VideoReference string   `json:"video_reference"`
+		RecordedBy     string   `json:"recorded_by"`
+		DrawLocation   string   `json:"draw_location"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	// Get user ID from context
+	userID := router.GetUserID(r)
+	if userID == "" {
+		userID = req.RecordedBy
+	}
+
+	client, err := h.getDrawClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.RecordPhysicalDraw(ctx, &drawpb.RecordPhysicalDrawRequest{
+		DrawId:         drawID,
+		WinningNumbers: req.WinningNumbers,
+		BonusNumbers:   req.BonusNumbers,
+		NlaOfficials:   req.NLAOfficials,
+		WitnessNames:   req.WitnessNames,
+		VideoReference: req.VideoReference,
+		RecordedBy:     userID,
+		DrawLocation:   req.DrawLocation,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to record physical draw")
+	}
+
+	return response.Success(w, http.StatusOK, "Physical draw recorded successfully", map[string]interface{}{
+		"draw_id":       drawID,
+		"recorded":      resp.Recorded,
+		"recorded_at":   resp.RecordedAt,
+		"nla_reference": resp.NlaReference,
+	})
+}
+
+// Helper methods
+
+func (h *drawHandlerImpl) getDrawClient() (drawpb.DrawServiceClient, error) {
+	conn, err := h.grpcManager.GetConnection("draw")
+	if err != nil {
+		h.log.Error("Failed to get draw service connection", "error", err)
+		return nil, err
+	}
+	return drawpb.NewDrawServiceClient(conn), nil
+}
+
+func (h *drawHandlerImpl) convertDraw(d *drawpb.Draw) map[string]interface{} {
+	if d == nil {
+		return nil
+	}
+
+	return map[string]interface{}{
+		"id":              d.Id,
+		"game_id":         d.GameId,
+		"start_date":      d.StartDate,
+		"end_date":        d.EndDate,
+		"draw_time":       d.DrawTime,
+		"status":          d.Status,
+		"stage":           d.Stage,
+		"winning_numbers": d.WinningNumbers,
+		"total_tickets":   d.TotalTickets,
+		"total_sales":     float64(d.TotalSales) / 100,
+		"total_prizes":    float64(d.TotalPrizes) / 100,
+		"description":     d.Description,
+		"created_at":      d.CreatedAt,
+		"updated_at":      d.UpdatedAt,
+		"executed_at":     d.ExecutedAt,
+		"validated":       d.Validated,
+		"nla_reference":   d.NlaReference,
+	}
+}
+
+func (h *drawHandlerImpl) handleGRPCError(w http.ResponseWriter, err error, defaultMsg string) error {
+	st, ok := status.FromError(err)
+	if !ok {
+		h.log.Error(defaultMsg, "error", err)
+		return response.InternalError(w, defaultMsg)
+	}
+
+	switch st.Code() {
+	case codes.NotFound:
+		return response.NotFoundError(w, "Draw")
+	case codes.InvalidArgument:
+		return response.ValidationError(w, st.Message(), nil)
+	case codes.AlreadyExists:
+		return response.ConflictError(w, st.Message())
+	case codes.PermissionDenied:
+		return response.ForbiddenError(w, st.Message())
+	case codes.Unauthenticated:
+		return response.UnauthorizedError(w, st.Message())
+	case codes.FailedPrecondition:
+		return response.ValidationError(w, st.Message(), map[string]string{
+			"error": "precondition_failed",
+		})
+	case codes.Unavailable:
+		return response.ServiceUnavailableError(w, "Draw")
+	default:
+		h.log.Error(defaultMsg, "error", err, "code", st.Code())
+		return response.InternalError(w, defaultMsg)
+	}
+}

@@ -1,0 +1,449 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
+	walletpb "github.com/randco/randco-microservices/services/service-wallet/proto"
+	"github.com/randco/randco-microservices/shared/common/logger"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+// WalletHandler handles wallet-related requests
+type WalletHandler struct {
+	grpcManager *grpc.ClientManager
+	logger      logger.Logger
+}
+
+// NewWalletHandler creates a new wallet handler
+func NewWalletHandler(grpcManager *grpc.ClientManager, logger logger.Logger) *WalletHandler {
+	return &WalletHandler{
+		grpcManager: grpcManager,
+		logger:      logger,
+	}
+}
+
+// CreditAgentWalletRequest represents the request to credit an agent's wallet
+type CreditAgentWalletRequest struct {
+	Amount        float64 `json:"amount" validate:"required,gt=0"`
+	Reference     string  `json:"reference"`
+	PaymentMethod string  `json:"payment_method" validate:"required"`
+	Notes         string  `json:"notes"`
+}
+
+// CreditAgentWallet handles POST /api/v1/admin/agents/{agentId}/wallet/credit
+func (h *WalletHandler) CreditAgentWallet(w http.ResponseWriter, r *http.Request) error {
+	agentID := chi.URLParam(r, "agentId")
+	if agentID == "" {
+		return router.BadRequest("agent_id is required")
+	}
+
+	var req CreditAgentWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return router.BadRequest("invalid request body")
+	}
+
+	// Validate request
+	if req.Amount <= 0 {
+		return router.BadRequest("amount must be positive")
+	}
+
+	// Get wallet service client
+	conn, err := h.grpcManager.GetConnection("wallet")
+	if err != nil {
+		h.logger.Error("Failed to get wallet service connection", "error", err)
+		return router.InternalError("service unavailable")
+	}
+
+	client := walletpb.NewWalletServiceClient(conn)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Make gRPC call
+	resp, err := client.CreditAgentWallet(ctx, &walletpb.CreditAgentWalletRequest{
+		AgentId:        agentID,
+		Amount:         req.Amount,
+		Reference:      req.Reference,
+		PaymentMethod:  req.PaymentMethod,
+		Notes:          req.Notes,
+		IdempotencyKey: r.Header.Get("X-Idempotency-Key"),
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to credit agent wallet", "error", err, "agent_id", agentID)
+		return h.handleGRPCError(err)
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":           resp.Success,
+		"transaction_id":    resp.TransactionId,
+		"credited_amount":   resp.CreditedAmount,
+		"commission_amount": resp.CommissionAmount,
+		"total_amount":      resp.TotalAmount,
+		"new_balance":       resp.NewBalance,
+		"message":           resp.Message,
+		"timestamp":         resp.Timestamp.AsTime(),
+	})
+}
+
+// GetAgentWalletBalance handles GET /api/v1/admin/agents/{agentId}/wallet/balance
+func (h *WalletHandler) GetAgentWalletBalance(w http.ResponseWriter, r *http.Request) error {
+	agentID := chi.URLParam(r, "agentId")
+	if agentID == "" {
+		return router.BadRequest("agent_id is required")
+	}
+
+	// Get wallet service client
+	conn, err := h.grpcManager.GetConnection("wallet")
+	if err != nil {
+		h.logger.Error("Failed to get wallet service connection", "error", err)
+		return router.InternalError("service unavailable")
+	}
+
+	client := walletpb.NewWalletServiceClient(conn)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Make gRPC call
+	resp, err := client.GetAgentWalletBalance(ctx, &walletpb.GetAgentWalletBalanceRequest{
+		AgentId: agentID,
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to get agent wallet balance", "error", err, "agent_id", agentID)
+		return h.handleGRPCError(err)
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"agent_id":          resp.AgentId,
+		"balance":           resp.Balance,
+		"pending_balance":   resp.PendingBalance,
+		"available_balance": resp.AvailableBalance,
+		"last_updated":      resp.LastUpdated.AsTime(),
+	})
+}
+
+// CreditRetailerWalletRequest represents the request to credit a retailer's wallet
+type CreditRetailerWalletRequest struct {
+	WalletType string  `json:"wallet_type" validate:"required,oneof=stake winning"`
+	Amount     float64 `json:"amount" validate:"required,gt=0"`
+	Reference  string  `json:"reference"`
+	AgentID    string  `json:"agent_id"`
+	Notes      string  `json:"notes"`
+}
+
+// CreditRetailerWallet handles POST /api/v1/admin/retailers/{retailerId}/wallet/credit
+func (h *WalletHandler) CreditRetailerWallet(w http.ResponseWriter, r *http.Request) error {
+	retailerID := chi.URLParam(r, "retailerId")
+	if retailerID == "" {
+		return router.BadRequest("retailer_id is required")
+	}
+
+	var req CreditRetailerWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return router.BadRequest("invalid request body")
+	}
+
+	// Validate request
+	if req.Amount <= 0 {
+		return router.BadRequest("amount must be positive")
+	}
+
+	// Convert wallet type
+	walletType := walletpb.WalletType_RETAILER_STAKE
+	if req.WalletType == "winning" {
+		walletType = walletpb.WalletType_RETAILER_WINNING
+	}
+
+	// Get wallet service client
+	conn, err := h.grpcManager.GetConnection("wallet")
+	if err != nil {
+		h.logger.Error("Failed to get wallet service connection", "error", err)
+		return router.InternalError("service unavailable")
+	}
+
+	client := walletpb.NewWalletServiceClient(conn)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Make gRPC call
+	resp, err := client.CreditRetailerWallet(ctx, &walletpb.CreditRetailerWalletRequest{
+		RetailerId:     retailerID,
+		WalletType:     walletType,
+		Amount:         req.Amount,
+		Reference:      req.Reference,
+		AgentId:        req.AgentID,
+		Notes:          req.Notes,
+		IdempotencyKey: r.Header.Get("X-Idempotency-Key"),
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to credit retailer wallet", "error", err, "retailer_id", retailerID)
+		return h.handleGRPCError(err)
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":          resp.Success,
+		"transaction_id":   resp.TransactionId,
+		"credited_amount":  resp.CreditedAmount,
+		"agent_commission": resp.AgentCommission,
+		"new_balance":      resp.NewBalance,
+		"message":          resp.Message,
+		"timestamp":        resp.Timestamp.AsTime(),
+	})
+}
+
+// GetRetailerWalletBalance handles GET /api/v1/admin/retailers/{retailerId}/wallet/balance
+func (h *WalletHandler) GetRetailerWalletBalance(w http.ResponseWriter, r *http.Request) error {
+	retailerID := chi.URLParam(r, "retailerId")
+	if retailerID == "" {
+		return router.BadRequest("retailer_id is required")
+	}
+
+	walletTypeStr := r.URL.Query().Get("wallet_type")
+	if walletTypeStr == "" {
+		walletTypeStr = "stake" // Default to stake wallet
+	}
+
+	// Convert wallet type
+	walletType := walletpb.WalletType_RETAILER_STAKE
+	if walletTypeStr == "winning" {
+		walletType = walletpb.WalletType_RETAILER_WINNING
+	}
+
+	// Get wallet service client
+	conn, err := h.grpcManager.GetConnection("wallet")
+	if err != nil {
+		h.logger.Error("Failed to get wallet service connection", "error", err)
+		return router.InternalError("service unavailable")
+	}
+
+	client := walletpb.NewWalletServiceClient(conn)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Make gRPC call
+	resp, err := client.GetRetailerWalletBalance(ctx, &walletpb.GetRetailerWalletBalanceRequest{
+		RetailerId: retailerID,
+		WalletType: walletType,
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to get retailer wallet balance", "error", err, "retailer_id", retailerID)
+		return h.handleGRPCError(err)
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"retailer_id":       resp.RetailerId,
+		"wallet_type":       walletTypeStr,
+		"balance":           resp.Balance,
+		"pending_balance":   resp.PendingBalance,
+		"available_balance": resp.AvailableBalance,
+		"last_updated":      resp.LastUpdated.AsTime(),
+	})
+}
+
+// GetTransactionHistory handles GET /api/v1/admin/{ownerType}/{ownerId}/wallet/transactions
+func (h *WalletHandler) GetTransactionHistory(w http.ResponseWriter, r *http.Request) error {
+	ownerType := chi.URLParam(r, "ownerType")
+	ownerID := chi.URLParam(r, "ownerId")
+
+	if ownerID == "" {
+		return router.BadRequest("owner_id is required")
+	}
+
+	// Parse query parameters
+	query := r.URL.Query()
+	page := 1
+	pageSize := 20
+
+	// Parse dates
+	var startDate, endDate *timestamppb.Timestamp
+	if start := query.Get("start_date"); start != "" {
+		if t, err := time.Parse(time.RFC3339, start); err == nil {
+			startDate = timestamppb.New(t)
+		}
+	}
+	if end := query.Get("end_date"); end != "" {
+		if t, err := time.Parse(time.RFC3339, end); err == nil {
+			endDate = timestamppb.New(t)
+		}
+	}
+
+	// Determine wallet type based on owner type
+	var walletType walletpb.WalletType
+	switch ownerType {
+	case "agents":
+		walletType = walletpb.WalletType_AGENT_STAKE
+	case "retailers":
+		walletTypeStr := query.Get("wallet_type")
+		if walletTypeStr == "winning" {
+			walletType = walletpb.WalletType_RETAILER_WINNING
+		} else {
+			walletType = walletpb.WalletType_RETAILER_STAKE
+		}
+	default:
+		return router.BadRequest("invalid owner type")
+	}
+
+	// Get wallet service client
+	conn, err := h.grpcManager.GetConnection("wallet")
+	if err != nil {
+		h.logger.Error("Failed to get wallet service connection", "error", err)
+		return router.InternalError("service unavailable")
+	}
+
+	client := walletpb.NewWalletServiceClient(conn)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Make gRPC call
+	resp, err := client.GetTransactionHistory(ctx, &walletpb.GetTransactionHistoryRequest{
+		WalletOwnerId: ownerID,
+		WalletType:    walletType,
+		StartDate:     startDate,
+		EndDate:       endDate,
+		Page:          int32(page),
+		PageSize:      int32(pageSize),
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to get transaction history", "error", err, "owner_id", ownerID)
+		return h.handleGRPCError(err)
+	}
+
+	// Convert transactions to response format
+	transactions := make([]map[string]interface{}, len(resp.Transactions))
+	for i, tx := range resp.Transactions {
+		transactions[i] = map[string]interface{}{
+			"id":              tx.Id,
+			"wallet_owner_id": tx.WalletOwnerId,
+			"wallet_type":     tx.WalletType.String(),
+			"type":            tx.Type.String(),
+			"amount":          tx.Amount,
+			"balance_before":  tx.BalanceBefore,
+			"balance_after":   tx.BalanceAfter,
+			"reference":       tx.Reference,
+			"description":     tx.Description,
+			"status":          tx.Status.String(),
+			"created_at":      tx.CreatedAt.AsTime(),
+			"metadata":        tx.Metadata,
+		}
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"transactions": transactions,
+		"total_count":  resp.TotalCount,
+		"page":         resp.Page,
+		"page_size":    resp.PageSize,
+		"has_more":     resp.HasMore,
+	})
+}
+
+// TransferAgentToRetailerRequest represents the request to transfer funds
+type TransferAgentToRetailerRequest struct {
+	Amount    float64 `json:"amount" validate:"required,gt=0"`
+	Reference string  `json:"reference"`
+	Notes     string  `json:"notes"`
+}
+
+// TransferAgentToRetailer handles POST /api/v1/admin/agents/{agentId}/transfer/{retailerId}
+func (h *WalletHandler) TransferAgentToRetailer(w http.ResponseWriter, r *http.Request) error {
+	agentID := chi.URLParam(r, "agentId")
+	retailerID := chi.URLParam(r, "retailerId")
+
+	if agentID == "" || retailerID == "" {
+		return router.BadRequest("agent_id and retailer_id are required")
+	}
+
+	var req TransferAgentToRetailerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return router.BadRequest("invalid request body")
+	}
+
+	// Validate request
+	if req.Amount <= 0 {
+		return router.BadRequest("amount must be positive")
+	}
+
+	// Get wallet service client
+	conn, err := h.grpcManager.GetConnection("wallet")
+	if err != nil {
+		h.logger.Error("Failed to get wallet service connection", "error", err)
+		return router.InternalError("service unavailable")
+	}
+
+	client := walletpb.NewWalletServiceClient(conn)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Make gRPC call
+	resp, err := client.TransferAgentToRetailer(ctx, &walletpb.TransferAgentToRetailerRequest{
+		AgentId:        agentID,
+		RetailerId:     retailerID,
+		Amount:         req.Amount,
+		Reference:      req.Reference,
+		Notes:          req.Notes,
+		IdempotencyKey: r.Header.Get("X-Idempotency-Key"),
+	})
+
+	if err != nil {
+		h.logger.Error("Failed to transfer funds", "error", err, "agent_id", agentID, "retailer_id", retailerID)
+		return h.handleGRPCError(err)
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":              resp.Success,
+		"transaction_id":       resp.TransactionId,
+		"transferred_amount":   resp.TransferredAmount,
+		"commission_charged":   resp.CommissionCharged,
+		"total_deducted":       resp.TotalDeducted,
+		"agent_new_balance":    resp.AgentNewBalance,
+		"retailer_new_balance": resp.RetailerNewBalance,
+		"message":              resp.Message,
+		"timestamp":            resp.Timestamp.AsTime(),
+	})
+}
+
+// handleGRPCError converts gRPC errors to HTTP errors
+func (h *WalletHandler) handleGRPCError(err error) error {
+	code := grpc.Code(err)
+	switch code {
+	case grpc.Codes.InvalidArgument:
+		return router.BadRequest(err.Error())
+	case grpc.Codes.NotFound:
+		return router.NotFound("resource not found")
+	case grpc.Codes.AlreadyExists:
+		return router.Conflict("resource already exists")
+	case grpc.Codes.PermissionDenied:
+		return router.Forbidden("permission denied")
+	case grpc.Codes.Unauthenticated:
+		return router.Unauthorized("authentication required")
+	case grpc.Codes.ResourceExhausted:
+		return router.TooManyRequests("rate limit exceeded")
+	case grpc.Codes.FailedPrecondition:
+		return router.BadRequest("precondition failed")
+	case grpc.Codes.Unavailable:
+		return router.ServiceUnavailable("service temporarily unavailable")
+	default:
+		return router.InternalError("internal server error")
+	}
+}

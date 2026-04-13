@@ -1,0 +1,11 @@
+{
+  "title": "Welcome to {{.CompanyName}}!",
+  "body": "Hi {{.FirstName}}, your account is ready. Tap to get started!",
+  "icon": "{{.IconUrl}}",
+  "click_action": "{{.LoginUrl}}",
+  "data": {
+    "type": "welcome",
+    "user_id": "{{.UserId}}",
+    "account_type": "{{.AccountType}}"
+  }
+}

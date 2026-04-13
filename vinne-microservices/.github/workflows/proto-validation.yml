@@ -1,0 +1,138 @@
+name: Proto Validation
+
+on:
+  pull_request:
+    paths:
+      - '**.proto'
+      - 'proto/**'
+      - '.github/workflows/proto-validation.yml'
+  push:
+    branches: [main, develop, staging]
+    paths:
+      - '**.proto'
+      - 'proto/**'
+
+jobs:
+  validate-proto:
+    name: Validate Protobuf Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install protoc
+        run: |
+          # Install protoc
+          PROTOC_VERSION=29.3
+          curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip
+          sudo unzip -o protoc-${PROTOC_VERSION}-linux-x86_64.zip -d /usr/local bin/protoc
+          sudo unzip -o protoc-${PROTOC_VERSION}-linux-x86_64.zip -d /usr/local 'include/*'
+          rm -f protoc-${PROTOC_VERSION}-linux-x86_64.zip
+
+      - name: Install Go protoc plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Validate proto syntax
+        run: |
+          echo "🔍 Validating proto file syntax..."
+          for proto in $(find proto -name "*.proto" -type f); do
+            echo "  Checking: $proto"
+            # Check for proto3 syntax
+            if ! grep -q 'syntax = "proto3"' "$proto"; then
+              echo "❌ Error: $proto missing proto3 syntax declaration"
+              exit 1
+            fi
+            # Check for package declaration (including versioned packages like v1)
+            if ! grep -qE '^package [a-z]+(\.[a-z0-9]+)*;' "$proto"; then
+              echo "❌ Error: $proto has invalid package declaration"
+              exit 1
+            fi
+            # Check for go_package option
+            if ! grep -q 'option go_package' "$proto"; then
+              echo "❌ Error: $proto missing go_package option"
+              exit 1
+            fi
+          done
+          echo "✅ All proto files have valid syntax"
+
+      - name: Generate proto files
+        run: |
+          echo "🔧 Generating protobuf code..."
+          chmod +x scripts/generate-protos.sh
+          ./scripts/generate-protos.sh
+
+      - name: Check for uncommitted changes
+        run: |
+          echo "🔍 Checking for uncommitted proto changes..."
+          if [ -n "$(git status --porcelain proto/)" ]; then
+            echo "❌ Error: Generated proto files are not up to date!"
+            echo "📝 Files that changed:"
+            git status --porcelain proto/
+            echo ""
+            echo "Please run 'make proto' locally and commit the changes."
+            exit 1
+          fi
+          echo "✅ All generated proto files are up to date"
+
+  proto-breaking-change-detection:
+    name: Check for Breaking Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Set up buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: latest
+
+      - name: Create buf config if not exists
+        run: |
+          if [ ! -f proto/buf.yaml ]; then
+            cat > proto/buf.yaml << 'EOF'
+          version: v2
+          modules:
+            - path: .
+          lint:
+            use:
+              - STANDARD
+          breaking:
+            use:
+              - FILE
+          EOF
+          fi
+
+      - name: Check for breaking changes
+        run: |
+          echo "🔍 Checking for breaking proto changes..."
+          # Compare current proto files with base branch
+          if [ -d "base/proto" ]; then
+            cd proto
+            if buf breaking . --against ../base/proto 2>/dev/null; then
+              echo "✅ No breaking changes detected"
+            else
+              echo "⚠️  Warning: Breaking changes detected in proto files"
+              echo "Please ensure these changes are intentional and documented"
+              # Don't fail the check, just warn
+            fi
+          else
+            echo "ℹ️  Base branch has no proto files to compare against"
+          fi
+

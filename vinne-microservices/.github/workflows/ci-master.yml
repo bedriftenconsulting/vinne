@@ -1,0 +1,902 @@
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging, develop]
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api-gateway: ${{ steps.filter.outputs.api-gateway }}
+      admin-management: ${{ steps.filter.outputs.admin-management }}
+      agent-auth: ${{ steps.filter.outputs.agent-auth }}
+      agent-management: ${{ steps.filter.outputs.agent-management }}
+      draw: ${{ steps.filter.outputs.draw }}
+      game: ${{ steps.filter.outputs.game }}
+      payment: ${{ steps.filter.outputs.payment }}
+      terminal: ${{ steps.filter.outputs.terminal }}
+      ticket: ${{ steps.filter.outputs.ticket }}
+      wallet: ${{ steps.filter.outputs.wallet }}
+      notification: ${{ steps.filter.outputs.notification }}
+      player: ${{ steps.filter.outputs.player }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper comparison
+
+      - name: Debug event information
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          echo "Before SHA: ${{ github.event.before }}"
+          echo "After SHA: ${{ github.event.after }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "PR base ref: ${{ github.event.pull_request.base.ref }}"
+            echo "PR head ref: ${{ github.event.pull_request.head.ref }}"
+          fi
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          token: ${{ github.token }}
+          base: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.event.pull_request.base.ref) || (github.event.before == '0000000000000000000000000000000000000000' && 'HEAD~1' || github.event.before) }}
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+              - 'shared/**'
+              - 'proto/**'
+              - 'go.work'
+              - 'go.work.sum'
+            admin-management:
+              - 'services/service-admin-management/**'
+              - 'shared/**'
+              - 'proto/admin_management/**'
+              - 'go.work'
+              - 'go.work.sum'
+            agent-auth:
+              - 'services/service-agent-auth/**'
+              - 'shared/**'
+              - 'proto/agent_auth/**'
+              - 'go.work'
+              - 'go.work.sum'
+            agent-management:
+              - 'services/service-agent-management/**'
+              - 'shared/**'
+              - 'proto/agent_management/**'
+              - 'go.work'
+              - 'go.work.sum'
+            draw:
+              - 'services/service-draw/**'
+              - 'shared/**'
+              - 'proto/draw/**'
+              - 'go.work'
+              - 'go.work.sum'
+            game:
+              - 'services/service-game/**'
+              - 'shared/**'
+              - 'proto/game/**'
+              - 'go.work'
+              - 'go.work.sum'
+            payment:
+              - 'services/service-payment/**'
+              - 'shared/**'
+              - 'proto/payment/**'
+              - 'go.work'
+              - 'go.work.sum'
+            terminal:
+              - 'services/service-terminal/**'
+              - 'shared/**'
+              - 'proto/terminal/**'
+              - 'go.work'
+              - 'go.work.sum'
+            ticket:
+              - 'services/service-ticket/**'
+              - 'shared/**'
+              - 'proto/ticket/**'
+              - 'go.work'
+              - 'go.work.sum'
+            wallet:
+              - 'services/service-wallet/**'
+              - 'shared/**'
+              - 'proto/wallet/**'
+              - 'go.work'
+              - 'go.work.sum'
+            notification:
+              - 'services/service-notification/**'
+              - 'shared/**'
+              - 'proto/notification/**'
+              - 'go.work'
+              - 'go.work.sum'
+            player:
+              - 'services/service-player/**'
+              - 'shared/**'
+              - 'proto/player/**'
+              - 'go.work'
+              - 'go.work.sum'
+              
+      - name: Debug detected changes
+        run: |
+          echo "Changes detected in:"
+          echo "api-gateway: ${{ steps.filter.outputs.api-gateway }}"
+          echo "admin-management: ${{ steps.filter.outputs.admin-management }}"
+          echo "agent-auth: ${{ steps.filter.outputs.agent-auth }}"
+          echo "agent-management: ${{ steps.filter.outputs.agent-management }}"
+          echo "draw: ${{ steps.filter.outputs.draw }}"
+          echo "game: ${{ steps.filter.outputs.game }}"
+          echo "payment: ${{ steps.filter.outputs.payment }}"
+          echo "terminal: ${{ steps.filter.outputs.terminal }}"
+          echo "ticket: ${{ steps.filter.outputs.ticket }}"
+          echo "wallet: ${{ steps.filter.outputs.wallet }}"
+          echo "notification: ${{ steps.filter.outputs.notification }}"
+          echo "player: ${{ steps.filter.outputs.player }}"
+  build-api-gateway:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api-gateway == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-api-gateway
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/api-gateway/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-admin-management:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.admin-management == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-admin-management
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-admin-management/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-agent-auth:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.agent-auth == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-agent-auth
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-agent-auth/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-agent-management:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.agent-management == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-agent-management
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-agent-management/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-draw:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.draw == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-draw
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-draw/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-game:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.game == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-game
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-game/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-payment:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.payment == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-payment
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-payment/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-terminal:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.terminal == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-terminal
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-terminal/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-ticket:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ticket == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-ticket
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-ticket/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-wallet:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.wallet == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-wallet
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_hash }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-wallet/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  build-notification:
+    needs: detect-changes
+    if: github.event_name == 'push' && needs.detect-changes.outputs.notification == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-notification
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-,format=short
+            type=raw,value={{branch}}-{{date 'YYYYMMDD-HHmmss'}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-notification/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+          
+  build-player:
+    needs: detect-changes
+    if: github.event_name == 'push' && needs.detect-changes.outputs.player == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for commit count
+
+      - name: Extract version info
+        id: version
+        run: |
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "full_version=$(git rev-parse --abbrev-ref HEAD)-$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/nexalabshq/rand-player
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-,format=short
+            type=raw,value={{branch}}-{{date 'YYYYMMDD-HHmmss'}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/service-player/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_BRANCH=${{ steps.version.outputs.branch }}
+            GIT_COMMIT_COUNT=${{ steps.version.outputs.commit_count }}
+            GIT_HASH=${{ steps.version.outputs.commit_hash }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            VERSION=${{ steps.version.outputs.full_version }}
+
+  validate-version-support:
+    name: Validate Version Support
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Version variables in all services
+        run: |
+          echo "Checking for Version variable in all service main.go files..."
+
+          failed=false
+          for service_dir in services/*/cmd/server; do
+            if [ -f "$service_dir/main.go" ]; then
+              service_name=$(basename $(dirname $(dirname "$service_dir")))
+              echo -n "Checking $service_name... "
+
+              if grep -q "Version.*=.*\"dev\"" "$service_dir/main.go"; then
+                echo "✓ Version variable found"
+              else
+                echo "✗ Missing Version variable!"
+                failed=true
+              fi
+            fi
+          done
+
+          if [ "$failed" = true ]; then
+            echo ""
+            echo "ERROR: Some services are missing Version variables."
+            echo "Please add the following to the main.go file:"
+            echo ""
+            echo "var ("
+            echo "    Version        = \"dev\""
+            echo "    GitBranch      = \"unknown\""
+            echo "    GitCommit      = \"unknown\""
+            echo "    GitCommitCount = \"0\""
+            echo "    BuildTime      = \"unknown\""
+            echo ")"
+            exit 1
+          fi
+
+          echo ""
+          echo "✓ All services have Version variables configured"
+
+      - name: Check Dockerfile ldflags support
+        run: |
+          echo "Checking for ldflags version injection in Dockerfiles..."
+
+          failed=false
+          for dockerfile in services/*/Dockerfile; do
+            if [ -f "$dockerfile" ]; then
+              service_name=$(basename $(dirname "$dockerfile"))
+              echo -n "Checking $service_name Dockerfile... "
+
+              if grep -q "ldflags.*Version" "$dockerfile"; then
+                echo "✓ Version injection configured"
+              else
+                echo "✗ Missing version injection!"
+                failed=true
+              fi
+            fi
+          done
+
+          if [ "$failed" = true ]; then
+            echo ""
+            echo "ERROR: Some Dockerfiles are missing version injection."
+            echo "Please ensure Dockerfiles include ldflags with version information."
+            exit 1
+          fi
+
+          echo ""
+          echo "✓ All Dockerfiles have version injection configured"

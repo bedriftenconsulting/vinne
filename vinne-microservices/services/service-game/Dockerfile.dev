@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git ca-certificates
+
+ENV GOPROXY="https://proxy.golang.org,direct"
+ENV GONOSUMCHECK="*"
+ENV GOWORK=off
+ENV GOFLAGS="-mod=mod"
+
+COPY services/service-game/go.mod services/service-game/go.sum ./services/service-game/
+COPY proto ./proto
+COPY shared ./shared
+
+WORKDIR /app/services/service-game
+RUN go mod download
+
+WORKDIR /app
+COPY services/service-game ./services/service-game
+
+WORKDIR /app/services/service-game
+RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/server/main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /app/services/service-game/main .
+COPY --from=builder /app/services/service-game/migrations ./migrations
+EXPOSE 50053 8080
+CMD ["./main"]

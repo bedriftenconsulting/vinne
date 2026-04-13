@@ -1,0 +1,40 @@
+replicaCount: 2
+
+image:
+  repository: rand-api-gateway
+  tag: develop
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 4000
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Allow HTTP backend traffic - HTTPS terminated at HAProxy load balancer
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+  hosts:
+    - host: api.dev.randlottery.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: api-dev-tls
+      hosts:
+        - api.dev.randlottery.com
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

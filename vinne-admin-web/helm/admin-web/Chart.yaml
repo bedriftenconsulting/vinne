@@ -1,0 +1,16 @@
+apiVersion: v2
+name: admin-web
+description: RandLottery Admin Web Application
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - randlottery
+  - admin
+  - frontend
+home: https://github.com/nexalabshq/rand-admin-web
+sources:
+  - https://github.com/nexalabshq/rand-admin-web
+maintainers:
+  - name: RandLottery DevOps Team
+    email: devops@randlottery.com

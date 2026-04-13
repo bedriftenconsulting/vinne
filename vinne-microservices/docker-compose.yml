@@ -1,0 +1,873 @@
+version: '3.9'
+
+networks:
+  randco-net:
+    driver: bridge
+
+volumes:
+  go-mod-cache:
+  postgres-admin-mgmt-data:
+  postgres-agent-data:
+  postgres-agent-mgmt-data:
+  postgres-wallet-data:
+  postgres-terminal-data:
+  postgres-game-data:
+  postgres-payment-data:
+  postgres-draw-data:
+  postgres-ticket-data:
+  postgres-notification-data:
+  redis-admin-mgmt-data:
+  redis-payment-data:
+  redis-agent-data:
+  redis-agent-mgmt-data:
+  redis-wallet-data:
+  redis-terminal-data:
+  redis-game-data:
+  redis-draw-data:
+  redis-ticket-data:
+  redis-notification-data:
+  redis-shared-data:
+  kafka-data:
+  jaeger-data:
+  prometheus-data:
+  grafana-data:
+  postgres-player-data:
+  redis-player-data:
+
+services:
+  # Infrastructure Services
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Collector
+      - "4318:4318"    # OTLP HTTP
+      - "4317:4317"    # OTLP gRPC
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: :9411
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - randco-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - randco-net
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - randco-net
+
+  # Kafka (KRaft mode - no ZooKeeper)
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - randco-net
+
+  # Shared Redis for session store
+  redis-shared:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-shared-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./services/api-gateway/Dockerfile.dev
+    ports:
+      - "4000:4000"
+    environment:
+      SERVER_PORT: 4000
+      ENVIRONMENT: development
+      SERVICES_ADMIN_MANAGEMENT_HOST: service-admin-management
+      SERVICES_ADMIN_MANAGEMENT_PORT: 50057
+      SERVICES_AGENT_AUTH_HOST: service-agent-auth
+      SERVICES_AGENT_AUTH_PORT: 50052
+      SERVICES_AGENT_MANAGEMENT_HOST: service-agent-management
+      SERVICES_AGENT_MANAGEMENT_PORT: 50056
+      SERVICES_WALLET_HOST: service-wallet
+      SERVICES_WALLET_PORT: 50059
+      SERVICES_TERMINAL_HOST: service-terminal
+      SERVICES_TERMINAL_PORT: 50054
+      SERVICES_PAYMENT_HOST: service-payment
+      SERVICES_PAYMENT_PORT: 50061
+      SERVICES_GAME_HOST: service-game
+      SERVICES_GAME_PORT: 50053
+      SERVICES_DRAW_HOST: service-draw
+      SERVICES_DRAW_PORT: 50060
+      SERVICES_TICKET_HOST: service-ticket
+      SERVICES_TICKET_PORT: 50062
+      SERVICES_NOTIFICATION_HOST: service-notification
+      SERVICES_NOTIFICATION_PORT: 50063
+      SERVICES_PLAYER_HOST: service-player
+      SERVICES_PLAYER_PORT: 50064
+      REDIS_HOST: redis-shared
+      REDIS_PORT: 6379
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+    networks:
+      - randco-net
+    depends_on:
+      - service-admin-management
+      - service-agent-auth
+      - service-agent-management
+      - service-wallet
+      - service-terminal
+      - service-payment
+      - redis-shared
+      - jaeger
+
+  # Admin Management Service Database & Cache (includes auth functionality)
+  service-admin-management-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: admin_management
+      POSTGRES_USER: admin_mgmt
+      POSTGRES_PASSWORD: admin_mgmt123
+    volumes:
+      - postgres-admin-mgmt-data:/var/lib/postgresql/data
+      - ./services/service-admin-management/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5437:5432"
+    networks:
+      - randco-net
+
+  service-admin-management-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-admin-mgmt-data:/data
+    ports:
+      - "6384:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-admin-management:
+    build:
+      context: .
+      dockerfile: ./services/service-admin-management/Dockerfile.dev
+    ports:
+      - "8085:8080"  # HTTP port for metrics/health
+      - "50057:50057"  # gRPC port
+    environment:
+      SERVICE_NAME: service-admin-management
+      DATABASE_HOST: service-admin-management-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: admin_mgmt
+      DATABASE_PASSWORD: admin_mgmt123
+      DATABASE_NAME: admin_management
+      REDIS_HOST: service-admin-management-redis
+      REDIS_PORT: 6379
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      TRACING_JAEGER_ENDPOINT: http://jaeger:14268/api/traces
+      SERVER_PORT: 50057
+      METRICS_PORT: 9092
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      DATABASE_URL: postgresql://admin_mgmt:admin_mgmt123@service-admin-management-db:5432/admin_management?sslmode=disable
+      SECURITY_ACCESS_TOKEN_EXPIRY: 24h
+      SECURITY_REFRESH_TOKEN_EXPIRY: 168h
+      SECURITY_SESSION_EXPIRY: 168h
+      SECURITY_JWT_ISSUER: randco-admin-management
+    networks:
+      - randco-net
+    depends_on:
+      - service-admin-management-db
+      - service-admin-management-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Agent Auth Service Database & Cache
+  service-agent-auth-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: agent_auth
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent123
+    volumes:
+      - postgres-agent-data:/var/lib/postgresql/data
+      - ./services/service-agent-auth/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5434:5432"
+    networks:
+      - randco-net
+
+  service-agent-auth-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-agent-data:/data
+    ports:
+      - "6381:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-agent-auth:
+    build:
+      context: .
+      dockerfile: ./services/service-agent-auth/Dockerfile.dev
+    ports:
+      - "50052:50052"
+    environment:
+      SERVICE_NAME: service-agent-auth
+      SERVER_PORT: 50052
+      DATABASE_HOST: service-agent-auth-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: agent
+      DATABASE_PASSWORD: agent123
+      DATABASE_NAME: agent_auth
+      REDIS_HOST: service-agent-auth-redis
+      REDIS_PORT: 6379
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      TRACING_JAEGER_ENDPOINT: http://jaeger:14268/api/traces
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      DATABASE_URL: postgresql://agent:agent123@service-agent-auth-db:5432/agent_auth?sslmode=disable
+    networks:
+      - randco-net
+    depends_on:
+      - service-agent-auth-db
+      - service-agent-auth-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Agent Management Service Database & Cache
+  service-agent-management-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: agent_management
+      POSTGRES_USER: agent_mgmt
+      POSTGRES_PASSWORD: agent_mgmt123
+    volumes:
+      - postgres-agent-mgmt-data:/var/lib/postgresql/data
+      - ./services/service-agent-management/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5435:5432"
+    networks:
+      - randco-net
+
+  service-agent-management-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-agent-mgmt-data:/data
+    ports:
+      - "6382:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-agent-management:
+    build:
+      context: .
+      dockerfile: ./services/service-agent-management/Dockerfile.dev
+    ports:
+      - "8086:8080"  # HTTP port for metrics/health
+      - "50056:50056"  # gRPC port
+    environment:
+      SERVICE_NAME: service-agent-management
+      DATABASE_HOST: service-agent-management-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: agent_mgmt
+      DATABASE_PASSWORD: agent_mgmt123
+      DATABASE_NAME: agent_management
+      REDIS_HOST: service-agent-management-redis
+      REDIS_PORT: 6379
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      TRACING_JAEGER_ENDPOINT: http://jaeger:14268/api/traces
+      SERVER_PORT: 50056
+      METRICS_PORT: 8080
+      SERVICES_AGENT_AUTH_SERVICE: service-agent-auth:50052
+      SERVICES_WALLET_SERVICE: service-wallet:50059
+      SERVICES_COMMISSION_SERVICE: service-commission:50062
+      SERVICES_NOTIFICATION_SERVICE: service-notification:50063
+      DATABASE_URL: postgresql://agent_mgmt:agent_mgmt123@service-agent-management-db:5432/agent_management?sslmode=disable
+    networks:
+      - randco-net
+    depends_on:
+      - service-agent-management-db
+      - service-agent-management-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Wallet Service Database & Cache
+  service-wallet-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: wallet_service
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: wallet123
+    volumes:
+      - postgres-wallet-data:/var/lib/postgresql/data
+      - ./services/service-wallet/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5438:5432"
+    networks:
+      - randco-net
+
+  service-wallet-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-wallet-data:/data
+    ports:
+      - "6385:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-wallet:
+    build:
+      context: .
+      dockerfile: ./services/service-wallet/Dockerfile.dev
+    ports:
+      - "8087:8080"  # HTTP port for metrics/health
+      - "50059:50059"  # gRPC port
+    environment:
+      SERVICE_NAME: service-wallet
+      DATABASE_HOST: service-wallet-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: wallet
+      DATABASE_PASSWORD: wallet123
+      DATABASE_NAME: wallet_service
+      DATABASE_URL: postgresql://wallet:wallet123@service-wallet-db:5432/wallet_service?sslmode=disable
+      REDIS_HOST: service-wallet-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-wallet-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      SERVER_PORT: 50059
+      METRICS_PORT: 8080
+    networks:
+      - randco-net
+    depends_on:
+      - service-wallet-db
+      - service-wallet-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Terminal Management Service Database & Cache
+  service-terminal-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: terminal_service
+      POSTGRES_USER: terminal
+      POSTGRES_PASSWORD: terminal123
+    volumes:
+      - postgres-terminal-data:/var/lib/postgresql/data
+      - ./services/service-terminal/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5439:5432"
+    networks:
+      - randco-net
+
+  service-terminal-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-terminal-data:/data
+    ports:
+      - "6386:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-terminal:
+    build:
+      context: .
+      dockerfile: ./services/service-terminal/Dockerfile.dev
+    ports:
+      - "8088:8080"  # HTTP port for metrics/health
+      - "50054:50054"  # gRPC port
+    environment:
+      SERVICE_NAME: service-terminal
+      DATABASE_HOST: service-terminal-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: terminal
+      DATABASE_PASSWORD: terminal123
+      DATABASE_NAME: terminal_service
+      DATABASE_URL: postgresql://terminal:terminal123@service-terminal-db:5432/terminal_service?sslmode=disable
+      REDIS_HOST: service-terminal-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-terminal-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      SERVER_PORT: 50054
+      METRICS_PORT: 8080
+    networks:
+      - randco-net
+    depends_on:
+      - service-terminal-db
+      - service-terminal-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Payment Service Database & Cache
+  service-payment-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: payment_service
+      POSTGRES_USER: payment
+      POSTGRES_PASSWORD: payment123
+    volumes:
+      - postgres-payment-data:/var/lib/postgresql/data
+      - ./services/service-payment/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5440:5432"
+    networks:
+      - randco-net
+
+  service-payment-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-payment-data:/data
+    ports:
+      - "6387:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-payment:
+    build:
+      context: .
+      dockerfile: ./services/service-payment/Dockerfile.dev
+    ports:
+      - "8089:8080"  # HTTP port for metrics/health
+      - "50061:50061"  # gRPC port
+    environment:
+      SERVICE_NAME: service-payment
+      DATABASE_HOST: service-payment-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: payment
+      DATABASE_PASSWORD: payment123
+      DATABASE_NAME: payment_service
+      DATABASE_URL: postgresql://payment:payment123@service-payment-db:5432/payment_service?sslmode=disable
+      REDIS_HOST: service-payment-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-payment-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      SERVER_PORT: 50061
+      METRICS_PORT: 8080
+      PAYMENT_TEST_MODE: true
+      PAYMENT_DEFAULT_CURRENCY: GHS
+      PAYMENT_MAX_AMOUNT: 100000000
+      PAYMENT_MIN_AMOUNT: 50
+      PROVIDERS_MTN_ENABLED: true
+      PROVIDERS_TELECEL_ENABLED: true
+      PROVIDERS_AIRTELTIGO_ENABLED: true
+      PROVIDERS_BANKS_ENABLED: true
+    networks:
+      - randco-net
+    depends_on:
+      - service-payment-db
+      - service-payment-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Game Service Database & Cache
+  service-game-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: game_service
+      POSTGRES_USER: game
+      POSTGRES_PASSWORD: game123
+    volumes:
+      - postgres-game-data:/var/lib/postgresql/data
+      - ./services/service-game/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5441:5432"
+    networks:
+      - randco-net
+
+  service-game-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-game-data:/data
+    ports:
+      - "6388:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-game:
+    build:
+      context: .
+      dockerfile: ./services/service-game/Dockerfile.dev
+    ports:
+      - "8090:8080"
+      - "50053:50053"
+    environment:
+      SERVICE_NAME: service-game
+      ENVIRONMENT: local
+      SERVER_PORT: 50053
+      METRICS_PORT: 8080
+      DATABASE_URL: postgresql://game:game123@service-game-db:5432/game_service?sslmode=disable
+      DATABASE_HOST: service-game-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: game
+      DATABASE_PASSWORD: game123
+      DATABASE_NAME: game_service
+      REDIS_HOST: service-game-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-game-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      SCHEDULER_ENABLED: "true"
+      SCHEDULER_INTERVAL: 1m
+      SCHEDULER_WINDOW_MINUTES: 2
+      SCHEDULER_TIMEZONE: UTC
+      SERVICES_DRAW_HOST: service-draw
+      SERVICES_DRAW_PORT: 50060
+    networks:
+      - randco-net
+    depends_on:
+      - service-game-db
+      - service-game-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Draw Service Database & Cache
+  service-draw-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: draw_service
+      POSTGRES_USER: draw_service
+      POSTGRES_PASSWORD: draw_service123
+    volumes:
+      - postgres-draw-data:/var/lib/postgresql/data
+      - ./services/service-draw/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5436:5432"
+    networks:
+      - randco-net
+
+  service-draw-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-draw-data:/data
+    ports:
+      - "6383:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-draw:
+    build:
+      context: .
+      dockerfile: ./services/service-draw/Dockerfile.dev
+    ports:
+      - "8091:8080"
+      - "50060:50060"
+    environment:
+      SERVICE_NAME: service-draw
+      ENVIRONMENT: local
+      SERVER_PORT: 50060
+      METRICS_PORT: 8080
+      DATABASE_URL: postgresql://draw_service:draw_service123@service-draw-db:5432/draw_service?sslmode=disable
+      DATABASE_HOST: service-draw-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: draw_service
+      DATABASE_PASSWORD: draw_service123
+      DATABASE_NAME: draw_service
+      REDIS_HOST: service-draw-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-draw-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      VALIDATION_NLA_API_ENDPOINT: http://localhost:18080/mock-nla
+      VALIDATION_VALIDATION_TIMEOUT: 30s
+      GAME_SERVICE_URL: service-game:50053
+    networks:
+      - randco-net
+    depends_on:
+      - service-draw-db
+      - service-draw-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Ticket Service Database & Cache
+  service-ticket-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ticket_service
+      POSTGRES_USER: ticket
+      POSTGRES_PASSWORD: ticket123
+    volumes:
+      - postgres-ticket-data:/var/lib/postgresql/data
+      - ./services/service-ticket/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5442:5432"
+    networks:
+      - randco-net
+
+  service-ticket-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-ticket-data:/data
+    ports:
+      - "6389:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-ticket:
+    build:
+      context: .
+      dockerfile: ./services/service-ticket/Dockerfile.dev
+    ports:
+      - "8092:8080"
+      - "50062:50062"
+    environment:
+      SERVICE_NAME: service-ticket
+      SERVER_PORT: 50062
+      METRICS_PORT: 8080
+      DATABASE_URL: postgresql://ticket:ticket123@service-ticket-db:5432/ticket_service?sslmode=disable
+      DATABASE_HOST: service-ticket-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: ticket
+      DATABASE_PASSWORD: ticket123
+      DATABASE_NAME: ticket_service
+      REDIS_HOST: service-ticket-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-ticket-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      SERVICES_GAME_HOST: service-game
+      SERVICES_GAME_PORT: 50053
+      SERVICES_DRAW_HOST: service-draw
+      SERVICES_DRAW_PORT: 50060
+      SERVICES_PAYMENT_HOST: service-payment
+      SERVICES_PAYMENT_PORT: 50061
+      SERVICES_WALLET_HOST: service-wallet
+      SERVICES_WALLET_PORT: 50059
+      GAME_SERVICE_URL: service-game:50053
+      DRAW_SERVICE_URL: service-draw:50060
+      PAYMENT_SERVICE_URL: service-payment:50061
+      WALLET_SERVICE_URL: service-wallet:50059
+    networks:
+      - randco-net
+    depends_on:
+      - service-ticket-db
+      - service-ticket-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Notification Service Database & Cache
+  service-notification-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: notification
+      POSTGRES_USER: notification
+      POSTGRES_PASSWORD: notification123
+    volumes:
+      - postgres-notification-data:/var/lib/postgresql/data
+      - ./services/service-notification/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5443:5432"
+    networks:
+      - randco-net
+
+  service-notification-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-notification-data:/data
+    ports:
+      - "6390:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-notification:
+    build:
+      context: .
+      dockerfile: ./services/service-notification/Dockerfile.dev
+    ports:
+      - "8093:8080"
+      - "50063:50063"
+    environment:
+      SERVICE_NAME: service-notification
+      SERVER_PORT: 50063
+      METRICS_PORT: 8080
+      DATABASE_URL: postgresql://notification:notification123@service-notification-db:5432/notification?sslmode=disable
+      DATABASE_HOST: service-notification-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: notification
+      DATABASE_PASSWORD: notification123
+      DATABASE_NAME: notification
+      REDIS_HOST: service-notification-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-notification-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+    networks:
+      - randco-net
+    depends_on:
+      - service-notification-db
+      - service-notification-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Player Service Database & Cache
+  service-player-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: player_service
+      POSTGRES_USER: player
+      POSTGRES_PASSWORD: player123
+    volumes:
+      - postgres-player-data:/var/lib/postgresql/data
+      - ./services/service-player/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5444:5432"
+    networks:
+      - randco-net
+
+  service-player-redis:
+    image: redis:7.4-alpine
+    volumes:
+      - redis-player-data:/data
+    ports:
+      - "6391:6379"
+    command: redis-server --appendonly yes
+    networks:
+      - randco-net
+
+  service-player:
+    build:
+      context: .
+      dockerfile: ./services/service-player/Dockerfile.dev
+    ports:
+      - "8094:8080"
+      - "50064:50064"
+    environment:
+      SERVICE_NAME: service-player
+      SERVER_PORT: 50064
+      METRICS_PORT: 8080
+      DATABASE_URL: postgresql://player:player123@service-player-db:5432/player_service?sslmode=disable
+      DATABASE_HOST: service-player-db
+      DATABASE_PORT: 5432
+      DATABASE_USER: player
+      DATABASE_PASSWORD: player123
+      DATABASE_NAME: player_service
+      REDIS_HOST: service-player-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://service-player-redis:6379/0
+      SHARED_REDIS_HOST: redis-shared
+      SHARED_REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:29092
+      JAEGER_ENDPOINT: http://jaeger:4318
+      TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+      SERVICES_NOTIFICATION_SERVICE: service-notification:50063
+      SERVICES_WALLET_SERVICE: service-wallet:50059
+      SERVICES_PAYMENT_SERVICE: service-payment:50061
+      SECURITY_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      SECURITY_JWT_ISSUER: spiel-platform
+      SECURITY_ACCESS_TOKEN_EXPIRY: 24h
+      SECURITY_REFRESH_TOKEN_EXPIRY: 168h
+    networks:
+      - randco-net
+    depends_on:
+      - service-player-db
+      - service-player-redis
+      - redis-shared
+      - kafka
+      - jaeger
+
+  # Game Service is managed via start-services.sh script
+  # Uncomment below if you want to run via Docker instead
+  # service-game:
+  #   build:
+  #     context: ./services/service-game
+  #     dockerfile: Dockerfile.dev
+  #   ports:
+  #     - "50055:50055"  # gRPC port
+  #   environment:
+  #     SERVICE_NAME: service-game
+  #     DATABASE_URL: postgresql://game:game123@service-game-db:5432/game_service?sslmode=disable
+  #     SERVER_PORT: 50055
+  #     REDIS_ADDR: service-game-redis:6379
+  #     TRACING_ENABLED: "true"
+  #     TRACING_JAEGER_ENDPOINT: http://jaeger:4318
+  #   volumes:
+  #     - ./services/service-game:/app
+  #   networks:
+  #     - randco-net
+  #   depends_on:
+  #     - service-game-db
+  #     - service-game-redis
+  #     - kafka
+  #     - jaeger

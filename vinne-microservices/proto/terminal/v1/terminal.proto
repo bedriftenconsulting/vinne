@@ -1,0 +1,344 @@
+syntax = "proto3";
+
+package terminal.v1;
+
+option go_package = "github.com/randco/randco-microservices/proto/terminal/v1;terminalv1";
+
+import "google/protobuf/timestamp.proto";
+
+// TerminalService provides terminal management operations
+service TerminalService {
+  // Terminal CRUD operations
+  rpc RegisterTerminal(RegisterTerminalRequest) returns (RegisterTerminalResponse);
+  rpc GetTerminal(GetTerminalRequest) returns (GetTerminalResponse);
+  rpc UpdateTerminal(UpdateTerminalRequest) returns (UpdateTerminalResponse);
+  rpc ListTerminals(ListTerminalsRequest) returns (ListTerminalsResponse);
+  rpc DeleteTerminal(DeleteTerminalRequest) returns (DeleteTerminalResponse);
+  
+  // Terminal assignment operations
+  rpc AssignTerminalToRetailer(AssignTerminalRequest) returns (AssignTerminalResponse);
+  rpc UnassignTerminal(UnassignTerminalRequest) returns (UnassignTerminalResponse);
+  rpc GetTerminalByRetailer(GetTerminalByRetailerRequest) returns (GetTerminalByRetailerResponse);
+  
+  // Terminal status operations
+  rpc UpdateTerminalStatus(UpdateTerminalStatusRequest) returns (UpdateTerminalStatusResponse);
+  rpc UpdateTerminalHealth(UpdateTerminalHealthRequest) returns (UpdateTerminalHealthResponse);
+  rpc GetTerminalHealth(GetTerminalHealthRequest) returns (GetTerminalHealthResponse);
+  
+  // Terminal configuration
+  rpc UpdateTerminalConfig(UpdateTerminalConfigRequest) returns (UpdateTerminalConfigResponse);
+  rpc GetTerminalConfig(GetTerminalConfigRequest) returns (GetTerminalConfigResponse);
+
+  // Terminal validation
+  rpc ValidateRetailerTerminal(ValidateRetailerTerminalRequest) returns (ValidateRetailerTerminalResponse);
+}
+
+// Terminal status enum
+enum TerminalStatus {
+  TERMINAL_STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+  FAULTY = 3;
+  MAINTENANCE = 4;
+  SUSPENDED = 5;
+  DECOMMISSIONED = 6;
+}
+
+// Terminal health status
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTHY = 1;
+  WARNING = 2;
+  CRITICAL = 3;
+  OFFLINE = 4;
+}
+
+// Terminal model/type
+enum TerminalModel {
+  TERMINAL_MODEL_UNSPECIFIED = 0;
+  ANDROID_POS_V1 = 1;
+  ANDROID_POS_V2 = 2;
+  WEB_TERMINAL = 3;
+  MOBILE_TERMINAL = 4;
+}
+
+// Terminal information
+message Terminal {
+  string id = 1;
+  string device_id = 2; // POS-YYYY-XXXXXX format
+  string name = 3;
+  TerminalModel model = 4;
+  string serial_number = 5;
+  string imei = 6;
+  string android_version = 7;
+  string app_version = 8;
+  string vendor = 9;
+  google.protobuf.Timestamp purchase_date = 10;
+  TerminalStatus status = 11;
+  string retailer_id = 12;
+  google.protobuf.Timestamp assignment_date = 13;
+  google.protobuf.Timestamp last_sync = 14;
+  google.protobuf.Timestamp last_transaction = 15;
+  HealthStatus health_status = 16;
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+  map<string, string> metadata = 19;
+  string manufacturer = 20;  
+  
+}
+
+// Terminal assignment information
+message TerminalAssignment {
+  string id = 1;
+  string terminal_id = 2;
+  string retailer_id = 3;
+  string assigned_by = 4;
+  google.protobuf.Timestamp assigned_at = 5;
+  google.protobuf.Timestamp unassigned_at = 6;
+  bool is_active = 7;
+  string notes = 8;
+}
+
+// Terminal with assignments
+message TerminalWithAssignment {
+  Terminal terminal = 1;
+  TerminalAssignment assignment = 2; 
+}
+
+// Terminal configuration
+message TerminalConfig {
+  string terminal_id = 1;
+  int32 transaction_limit = 2;
+  int32 daily_limit = 3;
+  bool offline_mode_enabled = 4;
+  int32 offline_sync_interval = 5; // in minutes
+  bool auto_update_enabled = 6;
+  string minimum_app_version = 7;
+  map<string, string> settings = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+// Terminal health information
+message TerminalHealth {
+  string terminal_id = 1;
+  HealthStatus status = 2;
+  int32 battery_level = 3;
+  int32 signal_strength = 4;
+  int64 storage_available = 5; // in bytes
+  int64 storage_total = 6; // in bytes
+  int32 memory_usage = 7; // percentage
+  int32 cpu_usage = 8; // percentage
+  google.protobuf.Timestamp last_heartbeat = 9;
+  map<string, string> diagnostics = 10;
+}
+
+// Register terminal request
+message RegisterTerminalRequest {
+  string device_id = 1;
+  string name = 2;
+  TerminalModel model = 3;
+  string serial_number = 4;
+  string imei = 5;
+  string android_version = 6;
+  string app_version = 7;
+  string vendor = 8;
+  google.protobuf.Timestamp purchase_date = 9;
+  map<string, string> metadata = 10;
+  string manufacturer = 11;
+}
+
+// Register terminal response
+message RegisterTerminalResponse {
+  bool success = 1;
+  Terminal terminal = 2;
+  string message = 3;
+}
+
+// Get terminal request
+message GetTerminalRequest {
+  string terminal_id = 1;
+}
+
+// Get terminal response
+message GetTerminalResponse {
+  Terminal terminal = 1;
+  TerminalAssignment assignment = 2;
+  TerminalConfig config = 3;
+  TerminalHealth health = 4;
+}
+
+// Update terminal request
+message UpdateTerminalRequest {
+  string terminal_id = 1;
+  string name = 2;
+  string app_version = 3;
+  map<string, string> metadata = 4;
+  TerminalModel model = 5;
+  string android_version = 6;
+}
+
+// Update terminal response
+message UpdateTerminalResponse {
+  bool success = 1;
+  Terminal terminal = 2;
+  string message = 3;
+}
+
+// List terminals request
+message ListTerminalsRequest {
+  TerminalStatus status = 1;
+  string retailer_id = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  string sort_by = 5;
+  bool sort_desc = 6;
+}
+
+// List terminals response
+message ListTerminalsResponse {
+  repeated Terminal terminals = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  bool has_more = 5;
+}
+
+// Assign terminal request
+message AssignTerminalRequest {
+  string terminal_id = 1;
+  string retailer_id = 2;
+  string assigned_by = 3;
+  string notes = 4;
+}
+
+// Assign terminal response
+message AssignTerminalResponse {
+  bool success = 1;
+  TerminalAssignment assignment = 2;
+  string message = 3;
+  google.protobuf.Timestamp assigned_at = 4;
+}
+
+// Unassign terminal request
+message UnassignTerminalRequest {
+  string terminal_id = 1;
+  string reason = 2;
+}
+
+// Unassign terminal response
+message UnassignTerminalResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Get terminal by retailer request
+message GetTerminalByRetailerRequest {
+  string retailer_id = 1;
+  bool include_inactive = 2;
+}
+
+// Get terminal by retailer response
+message GetTerminalByRetailerResponse {
+  repeated TerminalWithAssignment terminals = 1;
+}
+
+// Update terminal status request
+message UpdateTerminalStatusRequest {
+  string terminal_id = 1;
+  TerminalStatus status = 2;
+  string reason = 3;
+  string updated_by = 4;
+}
+
+// Update terminal status response
+message UpdateTerminalStatusResponse {
+  bool success = 1;
+  Terminal terminal = 2;
+  string message = 3;
+}
+
+// Delete Terminal request 
+message DeleteTerminalRequest {
+  string terminal_id = 1;
+  string deleted_by = 2;
+}
+
+// Delete Terminal response 
+message DeleteTerminalResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Get terminal health request
+message GetTerminalHealthRequest {
+  string terminal_id = 1;
+}
+
+// Get terminal health response 
+message GetTerminalHealthResponse {
+  bool success = 1;
+  TerminalHealth health = 2;
+  string message = 3;
+}
+
+// Update terminal health request
+message UpdateTerminalHealthRequest {
+  string terminal_id = 1;
+  HealthStatus status = 2;
+  int32 battery_level = 3;
+  int32 signal_strength = 4;
+  int64 storage_available = 5;
+  int64 storage_total = 6;
+  int32 memory_usage = 7;
+  int32 cpu_usage = 8;
+  map<string, string> diagnostics = 9;
+}
+
+// Update terminal health response
+message UpdateTerminalHealthResponse {
+  bool success = 1;
+  TerminalHealth health = 2;
+  string message = 3;
+}
+
+// Update terminal config request
+message UpdateTerminalConfigRequest {
+  string terminal_id = 1;
+  int32 transaction_limit = 2;
+  int32 daily_limit = 3;
+  bool offline_mode_enabled = 4;
+  int32 offline_sync_interval = 5;
+  bool auto_update_enabled = 6;
+  string minimum_app_version = 7;
+  map<string, string> settings = 8;
+}
+
+// Update terminal config response
+message UpdateTerminalConfigResponse {
+  bool success = 1;
+  TerminalConfig config = 2;
+  string message = 3;
+}
+
+// Get terminal config request
+message GetTerminalConfigRequest {
+  string terminal_id = 1;
+}
+
+// Get terminal config response
+message GetTerminalConfigResponse {
+  TerminalConfig config = 1;
+}
+
+// Validate retailer terminal request 
+message ValidateRetailerTerminalRequest {
+  string retailer_id = 1;
+  string terminal_id = 2;
+}
+
+// Validate retailer terminal response 
+message ValidateRetailerTerminalResponse {
+  bool valid = 1;
+  bool message = 2;
+  Terminal terminal = 3;
+}

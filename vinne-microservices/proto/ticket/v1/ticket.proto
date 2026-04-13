@@ -1,0 +1,487 @@
+syntax = "proto3";
+
+package ticket.v1;
+
+option go_package = "github.com/randco/randco-microservices/proto/ticket/v1;ticketv1";
+
+import "google/protobuf/timestamp.proto";
+
+// TicketService defines the gRPC service for ticket management
+service TicketService {
+  // IssueTicket creates a new lottery ticket
+  rpc IssueTicket(IssueTicketRequest) returns (IssueTicketResponse);
+
+  // GetTicket retrieves a ticket by ID
+  rpc GetTicket(GetTicketRequest) returns (GetTicketResponse);
+
+  // GetTicketBySerial retrieves a ticket by serial number
+  rpc GetTicketBySerial(GetTicketBySerialRequest) returns (GetTicketBySerialResponse);
+
+  // ListTickets retrieves a paginated list of tickets with optional filters
+  rpc ListTickets(ListTicketsRequest) returns (ListTicketsResponse);
+
+  // ValidateTicket marks a ticket as validated and checks for winnings
+  rpc ValidateTicket(ValidateTicketRequest) returns (ValidateTicketResponse);
+
+  // CancelTicket cancels a ticket before validation
+  rpc CancelTicket(CancelTicketRequest) returns (CancelTicketResponse);
+
+  // VoidTicket voids a ticket (administrative action)
+  rpc VoidTicket(VoidTicketRequest) returns (VoidTicketResponse);
+
+  // ReprintTicket generates a reprint of an existing ticket
+  rpc ReprintTicket(ReprintTicketRequest) returns (ReprintTicketResponse);
+
+  // CheckWinnings checks if a ticket has winnings without validating
+  rpc CheckWinnings(CheckWinningsRequest) returns (CheckWinningsResponse);
+
+  // UpdateTicketsDrawId updates all tickets for a game schedule with a draw ID
+  rpc UpdateTicketsDrawId(UpdateTicketsDrawIdRequest) returns (UpdateTicketsDrawIdResponse);
+
+  // MarkTicketAsPaid marks a winning ticket as paid
+  rpc MarkTicketAsPaid(MarkTicketAsPaidRequest) returns (MarkTicketAsPaidResponse);
+
+  // UpdateTicketStatus updates a ticket's status after draw processing (won/lost)
+  rpc UpdateTicketStatus(UpdateTicketStatusRequest) returns (UpdateTicketStatusResponse);
+
+  // UpdateTicketStatuses updates multiple tickets' statuses in a single batch operation
+  // This is optimized for draw processing to avoid N+1 query problems
+  rpc UpdateTicketStatuses(UpdateTicketStatusesRequest) returns (UpdateTicketStatusesResponse);
+
+  // GetDailyMetrics returns daily metrics for dashboard analytics
+  rpc GetDailyMetrics(GetDailyMetricsRequest) returns (GetDailyMetricsResponse);
+
+  // GetMonthlyMetrics returns monthly aggregated metrics for charts
+  rpc GetMonthlyMetrics(GetMonthlyMetricsRequest) returns (GetMonthlyMetricsResponse);
+
+  // GetTopPerformingAgents retrieves top performing agents by revenue
+  rpc GetTopPerformingAgents(GetTopPerformingAgentsRequest) returns (GetTopPerformingAgentsResponse);
+
+  // GetAllTicketsForDraw retrieves all tickets for a specific draw without pagination limits
+  // This is specifically for internal service-to-service calls (e.g., draw processing)
+  rpc GetAllTicketsForDraw(GetAllTicketsForDrawRequest) returns (GetAllTicketsForDrawResponse);
+}
+
+// BetLine represents a single bet line on a ticket
+message BetLine {
+  int32 line_number = 1;
+  string bet_type = 2;  // "DIRECT-1", "DIRECT-2", "PERM-2", "PERM-3", "BANKER", "BANKER ALL", "BANKER AG", "AGAINST"
+
+  // For DIRECT and PERM bets
+  repeated int32 selected_numbers = 3;  // Player's chosen numbers
+
+  // For BANKER and AGAINST bets
+  repeated int32 banker = 4;
+  repeated int32 opposed = 5;
+
+  // For PERM and Banker bets (new compact format)
+  int32 number_of_combinations = 6;  // C(n,r) - calculated value
+  int64 amount_per_combination = 7;  // Amount per combination in pesewas
+
+  // Common fields
+  int64 total_amount = 8;            // Total bet amount in pesewas
+  int64 potential_win = 9;           // Potential winning amount in pesewas
+}
+
+// SecurityFeatures contains ticket security information
+message SecurityFeatures {
+  string qr_code = 1;
+  string barcode = 2;
+  string verification_code = 3;
+}
+
+// IssuerDetails contains information about who issued the ticket
+message IssuerDetails {
+  string terminal_id = 1;    // For POS tickets only
+  string retailer_code = 2;  // For retailer-issued tickets (POS)
+  string player_id = 3;      // For player-issued tickets (Web/Mobile/USSD)
+  string location = 4;       // Optional location info
+}
+
+// Ticket represents a lottery ticket
+message Ticket {
+  string id = 1 [json_name = "ticket_id"];
+  string serial_number = 2 [json_name = "serial_number"];
+  string game_code = 3;
+  string game_name = 4;
+  string game_schedule_id = 5;
+  int32 draw_number = 6;
+  google.protobuf.Timestamp draw_date = 7;
+  repeated int32 selected_numbers = 8;
+  repeated BetLine bet_lines = 9;
+  string issuer_type = 10;
+  string issuer_id = 11;
+  IssuerDetails issuer_details = 12;
+  string customer_phone = 13;
+  string customer_email = 14;
+  string payment_method = 15;
+  int64 unit_price = 16;
+  int64 total_amount = 17;
+  string security_hash = 18;
+  SecurityFeatures security_features = 19;
+  string status = 20;
+  int64 winning_amount = 21;
+  google.protobuf.Timestamp validated_at = 22;
+  google.protobuf.Timestamp cancelled_at = 23;
+  google.protobuf.Timestamp voided_at = 24;
+  string cancelled_reason = 25;
+  string voided_reason = 26;
+  google.protobuf.Timestamp created_at = 27;
+  google.protobuf.Timestamp updated_at = 28;
+}
+
+// IssueTicketRequest contains the information needed to issue a new ticket
+message IssueTicketRequest {
+  string game_code = 1;
+  string game_schedule_id = 2;
+  int32 draw_number = 3;
+  repeated int32 selected_numbers = 4;
+  repeated BetLine bet_lines = 5;
+  string issuer_type = 6;
+  string issuer_id = 7;
+  IssuerDetails issuer_details = 8;
+  string customer_phone = 9;
+  string customer_email = 10;
+  string payment_method = 11;
+}
+
+// IssueTicketResponse contains the newly issued ticket
+message IssueTicketResponse {
+  Ticket ticket = 1;
+}
+
+// GetTicketRequest requests a ticket by ID
+message GetTicketRequest {
+  string ticket_id = 1;
+}
+
+// GetTicketResponse returns a ticket
+message GetTicketResponse {
+  Ticket ticket = 1;
+}
+
+// GetTicketBySerialRequest requests a ticket by serial number
+message GetTicketBySerialRequest {
+  string serial_number = 1;
+}
+
+// GetTicketBySerialResponse returns a ticket
+message GetTicketBySerialResponse {
+  Ticket ticket = 1;
+}
+
+// TicketFilter defines filtering options for listing tickets
+message TicketFilter {
+  string status = 1;
+  string game_code = 2;
+  int32 draw_number = 3;
+  string draw_id = 8;  // Filter by draw UUID
+  string issuer_type = 4;
+  string issuer_id = 5;
+  google.protobuf.Timestamp start_date = 6;
+  google.protobuf.Timestamp end_date = 7;
+  string game_schedule_id = 9;  // Filter by game schedule UUID
+}
+
+// ListTicketsRequest requests a paginated list of tickets
+message ListTicketsRequest {
+  TicketFilter filter = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// ListTicketsResponse returns a paginated list of tickets
+message ListTicketsResponse {
+  repeated Ticket tickets = 1;
+  int64 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+// ValidateTicketRequest validates a ticket
+message ValidateTicketRequest {
+  string ticket_id = 1;
+  string validator_id = 2;
+  string validator_type = 3;
+}
+
+// ValidateTicketResponse returns the validated ticket
+message ValidateTicketResponse {
+  Ticket ticket = 1;
+  int64 winning_amount = 2;
+}
+
+// CancelTicketRequest cancels a ticket
+message CancelTicketRequest {
+  string ticket_id = 1;
+  string reason = 2;
+  string cancelled_by = 3;
+}
+
+// CancelTicketResponse returns the cancelled ticket
+message CancelTicketResponse {
+  Ticket ticket = 1;
+}
+
+// VoidTicketRequest voids a ticket
+message VoidTicketRequest {
+  string ticket_id = 1;
+  string reason = 2;
+  string voided_by = 3;
+}
+
+// VoidTicketResponse returns the voided ticket
+message VoidTicketResponse {
+  Ticket ticket = 1;
+}
+
+// ReprintTicketRequest requests a ticket reprint
+message ReprintTicketRequest {
+  string ticket_id = 1;
+  string reprinted_by = 2;
+  string terminal_id = 3;
+}
+
+// ReprintTicketResponse returns the reprinted ticket
+message ReprintTicketResponse {
+  Ticket ticket = 1;
+}
+
+// CheckWinningsRequest checks ticket winnings
+message CheckWinningsRequest {
+  string ticket_id = 1;
+}
+
+// CheckWinningsResponse returns winning information
+message CheckWinningsResponse {
+  bool has_winnings = 1;
+  int64 winning_amount = 2;
+  string status = 3;
+}
+
+// UpdateTicketsDrawIdRequest updates tickets with a draw ID
+message UpdateTicketsDrawIdRequest {
+  string game_schedule_id = 1;
+  string draw_id = 2;
+}
+
+// UpdateTicketsDrawIdResponse returns the result of the update
+message UpdateTicketsDrawIdResponse {
+  int64 updated_count = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// MarkTicketAsPaidRequest marks a winning ticket as paid
+message MarkTicketAsPaidRequest {
+  string ticket_id = 1;           // UUID of ticket to mark as paid
+  int64 paid_amount = 2;          // Amount paid in pesewas
+  string payment_reference = 3;   // Reference from wallet transaction
+  string paid_by = 4;             // Who processed the payout (usually "system")
+  string draw_id = 5;             // Draw UUID for audit trail
+}
+
+// MarkTicketAsPaidResponse returns the result of marking ticket as paid
+message MarkTicketAsPaidResponse {
+  bool success = 1;
+  string message = 2;
+  TicketPayout payout_details = 3; // Optional: Return payout record
+}
+
+// TicketPayout contains payout information for a ticket
+message TicketPayout {
+  string ticket_id = 1;
+  int64 paid_amount = 2;
+  string payment_reference = 3;
+  string paid_by = 4;
+  google.protobuf.Timestamp paid_at = 5;
+}
+
+// UpdateTicketStatusRequest updates a ticket's status after draw processing
+message UpdateTicketStatusRequest {
+  string ticket_id = 1;           // UUID of ticket to update
+  string status = 2;              // New status: "won" or "lost"
+  int64 winning_amount = 3;       // Amount if won (in pesewas), 0 if lost
+  int32 matches = 4;              // Number of matches
+  string prize_tier = 5;          // Prize tier/bet type if won
+  string draw_id = 6;             // Draw UUID for audit trail
+}
+
+// UpdateTicketStatusResponse returns the result of updating ticket status
+message UpdateTicketStatusResponse {
+  bool success = 1;
+  string message = 2;
+  Ticket ticket = 3;              // Updated ticket (optional)
+}
+
+// TicketStatusUpdate represents a single ticket status update in a batch
+message TicketStatusUpdate {
+  string ticket_id = 1;           // UUID of ticket to update
+  string status = 2;              // New status: "won" or "lost"
+  int64 winning_amount = 3;       // Amount if won (in pesewas), 0 if lost
+  int32 matches = 4;              // Number of matches
+  string prize_tier = 5;          // Prize tier/bet type if won
+}
+
+// UpdateTicketStatusesRequest updates multiple tickets' statuses in a batch
+message UpdateTicketStatusesRequest {
+  repeated TicketStatusUpdate updates = 1;  // List of ticket updates
+  string draw_id = 2;                       // Draw UUID for audit trail
+}
+
+// TicketUpdateResult represents the result of updating a single ticket
+message TicketUpdateResult {
+  string ticket_id = 1;
+  bool success = 2;
+  string message = 3;             // Error message if failed
+}
+
+// UpdateTicketStatusesResponse returns the results of batch ticket update
+message UpdateTicketStatusesResponse {
+  int64 total_requested = 1;      // Total number of updates requested
+  int64 successful = 2;           // Number of successful updates
+  int64 failed = 3;               // Number of failed updates
+  repeated TicketUpdateResult results = 4;  // Individual results (only failures for efficiency)
+  string message = 5;             // Overall message
+}
+
+// ======================== Analytics Messages ========================
+
+// GetDailyMetricsRequest requests daily metrics for a specific date
+message GetDailyMetricsRequest {
+  // Date in YYYY-MM-DD format (defaults to today if empty)
+  string date = 1;
+
+  // Include comparison with previous day (default: true)
+  bool include_comparison = 2;
+}
+
+// GetDailyMetricsResponse returns daily metrics for dashboard
+message GetDailyMetricsResponse {
+  // Date of the metrics (YYYY-MM-DD)
+  string date = 1;
+
+  // Existing metrics
+  RevenueMetric gross_revenue = 2;
+  CountMetric tickets = 3;
+  RevenueMetric payouts = 4;
+  WinRateMetric win_rate = 5;
+
+  // NEW: Additional metrics for enhanced dashboard
+  CountMetric stakes = 6;              // Total number of stakes (tickets sold)
+  RevenueMetric stakes_amount = 7;     // Total stakes amount (same as gross_revenue)
+  CountMetric paid_tickets = 8;        // Number of paid winning tickets
+  RevenueMetric payments_amount = 9;   // Total payments for paid winnings
+  CountMetric unpaid_tickets = 10;     // Number of unpaid winning tickets
+  RevenueMetric unpaid_amount = 11;    // Total unpaid winning amounts
+}
+
+// RevenueMetric represents a monetary metric with change tracking
+message RevenueMetric {
+  // Amount in pesewas
+  int64 amount = 1;
+
+  // Change percentage compared to previous day
+  double change_percentage = 2;
+
+  // Previous day amount in pesewas
+  int64 previous_amount = 3;
+}
+
+// CountMetric represents a count metric with change tracking
+message CountMetric {
+  // Count value
+  int64 count = 1;
+
+  // Change percentage compared to previous day
+  double change_percentage = 2;
+
+  // Previous day count
+  int64 previous_count = 3;
+}
+
+// WinRateMetric represents win rate statistics
+message WinRateMetric {
+  // Win rate percentage
+  double percentage = 1;
+
+  // Number of winning tickets
+  int64 winning_tickets = 2;
+
+  // Total tickets checked against draws
+  int64 total_tickets = 3;
+}
+
+// GetMonthlyMetricsRequest requests monthly aggregated metrics
+message GetMonthlyMetricsRequest {
+  // Number of months to retrieve (default: 6)
+  int32 months = 1;
+}
+
+// GetMonthlyMetricsResponse returns monthly metrics for charts
+message GetMonthlyMetricsResponse {
+  // List of monthly data points
+  repeated MonthlyDataPoint data = 1;
+}
+
+// MonthlyDataPoint represents metrics for a single month
+message MonthlyDataPoint {
+  // Month in format "YYYY-MM" or "MMM" (e.g., "2025-10" or "Oct")
+  string month = 1;
+
+  // Year (e.g., 2025)
+  int32 year = 2;
+
+  // Revenue in pesewas
+  int64 revenue = 3;
+
+  // Revenue in GHS (for convenience)
+  double revenue_ghs = 4;
+
+  // Number of tickets sold
+  int64 tickets = 5;
+
+  // Payouts in pesewas
+  int64 payouts = 6;
+
+  // Payouts in GHS (for convenience)
+  double payouts_ghs = 7;
+}
+
+// AgentPerformance represents performance metrics for a single agent
+message AgentPerformance {
+  string agent_id = 1;
+  string agent_code = 2;
+  string agent_name = 3;
+  int64 total_revenue = 4;         // in pesewas
+  double total_revenue_ghs = 5;    // in GHS
+  int64 total_tickets = 6;
+  int32 retailer_count = 7;        // number of retailers under this agent
+}
+
+// GetTopPerformingAgentsRequest requests top performing agents
+message GetTopPerformingAgentsRequest {
+  string date = 1;             // optional, format: YYYY-MM-DD, defaults to today
+  int32 limit = 2;             // number of agents to return, default 10
+  string period = 3;           // period type: "daily", "monthly", "yearly", default "monthly"
+}
+
+// GetTopPerformingAgentsResponse returns top performing agents
+message GetTopPerformingAgentsResponse {
+  repeated AgentPerformance agents = 1;
+  string period = 2;           // the period that was queried
+  string date = 3;             // the date that was queried
+}
+
+// GetAllTicketsForDrawRequest requests all tickets for a specific draw
+// This is an internal service-to-service call for draw processing
+message GetAllTicketsForDrawRequest {
+  string draw_id = 1;          // UUID of the draw
+  string status = 2;           // optional ticket status filter (e.g., "issued")
+}
+
+// GetAllTicketsForDrawResponse returns all tickets for the draw
+message GetAllTicketsForDrawResponse {
+  repeated Ticket tickets = 1;
+  int64 total = 2;             // total number of tickets found
+}

@@ -1,0 +1,328 @@
+syntax = "proto3";
+
+package player.v1;
+
+option go_package = "github.com/randco/randco-microservices/proto/player/v1;playerv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+service PlayerService {
+  // Standard Authentication (Mobile/Web/Telegram)
+  rpc RegisterPlayer(RegisterPlayerRequest) returns (RegisterPlayerResponse);
+  rpc VerifyOTP(VerifyOTPRequest) returns (VerifyOTPResponse);
+  rpc ResendOTP(ResendOTPRequest) returns (google.protobuf.Empty);
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc Logout(LogoutRequest) returns (google.protobuf.Empty);
+
+  // USSD Authentication (No OTP required)
+  rpc USSDRegister(USSDRegisterRequest) returns (USSDAuthResponse);
+  rpc USSDLogin(USSDLoginRequest) returns (USSDAuthResponse);
+
+  // Password Reset Flow
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+  rpc ValidatePasswordResetOTP(ValidatePasswordResetOTPRequest) returns (ValidatePasswordResetOTPResponse);
+  rpc ConfirmPasswordReset(ConfirmPasswordResetRequest) returns (google.protobuf.Empty);
+  rpc ResendPasswordResetOTP(ResendPasswordResetOTPRequest) returns (google.protobuf.Empty);
+
+  // Profile Management
+  rpc GetProfile(GetProfileRequest) returns (PlayerProfile);
+  rpc UpdateProfile(UpdateProfileRequest) returns (PlayerProfile);
+  rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+  rpc UpdateMobileMoneyPhone(UpdatePhoneRequest) returns (google.protobuf.Empty);
+
+  // Wallet Operations (delegates to Payment/Wallet Services)
+  rpc InitiateDeposit(DepositRequest) returns (DepositResponse);
+  rpc InitiateWithdrawal(WithdrawalRequest) returns (WithdrawalResponse);
+  rpc GetTransactionHistory(TransactionHistoryRequest) returns (TransactionHistoryResponse); // Proxies to Payment Service
+  rpc GetWalletBalance(WalletBalanceRequest) returns (WalletBalanceResponse); // Proxies to Wallet Service
+
+  // Admin Operations
+  rpc GetPlayerByID(GetPlayerByIDRequest) returns (PlayerProfile);
+  rpc SearchPlayers(SearchPlayersRequest) returns (SearchPlayersResponse);
+  rpc SuspendPlayer(SuspendPlayerRequest) returns (google.protobuf.Empty);
+  rpc ActivatePlayer(ActivatePlayerRequest) returns (google.protobuf.Empty);
+
+  rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+}
+
+// Core Messages
+message RegisterPlayerRequest {
+  string phone_number = 1;
+  string password = 2;
+  string device_id = 3;
+  string channel = 4; // mobile, web, telegram
+  DeviceInfo device_info = 5;
+  bool terms_accepted = 6;
+  bool marketing_consent = 7;
+}
+
+message USSDRegisterRequest {
+  string phone_number = 1;  // Provided by USSD session
+  string password = 2;      // Password (same as other channels)
+  string session_id = 3;    // USSD session identifier
+}
+
+message USSDLoginRequest {
+  string phone_number = 1;  // Provided by USSD session
+  string password = 2;      // Password (same as other channels)
+  string session_id = 3;    // USSD session identifier
+}
+
+message USSDAuthResponse {
+  bool success = 1;
+  string access_token = 2;
+  string session_token = 3;  // Short-lived token for USSD session
+  PlayerProfile profile = 4;
+  string message = 5;
+}
+
+message RegisterPlayerResponse {
+  bool requires_otp = 1;
+  string session_id = 2;
+  string message = 3;
+}
+
+message LoginRequest {
+  string phone_number = 1;
+  string password = 2;
+  string device_id = 3;
+  string channel = 4;  // REQUIRED: mobile, web, telegram, ussd
+  DeviceInfo device_info = 5;
+}
+
+message LoginResponse {
+  bool requires_otp = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  PlayerProfile profile = 4;
+}
+
+message PlayerProfile {
+  string id = 1;
+  string phone_number = 2;
+  string email = 3;
+  string first_name = 4;
+  string last_name = 5;
+  google.protobuf.Timestamp date_of_birth = 6;
+  string national_id = 7;
+  string wallet_id = 8; // Reference to Wallet Service
+  string mobile_money_phone = 9;
+  PlayerStatus status = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp last_login = 12;
+}
+
+message DeviceInfo {
+  string device_type = 1;
+  string os = 2;
+  string os_version = 3;
+  string app_version = 4;
+  string ip_address = 5;
+  string user_agent = 6;
+}
+
+enum PlayerStatus {
+  ACTIVE = 0;
+  SUSPENDED = 1;
+  BANNED = 2;
+}
+
+// Transaction Messages
+message DepositRequest {
+  string player_id = 1;
+  int64 amount = 2; // pesewas
+  string mobile_money_phone = 3;
+  string payment_method = 4;
+}
+
+message WithdrawalRequest {
+  string player_id = 1;
+  int64 amount = 2; // pesewas
+  string mobile_money_phone = 3;
+}
+
+// Transaction message returned from Payment Service
+message Transaction {
+  string id = 1;
+  string player_id = 2;
+  enum Type {
+    DEPOSIT = 0;
+    WITHDRAWAL = 1;
+    BET = 2;
+    WIN = 3;
+    REFUND = 4;
+  }
+  Type type = 3;
+  int64 amount = 4; // pesewas
+  string reference = 5;
+  string status = 6;
+  google.protobuf.Timestamp created_at = 7;
+  // Additional fields populated by Payment Service
+}
+
+// Additional message types for completeness
+message VerifyOTPRequest {
+  string session_id = 1;
+  string otp = 2;
+}
+
+message VerifyOTPResponse {
+  bool success = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  PlayerProfile profile = 4;
+}
+
+message ResendOTPRequest {
+  string phone_number = 1;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  string access_token = 2;
+  string refresh_token = 3;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message GetProfileRequest {
+  string player_id = 1;
+}
+
+message UpdateProfileRequest {
+  string player_id = 1;
+  string first_name = 2;
+  string last_name = 3;
+  string email = 4;
+  google.protobuf.Timestamp date_of_birth = 5;
+  string national_id = 6;
+}
+
+message ChangePasswordRequest {
+  string player_id = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+
+message UpdatePhoneRequest {
+  string player_id = 1;
+  string phone_number = 2;
+  string otp = 3;
+}
+
+message DepositResponse {
+  string transaction_id = 1;
+  string status = 2;
+  string message = 3;
+}
+
+message WithdrawalResponse {
+  string transaction_id = 1;
+  string status = 2;
+  string message = 3;
+}
+
+message TransactionHistoryRequest {
+  string player_id = 1;
+  int32 page = 2;
+  int32 per_page = 3;
+  string type = 4;
+  google.protobuf.Timestamp from_date = 5;
+  google.protobuf.Timestamp to_date = 6;
+}
+
+message TransactionHistoryResponse {
+  repeated Transaction transactions = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 per_page = 4;
+}
+
+message WalletBalanceRequest {
+  string player_id = 1;
+}
+
+message WalletBalanceResponse {
+  int64 balance = 1; // pesewas
+  int64 pending_balance = 2; // pesewas
+  string currency = 3;
+}
+
+message GetPlayerByIDRequest {
+  string player_id = 1;
+}
+
+message SearchPlayersRequest {
+  string query = 1;
+  int32 page = 2;
+  int32 per_page = 3;
+  PlayerStatus status = 4;
+}
+
+message SearchPlayersResponse {
+  repeated PlayerProfile players = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 per_page = 4;
+}
+
+message SuspendPlayerRequest {
+  string player_id = 1;
+  string reason = 2;
+  string suspended_by = 3;
+}
+
+message ActivatePlayerRequest {
+  string player_id = 1;
+  string activated_by = 2;
+}
+
+message SubmitFeedbackRequest {
+  string player_id = 1;
+  string full_name = 2;
+  string email = 3;
+  string message = 4;
+}
+
+message SubmitFeedbackResponse {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+
+// Password Reset Messages
+message RequestPasswordResetRequest {
+  string phone_number = 1;
+}
+
+message RequestPasswordResetResponse {
+  string session_id = 1; // Player ID used as session identifier
+  string message = 2;
+}
+
+message ValidatePasswordResetOTPRequest {
+  string session_id = 1; // Player ID
+  string otp = 2;
+}
+
+message ValidatePasswordResetOTPResponse {
+  bool success = 1;
+  string session_id = 2; // Player ID for next step
+  string message = 3;
+}
+
+message ConfirmPasswordResetRequest {
+  string session_id = 1; // Player ID
+  string new_password = 2;
+  string otp = 3; // OTP for additional verification
+}
+
+message ResendPasswordResetOTPRequest {
+  string phone_number = 1;
+}

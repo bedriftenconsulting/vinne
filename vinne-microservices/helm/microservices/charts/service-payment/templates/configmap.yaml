@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chart.fullname" . }}-config
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+data:
+  # Service configuration
+  SERVICE_NAME: "service-payment"
+  SERVER_PORT: "50061"
+  SERVER_MODE: "dev"
+  ENVIRONMENT: "dev"
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+
+  # Database configuration
+  DATABASE_HOST: "postgres-payment.external-services.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "payment_service"
+  DATABASE_USER: "payment"
+  DATABASE_SSL_MODE: "disable"
+  DATABASE_MAX_OPEN_CONNS: "25"
+  DATABASE_MAX_IDLE_CONNS: "10"
+  DATABASE_CONN_MAX_LIFETIME: "1800s"
+  DATABASE_CONN_MAX_IDLE_TIME: "600s"
+
+  # Redis configuration
+  REDIS_HOST: "redis-payment.external-services.svc.cluster.local"
+  REDIS_PORT: "6387"
+  REDIS_DB: "0"
+
+  # Tracing configuration
+  TRACING_ENABLED: "true"
+  TRACING_JAEGER_ENDPOINT: "http://jaeger-dev.observability.svc.cluster.local:4318"
+  TRACING_SERVICE_NAME: "payment-service"
+  TRACING_SERVICE_VERSION: "1.0.0"
+  TRACING_SAMPLE_RATE: "1.0"
+  TRACING_ENVIRONMENT: "dev"
+
+  # Kafka configuration
+  KAFKA_ENABLED: "true"
+  KAFKA_BROKERS: "kafka.external-services.svc.cluster.local:9092"
+  KAFKA_TOPIC: "payment-events"
+  KAFKA_CONSUMER_GROUP: "payment-service-group"
+  KAFKA_TOPIC_PREFIX: "randco"
+
+  # Payment Processing Configuration
+  PAYMENT_DEFAULT_CURRENCY: "GHS"
+  PAYMENT_MAX_AMOUNT: "100000000"  # ₵1,000,000 in pesewas
+  PAYMENT_MIN_AMOUNT: "50"         # ₵0.50 in pesewas
+  PAYMENT_TIMEOUT_SECONDS: "300s"  # 5 minutes
+  PAYMENT_RETRY_COUNT: "3"
+  PAYMENT_RETRY_DELAY_SECONDS: "30s"
+  PAYMENT_TEST_MODE: "false"
+
+  # Service Discovery - Wallet Service (for deposit/withdrawal sagas)
+  SERVICES_WALLET_HOST: "service-wallet-dev"
+  SERVICES_WALLET_PORT: "50059"
+
+  # Orange Extensibility Service Configuration (via Fidelity Bank)
+  # This service aggregates MTN, Telecel, and AirtelTigo mobile money providers
+  PROVIDERS_ORANGE_ENABLED: "true"
+  PROVIDERS_ORANGE_BASE_URL: "https://fblapp.test.fidelitybank.com.gh:1065/OrangeEx/"
+  PROVIDERS_ORANGE_CALLBACK_URL: "https://api.dev.randlottery.com/api/v1/webhooks/orange"
+  PROVIDERS_ORANGE_ENVIRONMENT: "UAT"
+  PROVIDERS_ORANGE_TIMEOUT_SECONDS: "30s"
+  PROVIDERS_ORANGE_MAX_RETRY: "3"
+  PROVIDERS_ORANGE_RETRY_DELAY_SECONDS: "2s"
+
+  # Bank Transfer Configuration
+  PROVIDERS_BANKS_ENABLED: "false"
+  PROVIDERS_BANKS_MANUAL_VERIFICATION: "true"
+  PROVIDERS_BANKS_NOTIFICATION_EMAIL: ""
+
+  # Jaeger configuration
+  JAEGER_ENDPOINT: "http://jaeger-dev.observability.svc.cluster.local:4318"

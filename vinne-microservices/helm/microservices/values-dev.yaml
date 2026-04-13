@@ -1,0 +1,6 @@
+# Development environment overrides
+global:
+  environment: dev
+  # Image pull secrets for private registry
+  imagePullSecrets:
+    - name: ghcr-secret

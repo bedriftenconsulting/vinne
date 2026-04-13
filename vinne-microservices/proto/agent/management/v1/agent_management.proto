@@ -1,0 +1,431 @@
+syntax = "proto3";
+
+package agent.management.v1;
+
+option go_package = "github.com/randco/randco-microservices/proto/agent/management/v1;agentmanagementv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// AgentManagementService provides management operations for agents, retailers, and related entities
+service AgentManagementService {
+  // Agent operations
+  rpc CreateAgent(CreateAgentRequest) returns (Agent);
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  rpc GetAgentByCode(GetAgentByCodeRequest) returns (Agent);
+  rpc UpdateAgent(UpdateAgentRequest) returns (Agent);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc UpdateAgentStatus(UpdateAgentStatusRequest) returns (google.protobuf.Empty);
+  rpc DeleteAgent(DeleteAgentRequest) returns (google.protobuf.Empty);
+
+  // Retailer operations
+  rpc CreateRetailer(CreateRetailerRequest) returns (Retailer);
+  rpc GetRetailer(GetRetailerRequest) returns (Retailer);
+  rpc GetRetailerByCode(GetRetailerByCodeRequest) returns (Retailer);
+  rpc GetRetailerDetails(GetRetailerDetailsRequest) returns (RetailerDetailsResponse);
+  rpc UpdateRetailer(UpdateRetailerRequest) returns (Retailer);
+  rpc ListRetailers(ListRetailersRequest) returns (ListRetailersResponse);
+  rpc UpdateRetailerStatus(UpdateRetailerStatusRequest) returns (google.protobuf.Empty);
+  rpc DisableRetailer(DisableRetailerRequest) returns (google.protobuf.Empty);
+  rpc EnableRetailer(EnableRetailerRequest) returns (google.protobuf.Empty);
+  
+  // Agent-Retailer relationship operations
+  rpc AssignRetailerToAgent(AssignRetailerToAgentRequest) returns (google.protobuf.Empty);
+  rpc ReassignRetailerToAgent(ReassignRetailerToAgentRequest) returns (google.protobuf.Empty);
+  rpc UnassignRetailerFromAgent(UnassignRetailerFromAgentRequest) returns (google.protobuf.Empty);
+  rpc GetAgentRetailers(GetAgentRetailersRequest) returns (GetAgentRetailersResponse);
+  rpc GetRetailerAgent(GetRetailerAgentRequest) returns (Agent);
+  
+  // POS Device operations
+  rpc CreatePOSDevice(CreatePOSDeviceRequest) returns (POSDevice);
+  rpc GetPOSDevice(GetPOSDeviceRequest) returns (POSDevice);
+  rpc UpdatePOSDevice(UpdatePOSDeviceRequest) returns (POSDevice);
+  rpc ListPOSDevices(ListPOSDevicesRequest) returns (ListPOSDevicesResponse);
+  rpc AssignPOSDeviceToRetailer(AssignPOSDeviceToRetailerRequest) returns (google.protobuf.Empty);
+  rpc UnassignPOSDeviceFromRetailer(UnassignPOSDeviceFromRetailerRequest) returns (google.protobuf.Empty);
+  
+  // KYC operations
+  rpc CreateAgentKYC(CreateAgentKYCRequest) returns (AgentKYC);
+  rpc UpdateAgentKYCStatus(UpdateAgentKYCStatusRequest) returns (google.protobuf.Empty);
+  rpc CreateRetailerKYC(CreateRetailerKYCRequest) returns (RetailerKYC);
+  rpc UpdateRetailerKYCStatus(UpdateRetailerKYCStatusRequest) returns (google.protobuf.Empty);
+
+  // Analytics operations
+  rpc GetRetailerCount(GetRetailerCountRequest) returns (GetRetailerCountResponse);
+}
+
+// Enums
+
+enum EntityStatus {
+  ENTITY_STATUS_UNSPECIFIED = 0;
+  ENTITY_STATUS_ACTIVE = 1;
+  ENTITY_STATUS_SUSPENDED = 2;
+  ENTITY_STATUS_UNDER_REVIEW = 3;
+  ENTITY_STATUS_TERMINATED = 4;
+  ENTITY_STATUS_INACTIVE = 5;
+  ENTITY_STATUS_PENDING = 6;
+}
+
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  DEVICE_STATUS_AVAILABLE = 1;
+  DEVICE_STATUS_ASSIGNED = 2;
+  DEVICE_STATUS_MAINTENANCE = 3;
+  DEVICE_STATUS_RETIRED = 4;
+}
+
+enum KYCStatus {
+  KYC_STATUS_UNSPECIFIED = 0;
+  KYC_STATUS_PENDING = 1;
+  KYC_STATUS_APPROVED = 2;
+  KYC_STATUS_REJECTED = 3;
+  KYC_STATUS_EXPIRED = 4;
+}
+
+// Agent messages
+
+message Agent {
+  string id = 1;
+  string agent_code = 2;
+  string name = 3;
+  string email = 4;
+  string phone_number = 5;
+  string address = 6;
+  double commission_percentage = 7;  // Commission as percentage (e.g., 30 for 30%)
+  EntityStatus status = 8;
+  google.protobuf.Timestamp date_joined = 9;
+  string created_by = 10;
+  string updated_by = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  string initial_password = 14;  // Only populated on creation response
+}
+
+message CreateAgentRequest {
+  string name = 1;
+  string email = 2;
+  string phone_number = 3;
+  string address = 4;
+  double commission_percentage = 5;  // Commission as percentage (e.g., 30 for 30%)
+  string created_by = 6;
+  string onboarding_method = 7;  // Method used for agent onboarding
+}
+
+message GetAgentRequest {
+  string id = 1;
+}
+
+message GetAgentByCodeRequest {
+  string agent_code = 1;
+}
+
+message UpdateAgentRequest {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  string phone_number = 4;
+  string address = 5;
+  double commission_percentage = 6;  // Commission as percentage (e.g., 30 for 30%)
+  string updated_by = 7;
+}
+
+message ListAgentsRequest {
+  int32 page_size = 1;
+  int32 page = 2;
+  AgentFilter filter = 3;
+}
+
+message AgentFilter {
+  double min_commission_percentage = 1;  // Optional minimum commission filter
+  double max_commission_percentage = 2;  // Optional maximum commission filter
+  EntityStatus status = 3;
+  string name = 4;
+  string email = 5;
+}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message UpdateAgentStatusRequest {
+  string id = 1;
+  EntityStatus status = 2;
+  string updated_by = 3;
+}
+
+message DeleteAgentRequest {
+  string id = 1;
+  string deleted_by = 2;
+}
+
+// Retailer messages
+
+message Retailer {
+  string id = 1;
+  string retailer_code = 2;
+  string name = 3;
+  string email = 4;
+  string phone_number = 5;
+  string address = 6;
+  string agent_id = 7;
+  EntityStatus status = 8;
+  google.protobuf.Timestamp date_joined = 9;
+  string created_by = 10;
+  string updated_by = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message CreateRetailerRequest {
+  string name = 1;
+  string email = 2;
+  string phone_number = 3;
+  string address = 4;
+  string agent_id = 5;
+  string created_by = 6;
+  string onboarding_method = 7;  // Method used for retailer onboarding
+  string business_name = 8;
+}
+
+message GetRetailerRequest {
+  string id = 1;
+}
+
+message GetRetailerByCodeRequest {
+  string retailer_code = 1;
+}
+
+message UpdateRetailerRequest {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  string phone_number = 4;
+  string address = 5;
+  string updated_by = 6;
+}
+
+message ListRetailersRequest {
+  int32 page_size = 1;
+  int32 page = 2;
+  RetailerFilter filter = 3;
+}
+
+message RetailerFilter {
+  string agent_id = 1;
+  EntityStatus status = 2;
+  string name = 3;
+  string email = 4;
+}
+
+message ListRetailersResponse {
+  repeated Retailer retailers = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message UpdateRetailerStatusRequest {
+  string id = 1;
+  EntityStatus status = 2;
+  string updated_by = 3;
+}
+
+message DisableRetailerRequest {
+  string id = 1;
+  string reason = 2;
+  string disabled_by = 3;
+}
+
+message EnableRetailerRequest {
+  string id = 1;
+  string enabled_by = 2;
+}
+
+message GetRetailerDetailsRequest {
+  string id = 1;
+}
+
+message RetailerDetailsResponse {
+  Retailer retailer = 1;
+  Agent parent_agent = 2;
+  RetailerKYC kyc = 3;
+  repeated POSDevice pos_devices = 4;
+  string terminal_id = 5;
+  string terminal_status = 6;
+}
+
+// Agent-Retailer relationship messages
+
+message AssignRetailerToAgentRequest {
+  string retailer_id = 1;
+  string agent_id = 2;
+  string assigned_by = 3;
+}
+
+message ReassignRetailerToAgentRequest {
+  string retailer_id = 1;
+  string new_agent_id = 2;
+  string reassigned_by = 3;
+}
+
+message UnassignRetailerFromAgentRequest {
+  string retailer_id = 1;
+  string unassigned_by = 2;
+}
+
+message GetAgentRetailersRequest {
+  string agent_id = 1;
+}
+
+message GetAgentRetailersResponse {
+  repeated Retailer retailers = 1;
+}
+
+message GetRetailerAgentRequest {
+  string retailer_id = 1;
+}
+
+// POS Device messages
+
+message POSDevice {
+  string id = 1;
+  string device_code = 2;
+  string imei = 3;
+  string model = 4;
+  string retailer_id = 5;
+  DeviceStatus status = 6;
+  string software_version = 7;
+  google.protobuf.Timestamp last_sync = 8;
+  google.protobuf.Timestamp last_transaction = 9;
+  string created_by = 10;
+  string updated_by = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message CreatePOSDeviceRequest {
+  string imei = 1;
+  string model = 2;
+  string created_by = 3;
+}
+
+message GetPOSDeviceRequest {
+  string id = 1;
+}
+
+message UpdatePOSDeviceRequest {
+  string id = 1;
+  string model = 2;
+  string software_version = 3;
+  string updated_by = 4;
+}
+
+message ListPOSDevicesRequest {
+  int32 page_size = 1;
+  int32 page = 2;
+  POSDeviceFilter filter = 3;
+}
+
+message POSDeviceFilter {
+  string retailer_id = 1;
+  DeviceStatus status = 2;
+  string model = 3;
+}
+
+message ListPOSDevicesResponse {
+  repeated POSDevice devices = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message AssignPOSDeviceToRetailerRequest {
+  string device_id = 1;
+  string retailer_id = 2;
+  string assigned_by = 3;
+}
+
+message UnassignPOSDeviceFromRetailerRequest {
+  string device_id = 1;
+  string unassigned_by = 2;
+}
+
+
+// Commission Tier messages - removed as we now use direct commission percentage on agents
+
+// KYC messages
+
+message AgentKYC {
+  string id = 1;
+  string agent_id = 2;
+  string id_number = 3;
+  string id_type = 4;
+  string business_name = 5;
+  string business_registration_number = 6;
+  string bank_account_number = 7;
+  string bank_name = 8;
+  KYCStatus status = 9;
+  string reviewed_by = 10;
+  google.protobuf.Timestamp expiry_date = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message CreateAgentKYCRequest {
+  string agent_id = 1;
+  string id_number = 2;
+  string id_type = 3;
+  string business_name = 4;
+  string business_registration_number = 5;
+  string bank_account_number = 6;
+  string bank_name = 7;
+}
+
+message UpdateAgentKYCStatusRequest {
+  string id = 1;
+  KYCStatus status = 2;
+  string reviewed_by = 3;
+}
+
+message RetailerKYC {
+  string id = 1;
+  string retailer_id = 2;
+  string id_number = 3;
+  string id_type = 4;
+  string business_name = 5;
+  string business_registration_number = 6;
+  KYCStatus status = 7;
+  string reviewed_by = 8;
+  google.protobuf.Timestamp expiry_date = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message CreateRetailerKYCRequest {
+  string retailer_id = 1;
+  string id_number = 2;
+  string id_type = 3;
+  string business_name = 4;
+  string business_registration_number = 5;
+}
+
+message UpdateRetailerKYCStatusRequest {
+  string id = 1;
+  KYCStatus status = 2;
+  string reviewed_by = 3;
+}
+
+// ======================== Analytics Messages ========================
+
+// GetRetailerCountRequest requests total retailer count
+message GetRetailerCountRequest {
+  // Empty - returns total count of all retailers
+}
+
+// GetRetailerCountResponse returns total retailer count
+message GetRetailerCountResponse {
+  int64 count = 1;
+}

@@ -1,0 +1,146 @@
+# Production environment overrides
+global:
+  environment: production
+  
+service-api-gateway:
+  image:
+    tag: main
+  replicaCount: 3
+  ingress:
+    hosts:
+      - host: api.dev.randlottery.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: api-prod-tls
+        hosts:
+          - api.dev.randlottery.com
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+# All services use main tag with higher resources
+service-admin-management:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-agent-auth:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-agent-management:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-draw:
+  image:
+    tag: main
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-game:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-payment:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-terminal:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-wallet:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-notification:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+service-player:
+  image:
+    tag: main
+  replicaCount: 3
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi

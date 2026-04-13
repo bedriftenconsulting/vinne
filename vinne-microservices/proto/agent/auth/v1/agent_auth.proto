@@ -1,0 +1,413 @@
+syntax = "proto3";
+
+package agent.auth.v1;
+
+option go_package = "github.com/randco/randco-microservices/proto/agent/auth/v1;agentauthv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// AgentAuthService provides authentication and authorization for agents
+service AgentAuthService {
+  // Authentication operations
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Logout(LogoutRequest) returns (google.protobuf.Empty);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+  rpc ChangeRetailerPIN(ChangeRetailerPINRequest) returns (ChangeRetailerPINResponse);
+  
+  // Agent auth credential management
+  rpc CreateAgentAuth(CreateAgentAuthRequest) returns (CreateAgentAuthResponse);
+
+  // Retailer auth credential management
+  rpc CreateRetailerAuth(CreateRetailerAuthRequest) returns (CreateRetailerAuthResponse);
+  rpc AuthenticateRetailer(RetailerAuthRequest) returns (LoginResponse);
+  
+  
+  // Device authentication for mobile POS
+  rpc RegisterDevice(RegisterDeviceRequest) returns (AuthDevice);
+  rpc UpdateDevice(UpdateDeviceRequest) returns (AuthDevice);
+  rpc GetDevice(GetDeviceRequest) returns (AuthDevice);
+  rpc ListAgentDevices(ListAgentDevicesRequest) returns (ListAgentDevicesResponse);
+  rpc ActivateDevice(ActivateDeviceRequest) returns (AuthDevice);
+  rpc DeactivateDevice(DeactivateDeviceRequest) returns (AuthDevice);
+  
+  // Offline token management
+  rpc GenerateOfflineToken(GenerateOfflineTokenRequest) returns (OfflineTokenResponse);
+  rpc ValidateOfflineToken(ValidateOfflineTokenRequest) returns (ValidateOfflineTokenResponse);
+  rpc RevokeOfflineToken(RevokeOfflineTokenRequest) returns (google.protobuf.Empty);
+  
+  
+  
+  // Token validation for internal services
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc GetAgentPermissions(GetAgentPermissionsRequest) returns (GetAgentPermissionsResponse);
+  
+  // Session management
+  rpc InvalidateAgentSessions(InvalidateAgentSessionsRequest) returns (google.protobuf.Empty);
+  rpc ListAgentSessions(ListAgentSessionsRequest) returns (ListAgentSessionsResponse);
+  rpc AgentCurrentSession(ListAgentSessionsRequest) returns (AgentCurrentSessionResponse);
+  // Retailer POS authentication
+  rpc RetailerPOSLogin(RetailerPOSLoginRequest) returns (LoginResponse);
+
+  // Password reset operations
+  rpc RequestPasswordReset(PasswordResetRequest) returns (PasswordResetResponse);
+  rpc ValidateResetOTP(ValidateResetOTPRequest) returns (ValidateResetOTPResponse);
+  rpc ConfirmPasswordReset(ConfirmPasswordResetRequest) returns (ConfirmPasswordResetResponse);
+  rpc ResendPasswordResetOTP(ResendPasswordResetOTPRequest) returns (ResendPasswordResetOTPResponse);
+}
+
+// Authentication Messages
+
+message LoginRequest {
+  string agent_code = 1;      // Agent code or email
+  string password = 2;
+  string device_id = 3;       // Optional device ID for POS
+  string ip_address = 4;
+  string user_agent = 5;
+}
+
+message LoginResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int32 expires_in = 3;
+  AuthUserInfo user = 4;
+  bool device_registered = 5;
+  string retailer_id = 6;
+}
+
+message LogoutRequest {
+  string agent_id = 1;
+  string refresh_token = 2;
+  string device_id = 3;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int32 expires_in = 3;
+}
+
+message ChangePasswordRequest {
+  string agent_id = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+
+message ChangeRetailerPINRequest {
+  string retailer_id = 1;
+  string retailer_code = 2;
+  string current_pin = 3;
+  string new_pin = 4;
+  string confirm_new_pin = 5;
+  string device_imei = 6;
+  string ip_address = 7;
+  string changed_by = 8; 
+}
+
+message ChangeRetailerPINResponse {
+  bool success = 1;
+  string message = 2;
+  int32 sessions_invalidated = 3;
+  google.protobuf.Timestamp next_change_allowed = 4;
+}
+
+
+message ChangePinRequest {
+  string retailer_id = 1;
+  string current_pin = 2;
+  string new_pin = 3;
+}
+
+message CreateAgentAuthRequest {
+  string agent_id = 1;
+  string agent_code = 2;
+  string email = 3;
+  string phone = 4;
+  string password = 5;
+  string created_by = 6;
+}
+
+message CreateAgentAuthResponse {
+  string agent_id = 1;
+  string agent_code = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message CreateRetailerAuthRequest {
+  string retailer_id = 1;
+  string retailer_code = 2;
+  string email = 3;
+  string phone = 4;
+  string pin = 5;
+  string created_by = 6;
+}
+
+message CreateRetailerAuthResponse {
+  string retailer_id = 1;
+  string retailer_code = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message RetailerAuthRequest {
+  string username = 1;
+  string password = 2;
+}
+
+
+message RetailerPOSLoginRequest {
+  string retailer_code = 1;     // 8-digit retailer ID
+  string pin = 2;                // 4-digit PIN
+  string device_imei = 3;        // Device IMEI for POS tracking
+  string ip_address = 4;
+  string user_agent = 5;
+}
+
+message PasswordResetRequest {
+  string identifier = 1; // agent_code or email
+  string channel = 2;    // "email" or "sms"
+  string ip_address = 3;
+  string user_agent = 4;
+  string user_type = 5;
+}
+
+message PasswordResetResponse {
+  bool success = 1;
+  string message = 2;
+  string reset_token = 3; // Masked token for tracking
+  int32 otp_expiry_seconds = 4; // 300 seconds
+}
+
+message ValidateResetOTPRequest {
+  string reset_token = 1;
+  string otp_code = 2;
+}
+
+message ValidateResetOTPResponse {
+  bool valid = 1;
+  string message = 2;
+  int32 remaining_attempts = 3;
+}
+
+message ConfirmPasswordResetRequest {
+  string reset_token = 1;
+  string otp_code = 2;
+  string new_password = 3;
+  string confirm_password = 4;
+}
+
+message ConfirmPasswordResetResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ResendPasswordResetOTPRequest {
+  string identifier = 1;
+  string reset_token = 2;
+  string channel = 3; // "email" or "sms"
+}
+
+message ResendPasswordResetOTPResponse {
+  bool success = 1;
+  string message = 2;
+  int32 otp_expiry_seconds = 3;
+  int32 next_resend_seconds = 4; // Cooldown period
+}
+
+
+// Device Management Messages
+
+message RegisterDeviceRequest {
+  string agent_id = 1;
+  string device_name = 2;
+  string device_type = 3;     // "POS", "MOBILE", "TABLET"
+  string device_model = 4;
+  string os_version = 5;
+  string app_version = 6;
+  string imei = 7;
+  string mac_address = 8;
+  string registered_by = 9;
+}
+
+message UpdateDeviceRequest {
+  string id = 1;
+  string device_name = 2;
+  string device_type = 3;
+  string device_model = 4;
+  string os_version = 5;
+  string app_version = 6;
+  bool is_active = 7;
+  string updated_by = 8;
+}
+
+message GetDeviceRequest {
+  string id = 1;
+}
+
+message ListAgentDevicesRequest {
+  string agent_id = 1;
+  bool active_only = 2;
+}
+
+message ListAgentDevicesResponse {
+  repeated AuthDevice devices = 1;
+}
+
+message ActivateDeviceRequest {
+  string id = 1;
+  string activated_by = 2;
+}
+
+message DeactivateDeviceRequest {
+  string id = 1;
+  string deactivated_by = 2;
+  string reason = 3;
+}
+
+// Offline Token Messages
+
+message GenerateOfflineTokenRequest {
+  string agent_id = 1;
+  string device_id = 2;
+  int32 validity_hours = 3;   // Token validity in hours
+  repeated string permissions = 4;  // Limited permissions for offline use
+}
+
+message OfflineTokenResponse {
+  string token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  repeated string permissions = 3;
+}
+
+message ValidateOfflineTokenRequest {
+  string token = 1;
+  string device_id = 2;
+}
+
+message ValidateOfflineTokenResponse {
+  bool valid = 1;
+  string agent_id = 2;
+  string device_id = 3;
+  repeated string permissions = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  string error_message = 6;
+}
+
+message RevokeOfflineTokenRequest {
+  string token = 1;
+  string revoked_by = 2;
+  string reason = 3;
+}
+
+
+
+// Token Validation Messages
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string agent_id = 2;
+  string agent_code = 3;
+  AgentRole role = 4;
+  repeated string permissions = 5;
+  string error_message = 6;
+}
+
+message GetAgentPermissionsRequest {
+  string agent_id = 1;
+}
+
+message GetAgentPermissionsResponse {
+  repeated string permissions = 1;
+}
+
+// Session Management Messages
+
+message InvalidateAgentSessionsRequest {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+message ListAgentSessionsRequest {
+  string agent_id = 1;
+}
+
+message ListAgentSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message AgentCurrentSessionResponse {
+  Session session = 1;
+}
+
+// Authentication Domain Models
+
+message AuthUserInfo {
+  string id = 1;
+  string agent_code = 2;
+  string email = 3;
+  string phone = 4;
+  AgentRole role = 5;
+  bool is_active = 6;
+  google.protobuf.Timestamp last_login = 7;
+}
+
+message AuthDevice {
+  string id = 1;
+  string user_id = 2;
+  string user_type = 3;
+  string device_name = 4;
+  string device_type = 5;
+  string imei = 6;
+  string status = 7;
+  bool is_active = 8;
+  google.protobuf.Timestamp last_used = 9;
+  google.protobuf.Timestamp registered_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message Session {
+  string id = 1;
+  string agent_id = 2;
+  string device_id = 3;
+  string user_agent = 4;
+  string ip_address = 5;
+  bool is_active = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp expires_at = 8;
+}
+
+// Enumerations
+
+enum AgentRole {
+  AGENT_ROLE_UNSPECIFIED = 0;
+  AGENT_ROLE_AGENT = 1;        // Regular agent
+  AGENT_ROLE_SUPER_AGENT = 2;  // Super agent with additional permissions
+  AGENT_ROLE_MANAGER = 3;      // Manager with team oversight
+  AGENT_ROLE_SUPERVISOR = 4;   // Regional supervisor
+}
+
+enum DeviceType {
+  DEVICE_TYPE_UNSPECIFIED = 0;
+  DEVICE_TYPE_POS = 1;         // Point of sale terminal
+  DEVICE_TYPE_MOBILE = 2;      // Mobile phone
+  DEVICE_TYPE_TABLET = 3;      // Tablet device
+  DEVICE_TYPE_DESKTOP = 4;     // Desktop computer
+}
+
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  DEVICE_STATUS_ACTIVE = 1;
+  DEVICE_STATUS_INACTIVE = 2;
+  DEVICE_STATUS_SUSPENDED = 3;
+  DEVICE_STATUS_BLOCKED = 4;
+}

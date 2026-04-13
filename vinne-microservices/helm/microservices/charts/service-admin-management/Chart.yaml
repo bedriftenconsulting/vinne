@@ -1,0 +1,7 @@
+apiVersion: v2
+appVersion: 1.0.0
+description: Admin Management Service
+name: service-admin-management
+type: application
+version: 1.0.0
+

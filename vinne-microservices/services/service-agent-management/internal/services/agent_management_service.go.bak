@@ -1,0 +1,1070 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/randco/randco-microservices/services/service-agent-management/internal/clients"
+	"github.com/randco/randco-microservices/services/service-agent-management/internal/models"
+	"github.com/randco/randco-microservices/services/service-agent-management/internal/repositories"
+	"github.com/randco/randco-microservices/shared/events"
+	"github.com/randco/randco-microservices/shared/retry"
+)
+
+// AgentService defines the interface for agent-specific operations
+type AgentService interface {
+	CreateAgent(ctx context.Context, req *CreateAgentRequest) (*models.Agent, error)
+	GetAgent(ctx context.Context, agentID uuid.UUID) (*models.Agent, error)
+	UpdateAgent(ctx context.Context, req *UpdateAgentRequest) (*models.Agent, error)
+	ListAgents(ctx context.Context, req *ListAgentsRequest) (*ListAgentsResponse, error)
+	UpdateAgentStatus(ctx context.Context, agentID uuid.UUID, status models.EntityStatus, updatedBy string) error
+	DeleteAgent(ctx context.Context, agentID uuid.UUID, deletedBy string) error
+}
+
+// RetailerService defines the interface for retailer-specific operations
+type RetailerService interface {
+	CreateRetailer(ctx context.Context, req *CreateRetailerRequest) (*models.Retailer, error)
+	GetRetailer(ctx context.Context, retailerID uuid.UUID) (*models.Retailer, error)
+	GetRetailerByID(ctx context.Context, retailerID uuid.UUID) (*models.Retailer, error)
+	UpdateRetailer(ctx context.Context, retailerID uuid.UUID, req *UpdateRetailerRequest) (*models.Retailer, error)
+	ListRetailers(ctx context.Context, filters repositories.RetailerFilters) ([]models.Retailer, int, error)
+	UpdateRetailerStatus(ctx context.Context, retailerID uuid.UUID, status models.EntityStatus, updatedBy string) error
+}
+
+// RetailerAssignmentService defines the interface for retailer assignment operations
+type RetailerAssignmentService interface {
+	GetAgentRetailers(ctx context.Context, agentID uuid.UUID) ([]models.Retailer, error)
+	AssignRetailerToAgent(ctx context.Context, retailerID uuid.UUID, agentID uuid.UUID, assignedBy string) error
+	ReassignRetailerToAgent(ctx context.Context, retailerID uuid.UUID, newAgentID uuid.UUID, reassignedBy string) error
+	UnassignRetailerFromAgent(ctx context.Context, retailerID uuid.UUID, unassignedBy string) error
+}
+
+// agentManagementService handles all business logic for agent and retailer management
+type agentManagementService struct {
+	repos                            *repositories.Repositories
+	walletClient                     *clients.WalletClient
+	eventBus                         events.EventBus
+	defaultAgentCommissionPercentage float64
+}
+
+// ServiceConfig holds configuration for the agent management service
+type ServiceConfig struct {
+	WalletServiceAddress             string   // e.g., "localhost:50053"
+	DefaultAgentCommissionPercentage float64  // e.g., 30.0 for 30%
+	KafkaBrokers                     []string // e.g., ["localhost:9092"]
+}
+
+// NewAgentService creates a new agent service
+func NewAgentService(repos *repositories.Repositories, config *ServiceConfig) AgentService {
+	service := &agentManagementService{
+		repos:                            repos,
+		defaultAgentCommissionPercentage: 30.0, // Default fallback
+	}
+
+	if config != nil {
+		// Set commission percentage from config
+		if config.DefaultAgentCommissionPercentage > 0 {
+			service.defaultAgentCommissionPercentage = config.DefaultAgentCommissionPercentage
+		}
+
+		// Initialize wallet client if address provided
+		if config.WalletServiceAddress != "" {
+			walletClient, err := clients.NewWalletClient(config.WalletServiceAddress)
+			if err != nil {
+				log.Printf("Warning: failed to connect to wallet service: %v", err)
+			} else {
+				service.walletClient = walletClient
+			}
+		}
+
+		// Initialize event bus if Kafka brokers provided
+		if len(config.KafkaBrokers) > 0 {
+			eventBus, err := events.NewKafkaEventBus(config.KafkaBrokers)
+			if err != nil {
+				log.Printf("Warning: failed to connect to Kafka: %v, using in-memory event bus", err)
+				service.eventBus = events.NewInMemoryEventBus()
+			} else {
+				service.eventBus = eventBus
+				log.Printf("Connected to Kafka event bus at %v", config.KafkaBrokers)
+			}
+		} else {
+			// Use in-memory event bus for development/testing
+			service.eventBus = events.NewInMemoryEventBus()
+			log.Printf("Using in-memory event bus (Kafka brokers not configured)")
+		}
+	}
+
+	return service
+}
+
+// NewRetailerService creates a new retailer service
+func NewRetailerService(repos *repositories.Repositories, config *ServiceConfig) RetailerService {
+	service := &agentManagementService{repos: repos}
+
+	if config != nil {
+		// Initialize wallet client if address provided
+		if config.WalletServiceAddress != "" {
+			walletClient, err := clients.NewWalletClient(config.WalletServiceAddress)
+			if err != nil {
+				log.Printf("Warning: failed to connect to wallet service: %v", err)
+			} else {
+				service.walletClient = walletClient
+			}
+		}
+
+		// Initialize event bus if Kafka brokers provided
+		if len(config.KafkaBrokers) > 0 {
+			eventBus, err := events.NewKafkaEventBus(config.KafkaBrokers)
+			if err != nil {
+				log.Printf("Warning: failed to connect to Kafka: %v, using in-memory event bus", err)
+				service.eventBus = events.NewInMemoryEventBus()
+			} else {
+				service.eventBus = eventBus
+				log.Printf("Connected to Kafka event bus at %v", config.KafkaBrokers)
+			}
+		} else {
+			// Use in-memory event bus for development/testing
+			service.eventBus = events.NewInMemoryEventBus()
+			log.Printf("Using in-memory event bus (Kafka brokers not configured)")
+		}
+	}
+
+	return service
+}
+
+// NewRetailerAssignmentService creates a new retailer assignment service
+func NewRetailerAssignmentService(repos *repositories.Repositories) RetailerAssignmentService {
+	return &agentManagementService{repos: repos}
+}
+
+// Agent Management Operations
+
+// CreateAgent creates a new agent with business validation
+func (s *agentManagementService) CreateAgent(ctx context.Context, req *CreateAgentRequest) (*models.Agent, error) {
+	// Initial validation using request validation
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Check if agent with email already exists (only if email is provided)
+	if req.ContactEmail != "" {
+		existingAgent, err := s.repos.Agent.GetByEmail(ctx, req.ContactEmail)
+		if err == nil && existingAgent != nil {
+			return nil, fmt.Errorf("agent with email %s already exists", req.ContactEmail)
+		}
+	}
+
+	// Generate unique agent code
+	agentCode, err := s.repos.Agent.GetNextAgentCode(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate agent code: %w", err)
+	}
+
+	// Create agent model
+	agent := &models.Agent{
+		AgentCode:            agentCode,
+		BusinessName:         req.BusinessName,
+		RegistrationNumber:   req.RegistrationNumber,
+		TaxID:                req.TaxID,
+		ContactEmail:         req.ContactEmail,
+		ContactPhone:         req.ContactPhone,
+		PrimaryContactName:   req.PrimaryContactName,
+		PhysicalAddress:      req.PhysicalAddress,
+		City:                 req.City,
+		Region:               req.Region,
+		GPSCoordinates:       sql.NullString{String: req.GPSCoordinates, Valid: req.GPSCoordinates != ""},
+		BankName:             req.BankName,
+		BankAccountNumber:    req.BankAccountNumber,
+		BankAccountName:      req.BankAccountName,
+		Status:               models.StatusUnderReview, // New agents start under review
+		OnboardingMethod:     models.OnboardingRandLotteryLtdDirect,
+		CommissionPercentage: req.CommissionPercentage,
+		CreatedBy:            req.CreatedBy,
+		UpdatedBy:            req.CreatedBy,
+	}
+
+	// If no commission percentage provided, use configured default
+	if req.CommissionPercentage == 0 {
+		agent.CommissionPercentage = s.defaultAgentCommissionPercentage
+	}
+
+	// Validate the agent model using its validation method
+	if err := agent.Validate(); err != nil {
+		return nil, fmt.Errorf("agent validation failed: %w", err)
+	}
+
+	// Create the agent
+	err = s.repos.Agent.Create(ctx, agent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create agent: %w", err)
+	}
+
+	// Create initial KYC record
+	agentKYC := &models.AgentKYC{
+		AgentID:   agent.ID,
+		KYCStatus: models.KYCStatusPending,
+	}
+	err = s.repos.AgentKYC.Create(ctx, agentKYC)
+	if err != nil {
+		// Return error - KYC record is critical for compliance
+		return nil, fmt.Errorf("failed to create initial KYC record for agent %s: %w", agent.AgentCode, err)
+	}
+
+	// Create wallet via wallet service with retry logic
+	if s.walletClient != nil {
+		commissionRate := agent.CalculateCommissionAmount(100.0) / 100.0 // Use model method for commission calculation
+
+		// Use retry with exponential backoff for external service call
+		retryConfig := retry.Config{
+			MaxAttempts:     3,
+			InitialInterval: 100 * time.Millisecond,
+			MaxInterval:     2 * time.Second,
+			Multiplier:      2.0,
+			Jitter:          true,
+			RetryIf: func(err error) bool {
+				// Retry on network errors or temporary failures
+				// Don't retry on business logic errors (e.g., wallet already exists)
+				if err == nil {
+					return false
+				}
+				errStr := err.Error()
+				return errStr != "wallet already exists" && errStr != "invalid agent"
+			},
+			OnRetry: func(attempt int, err error) {
+				log.Printf("Retrying wallet creation for agent %s (attempt %d): %v", agent.AgentCode, attempt, err)
+			},
+		}
+
+		retrier := retry.New(retryConfig)
+		err = retrier.Execute(ctx, func(ctx context.Context) error {
+			return s.walletClient.CreateAgentWallet(ctx, agent.ID, agent.AgentCode, commissionRate, req.CreatedBy)
+		})
+
+		if err != nil {
+			// Wallet creation failure should fail the entire operation
+			return nil, fmt.Errorf("failed to create wallet for agent %s after retries: %w", agent.AgentCode, err)
+		}
+		log.Printf("Successfully created wallet for agent %s", agent.AgentCode)
+	} else {
+		// Wallet service is optional for tests and development
+		log.Printf("Warning: wallet service not configured for agent %s - agent created without wallet", agent.AgentCode)
+	}
+
+	// Publish agent creation event
+	if s.eventBus != nil {
+		agentData := events.AgentData{
+			ID:                   agent.ID.String(),
+			AgentCode:            agent.AgentCode,
+			Name:                 agent.BusinessName,
+			Email:                agent.ContactEmail,
+			PhoneNumber:          agent.ContactPhone,
+			Status:               string(agent.Status),
+			City:                 agent.City,
+			Region:               agent.Region,
+			CommissionPercentage: agent.CommissionPercentage,
+		}
+
+		event := events.NewAgentCreatedEvent("service-agent-management", agentData, req.CreatedBy)
+		if err := s.eventBus.Publish(ctx, "agent.events", event); err != nil {
+			// Log the error but don't fail the operation
+			log.Printf("Failed to publish agent created event for agent %s: %v", agent.AgentCode, err)
+		} else {
+			log.Printf("Published agent created event for agent %s", agent.AgentCode)
+		}
+	}
+
+	// TODO: Create auth credentials via agent-auth service
+
+	return agent, nil
+}
+
+// GetAgent retrieves an agent by ID with related data
+func (s *agentManagementService) GetAgent(ctx context.Context, agentID uuid.UUID) (*models.Agent, error) {
+	agent, err := s.repos.Agent.GetByID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agent: %w", err)
+	}
+
+	// Load KYC information
+	kyc, err := s.repos.AgentKYC.GetByAgentID(ctx, agentID)
+	if err == nil {
+		agent.KYC = kyc
+	}
+
+	return agent, nil
+}
+
+// UpdateAgent updates an existing agent
+func (s *agentManagementService) UpdateAgent(ctx context.Context, req *UpdateAgentRequest) (*models.Agent, error) {
+	// Get existing agent
+	agent, err := s.repos.Agent.GetByID(ctx, req.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("agent not found: %w", err)
+	}
+
+	// Update fields if provided
+	if req.BusinessName != nil {
+		agent.BusinessName = *req.BusinessName
+	}
+	if req.RegistrationNumber != nil {
+		agent.RegistrationNumber = *req.RegistrationNumber
+	}
+	if req.TaxID != nil {
+		agent.TaxID = *req.TaxID
+	}
+	if req.ContactEmail != nil {
+		// Check for email conflicts (only if email is not empty)
+		if *req.ContactEmail != "" {
+			existingAgent, err := s.repos.Agent.GetByEmail(ctx, *req.ContactEmail)
+			if err == nil && existingAgent != nil && existingAgent.ID != agent.ID {
+				return nil, fmt.Errorf("another agent with email %s already exists", *req.ContactEmail)
+			}
+		}
+		agent.ContactEmail = *req.ContactEmail
+	}
+	if req.ContactPhone != nil {
+		agent.ContactPhone = *req.ContactPhone
+	}
+	if req.PrimaryContactName != nil {
+		agent.PrimaryContactName = *req.PrimaryContactName
+	}
+	if req.PhysicalAddress != nil {
+		agent.PhysicalAddress = *req.PhysicalAddress
+	}
+	if req.City != nil {
+		agent.City = *req.City
+	}
+	if req.Region != nil {
+		agent.Region = *req.Region
+	}
+	if req.GPSCoordinates != nil {
+		agent.GPSCoordinates = sql.NullString{String: *req.GPSCoordinates, Valid: *req.GPSCoordinates != ""}
+	}
+	if req.BankName != nil {
+		agent.BankName = *req.BankName
+	}
+	if req.BankAccountNumber != nil {
+		agent.BankAccountNumber = *req.BankAccountNumber
+	}
+	if req.BankAccountName != nil {
+		agent.BankAccountName = *req.BankAccountName
+	}
+	// Track if commission was updated
+	var commissionUpdated bool
+	var oldCommission float64
+
+	if req.CommissionPercentage != nil {
+		oldCommission = agent.CommissionPercentage
+		agent.CommissionPercentage = *req.CommissionPercentage
+		commissionUpdated = oldCommission != *req.CommissionPercentage
+	}
+
+	agent.UpdatedBy = req.UpdatedBy
+
+	// Validate the updated agent using model validation
+	if err := agent.Validate(); err != nil {
+		return nil, fmt.Errorf("agent validation failed: %w", err)
+	}
+
+	// Update the agent
+	err = s.repos.Agent.Update(ctx, agent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update agent: %w", err)
+	}
+
+	// Sync commission update with wallet service if commission changed
+	if commissionUpdated && s.walletClient != nil {
+		newRate := agent.CalculateCommissionAmount(100.0) / 100.0 // Use model's commission calculation
+		reason := fmt.Sprintf("Commission updated from %.2f%% to %.2f%%", oldCommission, agent.CommissionPercentage)
+
+		// Use retry for commission update
+		retrier := retry.New(retry.DefaultConfig())
+		err = retrier.Execute(ctx, func(ctx context.Context) error {
+			return s.walletClient.UpdateAgentCommission(ctx, agent.ID, newRate, req.UpdatedBy, reason)
+		})
+
+		if err != nil {
+			// Log error but don't fail the update - commission sync can be retried
+			log.Printf("Warning: failed to sync commission update for agent %s to wallet service after retries: %v", agent.AgentCode, err)
+		} else {
+			log.Printf("Successfully synced commission update for agent %s to wallet service (%.2f%% -> %.2f%%)",
+				agent.AgentCode, oldCommission, agent.CommissionPercentage)
+		}
+	}
+
+	// TODO: Publish agent update event
+	// TODO: Update auth service if email/phone changed
+
+	return agent, nil
+}
+
+// ListAgents retrieves agents with filtering and pagination
+func (s *agentManagementService) ListAgents(ctx context.Context, req *ListAgentsRequest) (*ListAgentsResponse, error) {
+	filters := repositories.AgentFilters{
+		Status:         req.Status,
+		BusinessName:   req.BusinessName,
+		ContactEmail:   req.ContactEmail,
+		ContactPhone:   req.ContactPhone,
+		Region:         req.Region,
+		City:           req.City,
+		CreatedAfter:   req.CreatedAfter,
+		CreatedBefore:  req.CreatedBefore,
+		Limit:          req.Limit,
+		Offset:         req.Offset,
+		OrderBy:        req.OrderBy,
+		OrderDirection: req.OrderDirection,
+	}
+
+	agents, err := s.repos.Agent.List(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list agents: %w", err)
+	}
+
+	total, err := s.repos.Agent.Count(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count agents: %w", err)
+	}
+
+	return &ListAgentsResponse{
+		Agents: agents,
+		Total:  total,
+	}, nil
+}
+
+// UpdateAgentStatus updates the status of an agent with business validation
+func (s *agentManagementService) UpdateAgentStatus(ctx context.Context, agentID uuid.UUID, status models.EntityStatus, updatedBy string) error {
+	// Get existing agent
+	agent, err := s.repos.Agent.GetByID(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("agent not found: %w", err)
+	}
+
+	// Use the model's CanTransitionTo method for validation
+	if !agent.CanTransitionTo(status) {
+		return fmt.Errorf("cannot transition agent from %s to %s", agent.Status, status)
+	}
+
+	// Additional business validation for activation
+	if status == models.StatusActive {
+		// Check if KYC is approved for activation
+		kyc, err := s.repos.AgentKYC.GetByAgentID(ctx, agentID)
+		if err != nil || !kyc.IsApproved() {
+			return fmt.Errorf("agent KYC must be approved before activation")
+		}
+	}
+
+	// Store old status for event
+	oldStatus := agent.Status
+
+	// Update status
+	err = s.repos.AgentStatus.UpdateStatus(ctx, agentID, status, updatedBy)
+	if err != nil {
+		return fmt.Errorf("failed to update agent status: %w", err)
+	}
+
+	// Publish agent status change event
+	if s.eventBus != nil {
+		event := events.NewAgentStatusChangedEvent(
+			"service-agent-management",
+			agentID.String(),
+			agent.AgentCode,
+			string(oldStatus),
+			string(status),
+			updatedBy,
+			"", // No specific reason provided in this method
+		)
+
+		if err := s.eventBus.Publish(ctx, "agent.events", event); err != nil {
+			log.Printf("Failed to publish agent status change event for agent %s: %v", agent.AgentCode, err)
+		} else {
+			log.Printf("Published agent status change event for agent %s: %s -> %s", agent.AgentCode, oldStatus, status)
+		}
+	}
+
+	// TODO: Update auth service status
+
+	return nil
+}
+
+// DeleteAgent removes an agent from the system
+func (s *agentManagementService) DeleteAgent(ctx context.Context, agentID uuid.UUID, deletedBy string) error {
+	// Get existing agent to ensure it exists
+	agent, err := s.repos.Agent.GetByID(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("agent not found: %w", err)
+	}
+
+	// Check if agent has any active retailers
+	retailers, err := s.repos.RetailerRelationship.GetByAgentID(ctx, agentID)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check agent retailers: %w", err)
+	}
+
+	// Don't delete if agent has active retailers
+	if len(retailers) > 0 {
+		activeCount := 0
+		for _, r := range retailers {
+			if r.Status == models.StatusActive {
+				activeCount++
+			}
+		}
+		if activeCount > 0 {
+			return fmt.Errorf("cannot delete agent with %d active retailers", activeCount)
+		}
+	}
+
+	// Note: POS devices are linked to retailers, not directly to agents
+	// If agent has retailers, the retailers check above will prevent deletion
+
+	// Delete agent from database
+	err = s.repos.Agent.Delete(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("failed to delete agent: %w", err)
+	}
+
+	// Publish agent deleted event
+	if s.eventBus != nil {
+		event := events.NewAgentDeletedEvent(
+			"service-agent-management",
+			agentID.String(),
+			agent.AgentCode,
+			deletedBy,
+		)
+
+		if err := s.eventBus.Publish(ctx, "agent.events", event); err != nil {
+			log.Printf("Failed to publish agent deleted event for agent %s: %v", agent.AgentCode, err)
+		} else {
+			log.Printf("Published agent deleted event for agent %s", agent.AgentCode)
+		}
+	}
+
+	// TODO: Delete agent from auth service
+
+	return nil
+}
+
+// Retailer Management Operations
+
+// CreateRetailer creates a new retailer with business validation
+func (s *agentManagementService) CreateRetailer(ctx context.Context, req *CreateRetailerRequest) (*models.Retailer, error) {
+	// Initial validation using request validation
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Validate onboarding method and parent agent
+	var onboardingMethod models.OnboardingMethod
+	var agentCode string
+	if req.AgentID != nil {
+		// Validate parent agent exists and is active
+		parentAgent, err := s.repos.Agent.GetByID(ctx, *req.AgentID)
+		if err != nil {
+			return nil, fmt.Errorf("agent not found: %w", err)
+		}
+		if parentAgent.Status != models.StatusActive {
+			return nil, fmt.Errorf("agent is not active")
+		}
+		onboardingMethod = models.OnboardingAgentManaged
+		agentCode = parentAgent.AgentCode
+	} else {
+		onboardingMethod = models.OnboardingRandLotteryLtdDirect
+		agentCode = "" // Empty for independent retailers
+	}
+
+	// Generate unique retailer code
+	retailerCode, err := s.repos.Retailer.GetNextRetailerCode(ctx, agentCode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate retailer code: %w", err)
+	}
+
+	// Create retailer model
+	retailer := &models.Retailer{
+		RetailerCode:     retailerCode,
+		Name:             req.Name,
+		OwnerName:        req.Name, // Use same value for owner name
+		Email:            req.Email,
+		PhoneNumber:      req.PhoneNumber,
+		Address:          req.Address,
+		City:             "Accra",             // Default city
+		Region:           "Greater Accra",     // Default region
+		Status:           models.StatusActive, // Start as active for now
+		OnboardingMethod: onboardingMethod,
+		AgentID:          req.AgentID,
+		CreatedBy:        req.CreatedBy,
+		UpdatedBy:        req.CreatedBy,
+	}
+
+	// Create the retailer
+	err = s.repos.Retailer.Create(ctx, retailer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create retailer: %w", err)
+	}
+
+	// Create agent-retailer relationship if agent-managed
+	if req.AgentID != nil {
+		relationship := &models.AgentRetailer{
+			AgentID:          *req.AgentID,
+			RetailerID:       retailer.ID,
+			RelationshipType: "MANAGED",
+			AssignedDate:     time.Now(),
+			IsActive:         true,
+			AssignedBy:       req.CreatedBy,
+		}
+		err = s.repos.AgentRetailer.Create(ctx, relationship)
+		if err != nil {
+			// Log error but don't fail retailer creation
+			fmt.Printf("Warning: failed to create agent-retailer relationship: %v\n", err)
+		}
+	}
+
+	// Create initial KYC record
+	retailerKYC := &models.RetailerKYC{
+		RetailerID: retailer.ID,
+		KYCStatus:  models.KYCStatusPending,
+	}
+	err = s.repos.RetailerKYC.Create(ctx, retailerKYC)
+	if err != nil {
+		// Return error - KYC record is critical for compliance
+		return nil, fmt.Errorf("failed to create initial KYC record for retailer %s: %w", retailer.RetailerCode, err)
+	}
+
+	// Create dual wallets via wallet service with retry logic
+	if s.walletClient != nil {
+		// Use retry with exponential backoff
+		retryConfig := retry.Config{
+			MaxAttempts:     3,
+			InitialInterval: 100 * time.Millisecond,
+			MaxInterval:     2 * time.Second,
+			Multiplier:      2.0,
+			Jitter:          true,
+			OnRetry: func(attempt int, err error) {
+				log.Printf("Retrying wallet creation for retailer %s (attempt %d): %v", retailer.RetailerCode, attempt, err)
+			},
+		}
+
+		retrier := retry.New(retryConfig)
+		err = retrier.Execute(ctx, func(ctx context.Context) error {
+			return s.walletClient.CreateRetailerWallets(ctx, retailer.ID, retailer.RetailerCode, req.AgentID, req.CreatedBy)
+		})
+
+		if err != nil {
+			// Wallet creation failure should fail the entire operation
+			return nil, fmt.Errorf("failed to create wallets for retailer %s after retries: %w", retailer.RetailerCode, err)
+		}
+		log.Printf("Successfully created stake and winning wallets for retailer %s", retailer.RetailerCode)
+	} else {
+		// Wallet service is optional for tests and development
+		log.Printf("Warning: wallet service not configured for retailer %s - retailer created without wallets", retailer.RetailerCode)
+	}
+
+	// Publish retailer creation event
+	if s.eventBus != nil {
+		retailerData := events.RetailerData{
+			ID:           retailer.ID.String(),
+			RetailerCode: retailer.RetailerCode,
+			Name:         retailer.Name,
+			Email:        retailer.Email,
+			PhoneNumber:  retailer.PhoneNumber,
+			Status:       string(retailer.Status),
+			City:         retailer.City,
+			Region:       retailer.Region,
+		}
+
+		// Add agent info if available
+		if req.AgentID != nil {
+			retailerData.AgentID = req.AgentID.String()
+			retailerData.AgentCode = agentCode
+		}
+
+		event := events.NewRetailerCreatedEvent("service-agent-management", retailerData, req.CreatedBy)
+		if err := s.eventBus.Publish(ctx, "retailer.events", event); err != nil {
+			log.Printf("Failed to publish retailer created event for retailer %s: %v", retailer.RetailerCode, err)
+		} else {
+			log.Printf("Published retailer created event for retailer %s", retailer.RetailerCode)
+		}
+	}
+
+	return retailer, nil
+}
+
+// GetRetailer retrieves a retailer by ID with related data
+func (s *agentManagementService) GetRetailer(ctx context.Context, retailerID uuid.UUID) (*models.Retailer, error) {
+	retailer, err := s.repos.Retailer.GetByID(ctx, retailerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get retailer: %w", err)
+	}
+
+	// Load KYC information
+	kyc, err := s.repos.RetailerKYC.GetByRetailerID(ctx, retailerID)
+	if err == nil {
+		retailer.KYC = kyc
+	}
+
+	// Load POS devices
+	posDevices, err := s.repos.POSDeviceAssignment.GetByRetailerID(ctx, retailerID)
+	if err == nil {
+		retailer.POSDevices = posDevices
+	}
+
+	return retailer, nil
+}
+
+// GetRetailerByID retrieves a retailer by ID (alias for GetRetailer)
+func (s *agentManagementService) GetRetailerByID(ctx context.Context, retailerID uuid.UUID) (*models.Retailer, error) {
+	return s.GetRetailer(ctx, retailerID)
+}
+
+// ListRetailers retrieves retailers with pagination and filtering
+func (s *agentManagementService) ListRetailers(ctx context.Context, filters repositories.RetailerFilters) ([]models.Retailer, int, error) {
+	retailers, err := s.repos.Retailer.List(ctx, filters)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list retailers: %w", err)
+	}
+
+	total, err := s.repos.Retailer.Count(ctx, filters)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count retailers: %w", err)
+	}
+
+	return retailers, total, nil
+}
+
+// UpdateRetailerStatus updates a retailer's status
+func (s *agentManagementService) UpdateRetailerStatus(ctx context.Context, retailerID uuid.UUID, status models.EntityStatus, updatedBy string) error {
+	return s.repos.RetailerStatus.UpdateStatus(ctx, retailerID, status, updatedBy)
+}
+
+// UpdateRetailer updates a retailer's information
+func (s *agentManagementService) UpdateRetailer(ctx context.Context, retailerID uuid.UUID, req *UpdateRetailerRequest) (*models.Retailer, error) {
+	// Validate request
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Get existing retailer
+	retailer, err := s.repos.Retailer.GetByID(ctx, retailerID)
+	if err != nil {
+		return nil, fmt.Errorf("retailer not found: %w", err)
+	}
+
+	// Update fields
+	retailer.Name = req.Name
+	retailer.Email = req.Email
+	retailer.PhoneNumber = req.PhoneNumber
+	retailer.Address = req.Address
+	retailer.UpdatedBy = req.UpdatedBy
+
+	// Validate the updated retailer model
+	if err := retailer.Validate(); err != nil {
+		return nil, fmt.Errorf("retailer validation failed: %w", err)
+	}
+
+	// Save updates
+	err = s.repos.Retailer.Update(ctx, retailer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update retailer: %w", err)
+	}
+
+	return retailer, nil
+}
+
+// GetAgentRetailers retrieves all retailers managed by an agent
+func (s *agentManagementService) GetAgentRetailers(ctx context.Context, agentID uuid.UUID) ([]models.Retailer, error) {
+	retailers, err := s.repos.RetailerRelationship.GetByAgentID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agent retailers: %w", err)
+	}
+
+	return retailers, nil
+}
+
+// AssignRetailerToAgent assigns an existing retailer to an agent
+func (s *agentManagementService) AssignRetailerToAgent(ctx context.Context, retailerID uuid.UUID, agentID uuid.UUID, assignedBy string) error {
+	// Validate retailer exists
+	retailer, err := s.repos.Retailer.GetByID(ctx, retailerID)
+	if err != nil {
+		return fmt.Errorf("retailer not found: %w", err)
+	}
+
+	// Check if retailer is already assigned to an agent
+	if retailer.AgentID != nil {
+		return fmt.Errorf("retailer is already assigned to agent %s", retailer.AgentID.String())
+	}
+
+	// Validate agent exists and is active
+	agent, err := s.repos.Agent.GetByID(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("agent not found: %w", err)
+	}
+	if agent.Status != models.StatusActive {
+		return fmt.Errorf("agent is not active (status: %s)", agent.Status)
+	}
+
+	// Update retailer with agent ID
+	retailer.AgentID = &agentID
+	retailer.OnboardingMethod = models.OnboardingAgentManaged
+	retailer.UpdatedBy = assignedBy
+
+	err = s.repos.Retailer.Update(ctx, retailer)
+	if err != nil {
+		return fmt.Errorf("failed to update retailer: %w", err)
+	}
+
+	// Create agent-retailer relationship
+	relationship := &models.AgentRetailer{
+		AgentID:          agentID,
+		RetailerID:       retailerID,
+		RelationshipType: "MANAGED",
+		AssignedDate:     time.Now(),
+		IsActive:         true,
+		AssignedBy:       assignedBy,
+	}
+
+	err = s.repos.AgentRetailer.Create(ctx, relationship)
+	if err != nil {
+		// Try to rollback retailer update
+		retailer.AgentID = nil
+		retailer.OnboardingMethod = models.OnboardingRandLotteryLtdDirect
+		_ = s.repos.Retailer.Update(ctx, retailer) // Ignore error on rollback
+		return fmt.Errorf("failed to create agent-retailer relationship: %w", err)
+	}
+
+	return nil
+}
+
+// ReassignRetailerToAgent reassigns a retailer from one agent to another
+func (s *agentManagementService) ReassignRetailerToAgent(ctx context.Context, retailerID uuid.UUID, newAgentID uuid.UUID, reassignedBy string) error {
+	// Validate retailer exists
+	retailer, err := s.repos.Retailer.GetByID(ctx, retailerID)
+	if err != nil {
+		return fmt.Errorf("retailer not found: %w", err)
+	}
+
+	// Check if retailer is currently assigned to an agent
+	if retailer.AgentID == nil {
+		return fmt.Errorf("retailer is not currently assigned to any agent")
+	}
+
+	// Check if it's the same agent
+	if *retailer.AgentID == newAgentID {
+		return fmt.Errorf("retailer is already assigned to this agent")
+	}
+
+	// Validate new agent exists and is active
+	newAgent, err := s.repos.Agent.GetByID(ctx, newAgentID)
+	if err != nil {
+		return fmt.Errorf("new agent not found: %w", err)
+	}
+	if newAgent.Status != models.StatusActive {
+		return fmt.Errorf("new agent is not active (status: %s)", newAgent.Status)
+	}
+
+	// Get existing relationship and deactivate it
+	existingRelationship, err := s.repos.AgentRetailer.GetByRetailerID(ctx, retailerID)
+	if err == nil && existingRelationship != nil {
+		existingRelationship.IsActive = false
+		_ = s.repos.AgentRetailer.Update(ctx, existingRelationship) // Ignore error on status update
+	}
+
+	// Update retailer with new agent ID
+	oldAgentID := *retailer.AgentID
+	retailer.AgentID = &newAgentID
+	retailer.UpdatedBy = reassignedBy
+
+	err = s.repos.Retailer.Update(ctx, retailer)
+	if err != nil {
+		return fmt.Errorf("failed to update retailer: %w", err)
+	}
+
+	// Create new agent-retailer relationship
+	newRelationship := &models.AgentRetailer{
+		AgentID:          newAgentID,
+		RetailerID:       retailerID,
+		RelationshipType: "MANAGED",
+		AssignedDate:     time.Now(),
+		IsActive:         true,
+		AssignedBy:       reassignedBy,
+		Notes:            fmt.Sprintf("Reassigned from agent %s", oldAgentID.String()),
+	}
+
+	err = s.repos.AgentRetailer.Create(ctx, newRelationship)
+	if err != nil {
+		// Try to rollback
+		retailer.AgentID = &oldAgentID
+		_ = s.repos.Retailer.Update(ctx, retailer) // Ignore error on rollback
+		return fmt.Errorf("failed to create new agent-retailer relationship: %w", err)
+	}
+
+	return nil
+}
+
+// UnassignRetailerFromAgent removes a retailer from agent management
+func (s *agentManagementService) UnassignRetailerFromAgent(ctx context.Context, retailerID uuid.UUID, unassignedBy string) error {
+	// Validate retailer exists
+	retailer, err := s.repos.Retailer.GetByID(ctx, retailerID)
+	if err != nil {
+		return fmt.Errorf("retailer not found: %w", err)
+	}
+
+	// Check if retailer is currently assigned to an agent
+	if retailer.AgentID == nil {
+		return fmt.Errorf("retailer is not currently assigned to any agent")
+	}
+
+	// Get existing relationship and deactivate it
+	existingRelationship, err := s.repos.AgentRetailer.GetByRetailerID(ctx, retailerID)
+	if err == nil && existingRelationship != nil {
+		existingRelationship.IsActive = false
+		existingRelationship.Notes = fmt.Sprintf("Unassigned by %s", unassignedBy)
+		err = s.repos.AgentRetailer.Update(ctx, existingRelationship)
+		if err != nil {
+			return fmt.Errorf("failed to deactivate agent-retailer relationship: %w", err)
+		}
+	}
+
+	// Update retailer to remove agent ID
+	retailer.AgentID = nil
+	retailer.OnboardingMethod = models.OnboardingRandLotteryLtdDirect
+	retailer.UpdatedBy = unassignedBy
+
+	err = s.repos.Retailer.Update(ctx, retailer)
+	if err != nil {
+		// Try to reactivate relationship
+		if existingRelationship != nil {
+			existingRelationship.IsActive = true
+			_ = s.repos.AgentRetailer.Update(ctx, existingRelationship) // Ignore error on status update
+		}
+		return fmt.Errorf("failed to update retailer: %w", err)
+	}
+
+	return nil
+}
+
+// Commission Tier Management Operations
+
+// Commission tier methods removed - now using direct commission percentage on agents
+
+// Request/Response structures for the service layer
+
+type CreateAgentRequest struct {
+	BusinessName         string  `json:"business_name"`
+	RegistrationNumber   string  `json:"registration_number"`
+	TaxID                string  `json:"tax_id"`
+	ContactEmail         string  `json:"contact_email"`
+	ContactPhone         string  `json:"contact_phone"`
+	PrimaryContactName   string  `json:"primary_contact_name"`
+	PhysicalAddress      string  `json:"physical_address"`
+	City                 string  `json:"city"`
+	Region               string  `json:"region"`
+	GPSCoordinates       string  `json:"gps_coordinates"`
+	BankName             string  `json:"bank_name"`
+	BankAccountNumber    string  `json:"bank_account_number"`
+	BankAccountName      string  `json:"bank_account_name"`
+	CommissionPercentage float64 `json:"commission_percentage"` // Commission as percentage (e.g., 30 for 30%)
+	CreatedBy            string  `json:"created_by"`
+}
+
+// Validate validates the create agent request
+func (r *CreateAgentRequest) Validate() error {
+	if r.BusinessName == "" {
+		return fmt.Errorf("business name is required")
+	}
+	if r.ContactPhone == "" {
+		return fmt.Errorf("contact phone is required")
+	}
+	if r.CreatedBy == "" {
+		return fmt.Errorf("created by is required")
+	}
+	return nil
+}
+
+type UpdateAgentRequest struct {
+	AgentID              uuid.UUID `json:"agent_id"`
+	BusinessName         *string   `json:"business_name"`
+	RegistrationNumber   *string   `json:"registration_number"`
+	TaxID                *string   `json:"tax_id"`
+	ContactEmail         *string   `json:"contact_email"`
+	ContactPhone         *string   `json:"contact_phone"`
+	PrimaryContactName   *string   `json:"primary_contact_name"`
+	PhysicalAddress      *string   `json:"physical_address"`
+	City                 *string   `json:"city"`
+	Region               *string   `json:"region"`
+	GPSCoordinates       *string   `json:"gps_coordinates"`
+	BankName             *string   `json:"bank_name"`
+	BankAccountNumber    *string   `json:"bank_account_number"`
+	BankAccountName      *string   `json:"bank_account_name"`
+	CommissionPercentage *float64  `json:"commission_percentage"` // Commission as percentage (e.g., 30 for 30%)
+	UpdatedBy            string    `json:"updated_by"`
+}
+
+type ListAgentsRequest struct {
+	Status         *models.EntityStatus `json:"status"`
+	BusinessName   *string              `json:"business_name"`
+	ContactEmail   *string              `json:"contact_email"`
+	ContactPhone   *string              `json:"contact_phone"`
+	Region         *string              `json:"region"`
+	City           *string              `json:"city"`
+	CreatedAfter   *time.Time           `json:"created_after"`
+	CreatedBefore  *time.Time           `json:"created_before"`
+	Limit          int                  `json:"limit"`
+	Offset         int                  `json:"offset"`
+	OrderBy        string               `json:"order_by"`
+	OrderDirection string               `json:"order_direction"`
+}
+
+type ListAgentsResponse struct {
+	Agents []models.Agent `json:"agents"`
+	Total  int            `json:"total"`
+}
+
+type CreateRetailerRequest struct {
+	Name        string     `json:"name"`
+	Email       string     `json:"email"`
+	PhoneNumber string     `json:"phone_number"`
+	Address     string     `json:"address"`
+	AgentID     *uuid.UUID `json:"agent_id"`
+	CreatedBy   string     `json:"created_by"`
+}
+
+// Validate validates the create retailer request
+func (r *CreateRetailerRequest) Validate() error {
+	if r.Name == "" {
+		return fmt.Errorf("retailer name is required")
+	}
+	if r.PhoneNumber == "" {
+		return fmt.Errorf("phone number is required")
+	}
+	if r.Address == "" {
+		return fmt.Errorf("address is required")
+	}
+	if r.CreatedBy == "" {
+		return fmt.Errorf("created by is required")
+	}
+	return nil
+}
+
+type UpdateRetailerRequest struct {
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	PhoneNumber string `json:"phone_number"`
+	Address     string `json:"address"`
+	UpdatedBy   string `json:"updated_by"`
+}
+
+// Validate validates the update retailer request
+func (r *UpdateRetailerRequest) Validate() error {
+	if r.Name == "" {
+		return fmt.Errorf("retailer name is required")
+	}
+	if r.PhoneNumber == "" {
+		return fmt.Errorf("phone number is required")
+	}
+	if r.UpdatedBy == "" {
+		return fmt.Errorf("updated by is required")
+	}
+	return nil
+}

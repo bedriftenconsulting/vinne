@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "chart.fullname" . }}
+  labels:
+  annotations:
+    deployment.kubernetes.io/version: {{ .Values.image.tag | quote }}
+    {{- include "chart.labels" . | nindent 4 }}
+    app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+      labels:
+        {{- include "chart.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "chart.fullname" . }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.global.registry }}/{{ .Values.global.imagePrefix }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting database migration for service-player..."
+              
+              # Check if we should skip migrations (emergency flag)
+              if [ "${SKIP_MIGRATIONS}" = "true" ]; then
+                echo "SKIP_MIGRATIONS is set, skipping database migrations"
+                exit 0
+              fi
+              
+              # Wait for database to be ready
+              echo "Waiting for database to be ready..."
+              for i in $(seq 1 30); do
+                if goose -dir /app/migrations postgres "${DATABASE_URL}" status > /dev/null 2>&1; then
+                  echo "Database is ready"
+                  break
+                fi
+                echo "Database not ready, waiting... (attempt $i/30)"
+                sleep 2
+              done
+              
+              # Run migrations
+              echo "Running database migrations..."
+              goose -dir /app/migrations postgres "${DATABASE_URL}" up
+              
+              if [ $? -eq 0 ]; then
+                echo "Migrations completed successfully"
+              else
+                echo "Migration failed"
+                exit 1
+              fi
+          envFrom:
+            - secretRef:
+                name: {{ include "chart.fullname" . }}-secret
+          env:
+            - name: SERVICE_VERSION
+              value: {{ .Values.image.tag | quote }}
+          env:
+            - name: SKIP_MIGRATIONS
+              value: "{{ .Values.migrations.skip | default false }}"
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.global.registry }}/{{ .Values.global.imagePrefix }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "chart.fullname" . }}-config
+            - secretRef:
+                name: {{ include "chart.fullname" . }}-secret
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo '' | nc -w 1 localhost {{ .Values.service.port }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo '' | nc -w 1 localhost {{ .Values.service.port }}"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

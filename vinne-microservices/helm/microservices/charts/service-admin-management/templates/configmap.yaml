@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chart.fullname" . }}-config
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+data:
+  # Server configuration
+  SERVER_PORT: "50057"
+  SERVER_MODE: "development"
+
+  # Database configuration (non-sensitive)
+  DATABASE_HOST: "postgres-admin-management.external-services.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "admin_management"
+  DATABASE_USER: "admin_mgmt"
+  DATABASE_SSL_MODE: "disable"
+  DATABASE_MAX_OPEN_CONNS: "25"
+  DATABASE_MAX_IDLE_CONNS: "5"
+  DATABASE_CONN_MAX_LIFETIME: "300s"
+
+  # Redis configuration (non-sensitive)
+  REDIS_HOST: "redis-admin-management.external-services.svc.cluster.local"
+  REDIS_PORT: "6384"
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "10"
+  REDIS_MIN_IDLE_CONNS: "5"
+
+  # Security configuration (non-sensitive)
+  SECURITY_JWT_ISSUER: "randlotteryltd"
+  SECURITY_BCRYPT_COST: "10"
+  SECURITY_PASSWORD_MIN_LENGTH: "8"
+  SECURITY_ACCESS_TOKEN_EXPIRY: "3600s"
+  SECURITY_REFRESH_TOKEN_EXPIRY: "168h"
+  SECURITY_SESSION_EXPIRY: "168h"
+  SECURITY_LOCKOUT_DURATION: "30m"
+
+  # Kafka configuration
+  KAFKA_BROKERS: "kafka.external-services.svc.cluster.local:9092"
+
+  # Tracing configuration
+  TRACING_ENABLED: "true"
+  TRACING_JAEGER_ENDPOINT: "http://jaeger.observability.svc.cluster.local:4318"
+  TRACING_SERVICE_NAME: "admin-management"
+  TRACING_SERVICE_VERSION: "1.0.0"
+  TRACING_ENVIRONMENT: "development"
+  TRACING_SAMPLE_RATE: "1.0"
+
+  # Logging configuration
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+
+  # Metrics configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9092"
+
+  # Environment
+  ENVIRONMENT: "development"
+  SERVICE_NAME: "admin-management"
+  SERVICE_VERSION: "1.0.0"

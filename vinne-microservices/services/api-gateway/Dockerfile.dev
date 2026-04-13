@@ -1,0 +1,29 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git ca-certificates
+
+ENV GOFLAGS="-mod=mod"
+ENV GOPROXY="https://proxy.golang.org,direct"
+ENV GONOSUMCHECK="*"
+
+COPY services/api-gateway/go.mod services/api-gateway/go.sum ./services/api-gateway/
+COPY proto ./proto
+COPY shared ./shared
+
+WORKDIR /app/services/api-gateway
+RUN go mod download
+
+WORKDIR /app
+COPY services/api-gateway ./services/api-gateway
+
+WORKDIR /app/services/api-gateway
+RUN CGO_ENABLED=0 GOOS=linux go build -o api-gateway cmd/server/main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /app/services/api-gateway/api-gateway .
+EXPOSE 4000
+CMD ["./api-gateway"]

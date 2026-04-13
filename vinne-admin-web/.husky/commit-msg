@@ -1,0 +1,18 @@
+# Check commit message format
+# Enforces conventional commit format: type(scope): subject
+commit_regex='^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .{1,50}'
+
+if ! grep -qE "$commit_regex" "$1"; then
+    echo "Invalid commit message format!"
+    echo "Please use the conventional commit format:"
+    echo "  feat(scope): add new feature"
+    echo "  fix(scope): fix a bug"
+    echo "  docs(scope): update documentation" 
+    echo "  style(scope): formatting changes"
+    echo "  refactor(scope): code refactoring"
+    echo "  test(scope): add tests"
+    echo "  chore(scope): maintenance tasks"
+    echo ""
+    echo "Example: feat(auth): add user login functionality"
+    exit 1
+fi

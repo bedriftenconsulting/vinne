@@ -1,0 +1,10 @@
+Welcome to {{.CompanyName}}, {{.FirstName}}! 
+
+Your account is ready. Login at {{.LoginUrl}} 
+
+Username: {{.Username}}
+Account Type: {{.AccountType}}
+
+Need help? Contact support at {{.SupportEmail}}
+
+{{.CompanyName}} Team

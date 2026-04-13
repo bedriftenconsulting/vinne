@@ -1,0 +1,30 @@
+dependencies:
+- name: service-api-gateway
+  repository: file://charts/service-api-gateway
+  version: 1.0.0
+- name: service-admin-management
+  repository: file://charts/service-admin-management
+  version: 1.0.0
+- name: service-agent-auth
+  repository: file://charts/service-agent-auth
+  version: 1.0.0
+- name: service-agent-management
+  repository: file://charts/service-agent-management
+  version: 1.0.0
+- name: service-draw
+  repository: file://charts/service-draw
+  version: 1.0.0
+- name: service-game
+  repository: file://charts/service-game
+  version: 1.0.0
+- name: service-payment
+  repository: file://charts/service-payment
+  version: 1.0.0
+- name: service-terminal
+  repository: file://charts/service-terminal
+  version: 1.0.0
+- name: service-wallet
+  repository: file://charts/service-wallet
+  version: 1.0.0
+digest: sha256:400fdd29672e95587839c47478ec626a40458f77b21f7e12001300ab3fdff1c7
+generated: "2025-09-11T00:38:49.974393Z"

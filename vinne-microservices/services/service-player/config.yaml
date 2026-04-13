@@ -1,0 +1,41 @@
+server:
+  port: 50064
+  environment: development
+  read_timeout: 30s
+  write_timeout: 30s
+
+database:
+  url: "postgresql://postgres:password@localhost:5432/player_db?sslmode=disable"
+  max_connections: 100
+  idle_connections: 10
+  conn_max_lifetime: 1h
+  conn_max_idle_time: 30m
+
+redis:
+  url: "redis://localhost:6379/0"
+  max_connections: 50
+  pool_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+
+jwt:
+  secret: "your-secret-key-change-in-production"
+  access_expiry: 15m
+  refresh_expiry: 168h
+  issuer: "randco-player-service"
+
+services:
+  notification: "notification-service:50063"
+  wallet: "wallet-service:50055"
+  payment: "payment-service:50056"
+
+kafka:
+  brokers:
+    - "localhost:9092"
+  consumer_group: "player-service"
+  topic_prefix: "player"
+
+tracing:
+  jaeger_endpoint: "http://localhost:4318"
+  sample_rate: 0.01
+  service_name: "player-service"

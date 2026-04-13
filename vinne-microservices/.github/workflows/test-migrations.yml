@@ -1,0 +1,295 @@
+name: Test Database Migrations
+
+on:
+  push:
+    branches:
+      - develop
+      - master
+    paths:
+      - "services/*/migrations/**"
+      - ".github/workflows/test-migrations.yml"
+  pull_request:
+    branches:
+      - develop
+      - master
+    paths:
+      - "services/*/migrations/**"
+      - ".github/workflows/test-migrations.yml"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to test (leave empty for all)"
+        required: false
+        default: ""
+
+env:
+  GO_VERSION: "1.23"
+  POSTGRES_VERSION: "17"
+
+jobs:
+  test-migrations:
+    name: Test Migrations - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - service-payment
+          - service-terminal
+          - service-wallet
+          - service-game
+          - service-draw
+          - service-ticket
+          - service-admin-management
+          - service-agent-auth
+          - service-agent-management
+          - service-notification
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password_123
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if service has migrations
+        id: check_migrations
+        run: |
+          if [ -d "services/${{ matrix.service }}/migrations" ]; then
+            echo "has_migrations=true" >> $GITHUB_OUTPUT
+            echo "✅ Service ${{ matrix.service }} has migrations directory"
+          else
+            echo "has_migrations=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Service ${{ matrix.service }} does not have migrations directory"
+          fi
+
+      - name: Set up Go
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install Goose
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        run: |
+          echo "Installing Goose..."
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Verify Goose installation
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        run: goose -version
+
+      - name: Wait for PostgreSQL
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for PostgreSQL to be ready..."
+            sleep 2
+          done
+
+      - name: Create test database
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        env:
+          PGPASSWORD: test_password_123
+        run: |
+          # Extract service name without "service-" prefix and replace hyphens with underscores
+          SERVICE_NAME=$(echo "${{ matrix.service }}" | sed 's/service-//' | sed 's/-/_/g')
+          DB_NAME="${SERVICE_NAME}_test"
+
+          echo "Creating database: $DB_NAME"
+          psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS $DB_NAME;"
+          psql -h localhost -U postgres -c "CREATE DATABASE $DB_NAME;"
+          psql -h localhost -U postgres -d $DB_NAME -c "SELECT version();"
+
+      - name: Check migration files
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        working-directory: services/${{ matrix.service }}/migrations
+        run: |
+          echo "📁 Migration files in services/${{ matrix.service }}/migrations:"
+          ls -la *.sql 2>/dev/null || echo "No SQL files found"
+
+          echo ""
+          echo "🔍 Checking file naming convention..."
+          for file in *.sql; do
+            if [[ -f "$file" ]]; then
+              if ! [[ "$file" =~ ^[0-9]{14}_[a-z_]+\.sql$ ]]; then
+                echo "⚠️ WARNING: File '$file' doesn't follow naming convention (YYYYMMDDHHMMSS_description.sql)"
+              else
+                echo "✅ $file - naming convention OK"
+              fi
+            fi
+          done
+
+          echo ""
+          echo "⚠️ Checking for potentially dangerous operations..."
+          for file in *.sql; do
+            if [[ -f "$file" ]]; then
+              if grep -q "DROP TABLE\|DROP SCHEMA\|DROP DATABASE" "$file"; then
+                echo "⚠️ WARNING: File '$file' contains DROP statements - ensure proper IF EXISTS clauses"
+              fi
+              if grep -q "TRUNCATE\|DELETE FROM" "$file"; then
+                echo "⚠️ WARNING: File '$file' contains data deletion operations"
+              fi
+            fi
+          done
+
+      - name: Test migrations UP
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        env:
+          SERVICE_NAME: ${{ matrix.service }}
+        run: |
+          # Extract service name without "service-" prefix and replace hyphens with underscores
+          SERVICE_NAME=$(echo "$SERVICE_NAME" | sed 's/service-//' | sed 's/-/_/g')
+          DB_NAME="${SERVICE_NAME}_test"
+          DATABASE_URL="postgresql://postgres:test_password_123@localhost:5432/$DB_NAME?sslmode=disable"
+
+          echo "🚀 Running migrations UP for ${{ matrix.service }}..."
+          cd services/${{ matrix.service }}
+          goose -dir migrations postgres "$DATABASE_URL" up
+
+          echo ""
+          echo "✅ Verifying migration status..."
+          goose -dir migrations postgres "$DATABASE_URL" status
+
+      - name: Test migrations DOWN (one by one)
+        if: steps.check_migrations.outputs.has_migrations == 'true' && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          SERVICE_NAME: ${{ matrix.service }}
+        run: |
+          # Extract service name without "service-" prefix and replace hyphens with underscores
+          SERVICE_NAME=$(echo "$SERVICE_NAME" | sed 's/service-//' | sed 's/-/_/g')
+          DB_NAME="${SERVICE_NAME}_test"
+          DATABASE_URL="postgresql://postgres:test_password_123@localhost:5432/$DB_NAME?sslmode=disable"
+
+          echo "🔽 Testing migrations DOWN for ${{ matrix.service }}..."
+          cd services/${{ matrix.service }}
+
+          # Get current version
+          CURRENT_VERSION=$(goose -dir migrations postgres "$DATABASE_URL" version 2>/dev/null | grep "version" | awk '{print $NF}')
+          echo "Current version: $CURRENT_VERSION"
+
+          # Roll back one migration
+          goose -dir migrations postgres "$DATABASE_URL" down
+
+          # Check new version
+          NEW_VERSION=$(goose -dir migrations postgres "$DATABASE_URL" version 2>/dev/null | grep "version" | awk '{print $NF}')
+          echo "New version after rollback: $NEW_VERSION"
+
+          # Roll forward again
+          echo "🔼 Rolling forward again..."
+          goose -dir migrations postgres "$DATABASE_URL" up
+
+          FINAL_VERSION=$(goose -dir migrations postgres "$DATABASE_URL" version 2>/dev/null | grep "version" | awk '{print $NF}')
+          echo "Final version: $FINAL_VERSION"
+
+      - name: Test fresh database setup
+        if: steps.check_migrations.outputs.has_migrations == 'true'
+        env:
+          SERVICE_NAME: ${{ matrix.service }}
+          PGPASSWORD: test_password_123
+        run: |
+          # Extract service name without "service-" prefix and replace hyphens with underscores
+          SERVICE_NAME=$(echo "$SERVICE_NAME" | sed 's/service-//' | sed 's/-/_/g')
+          DB_NAME="${SERVICE_NAME}_fresh_test"
+          DATABASE_URL="postgresql://postgres:test_password_123@localhost:5432/$DB_NAME?sslmode=disable"
+
+          echo "🆕 Testing fresh database setup for ${{ matrix.service }}..."
+
+          # Create fresh database
+          psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS $DB_NAME;"
+          psql -h localhost -U postgres -c "CREATE DATABASE $DB_NAME;"
+
+          # Run all migrations on fresh database
+          cd services/${{ matrix.service }}
+          goose -dir migrations postgres "$DATABASE_URL" up
+
+          echo "✅ Fresh setup completed successfully"
+
+      - name: Generate migration report
+        if: always() && steps.check_migrations.outputs.has_migrations == 'true'
+        env:
+          SERVICE_NAME: ${{ matrix.service }}
+          PGPASSWORD: test_password_123
+        run: |
+          # Extract service name without "service-" prefix and replace hyphens with underscores
+          SERVICE_NAME=$(echo "$SERVICE_NAME" | sed 's/service-//' | sed 's/-/_/g')
+          DB_NAME="${SERVICE_NAME}_test"
+          DATABASE_URL="postgresql://postgres:test_password_123@localhost:5432/$DB_NAME?sslmode=disable"
+
+          echo "## Migration Test Report for ${{ matrix.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Add context about the trigger
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "**Pull Request:** #${{ github.event.pull_request.number }} from \`${{ github.head_ref }}\` to \`${{ github.base_ref }}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Migration Files" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -la services/${{ matrix.service }}/migrations/*.sql 2>/dev/null | tail -10 >> $GITHUB_STEP_SUMMARY || echo "No migration files found" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Migration Status" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cd services/${{ matrix.service }}
+          goose -dir migrations postgres "$DATABASE_URL" status 2>&1 | tail -20 >> $GITHUB_STEP_SUMMARY || echo "Unable to get status" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Database Schema" >> $GITHUB_STEP_SUMMARY
+          echo '```sql' >> $GITHUB_STEP_SUMMARY
+          PGPASSWORD="test_password_123" psql -h localhost -U postgres -d $DB_NAME -c "\dt" 2>&1 | head -30 >> $GITHUB_STEP_SUMMARY || echo "Unable to list tables" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  summary:
+    name: Migration Test Summary
+    runs-on: ubuntu-latest
+    needs: test-migrations
+    if: always()
+
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 📊 Migration Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.test-migrations.result }}" == "success" ]; then
+            echo "✅ **All migration tests passed successfully!**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Some migration tests failed. Please review the individual service reports.**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Services Tested" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- service-payment" >> $GITHUB_STEP_SUMMARY
+          echo "- service-terminal" >> $GITHUB_STEP_SUMMARY
+          echo "- service-wallet" >> $GITHUB_STEP_SUMMARY
+          echo "- service-game" >> $GITHUB_STEP_SUMMARY
+          echo "- service-draw" >> $GITHUB_STEP_SUMMARY
+          echo "- service-ticket" >> $GITHUB_STEP_SUMMARY
+          echo "- service-admin-management" >> $GITHUB_STEP_SUMMARY
+          echo "- service-agent-auth" >> $GITHUB_STEP_SUMMARY
+          echo "- service-agent-management" >> $GITHUB_STEP_SUMMARY
+          echo "- service-notification" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: admin-web
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+      - env: dev
+        branch: develop
+        namespace: randlottery-dev
+        autoSync: true
+        valuesFile: values-dev.yaml
+      - env: staging
+        branch: staging
+        namespace: randlottery-staging
+        autoSync: true
+        valuesFile: values-staging.yaml
+      - env: production
+        branch: main
+        namespace: randlottery-production
+        autoSync: false
+        valuesFile: values-production.yaml
+  template:
+    metadata:
+      name: 'admin-web-{{env}}'
+      namespace: argocd
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/nexalabshq/rand-admin-web
+        targetRevision: '{{branch}}'
+        path: helm/admin-web
+        helm:
+          valueFiles:
+            - '{{valuesFile}}'
+          parameters:
+            - name: image.tag
+              value: '{{branch}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: '{{autoSync}}'
+          selfHeal: '{{autoSync}}'
+          allowEmpty: false
+        syncOptions:
+          - CreateNamespace=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+      revisionHistoryLimit: 10

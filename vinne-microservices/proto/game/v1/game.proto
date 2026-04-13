@@ -1,0 +1,563 @@
+syntax = "proto3";
+
+package game.v1;
+option go_package = "github.com/randco/randco-microservices/proto/game/v1;gamev1";
+
+import "google/protobuf/timestamp.proto";
+
+service GameService {
+  // Game management
+  rpc CreateGame(CreateGameRequest) returns (CreateGameResponse);
+  rpc GetGame(GetGameRequest) returns (GetGameResponse);
+  rpc UpdateGame(UpdateGameRequest) returns (UpdateGameResponse);
+  rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
+  rpc DeleteGame(DeleteGameRequest) returns (DeleteGameResponse);
+  rpc ActivateGame(ActivateGameRequest) returns (ActivateGameResponse);
+  rpc SuspendGame(SuspendGameRequest) returns (SuspendGameResponse);
+  
+  // Game rules management
+  rpc CreateGameRules(CreateGameRulesRequest) returns (CreateGameRulesResponse);
+  rpc GetGameRules(GetGameRulesRequest) returns (GetGameRulesResponse);
+  rpc UpdateGameRules(UpdateGameRulesRequest) returns (UpdateGameRulesResponse);
+  
+  // Prize structure management
+  rpc CreatePrizeStructure(CreatePrizeStructureRequest) returns (CreatePrizeStructureResponse);
+  rpc GetPrizeStructure(GetPrizeStructureRequest) returns (GetPrizeStructureResponse);
+  rpc UpdatePrizeStructure(UpdatePrizeStructureRequest) returns (UpdatePrizeStructureResponse);
+  
+  // Game approval workflow
+  rpc SubmitForApproval(SubmitForApprovalRequest) returns (SubmitForApprovalResponse);
+  rpc ApproveGame(ApproveGameRequest) returns (ApproveGameResponse);
+  rpc RejectGame(RejectGameRequest) returns (RejectGameResponse);
+  rpc GetApprovalStatus(GetApprovalStatusRequest) returns (GetApprovalStatusResponse);
+  rpc GetPendingApprovals(GetPendingApprovalsRequest) returns (GetPendingApprovalsResponse);
+  
+  // Game scheduling
+  rpc ScheduleGame(ScheduleGameRequest) returns (ScheduleGameResponse);
+  rpc GetGameSchedule(GetGameScheduleRequest) returns (GetGameScheduleResponse);
+  rpc GetScheduleById(GetScheduleByIdRequest) returns (GetScheduleByIdResponse);
+  rpc UpdateScheduledGame(UpdateScheduledGameRequest) returns (UpdateScheduledGameResponse);
+
+  // Weekly scheduling
+  rpc GenerateWeeklySchedule(GenerateWeeklyScheduleRequest) returns (GenerateWeeklyScheduleResponse);
+  rpc GetWeeklySchedule(GetWeeklyScheduleRequest) returns (GetWeeklyScheduleResponse);
+  rpc ClearWeeklySchedule(ClearWeeklyScheduleRequest) returns (ClearWeeklyScheduleResponse);
+
+  // Logo management
+  rpc UpdateGameLogo(UpdateGameLogoRequest) returns (UpdateGameLogoResponse);
+  rpc DeleteGameLogo(DeleteGameLogoRequest) returns (DeleteGameLogoResponse);
+}
+
+// Bet Type message definition
+message BetType {
+  string id = 1;
+  string name = 2;
+  bool enabled = 3;
+  float multiplier = 4;
+}
+
+// Game message definitions
+message Game {
+  string id = 1;
+  string code = 2; // Unique game code like MON-5/90
+  string name = 3;
+  string organizer = 4; // nla or rand_lottery
+  string game_category = 5; // national, private, special
+  string game_format = 6; // 5_by_90, 5_by_30, 6_by_90, 6_by_49, etc.
+  string game_type = 7; // Backward compatibility field
+  repeated BetType bet_types = 88; // Available bet types for this game
+  
+  // Number configuration
+  int32 number_range_min = 8;
+  int32 number_range_max = 9;
+  int32 selection_count = 10;
+  
+  
+  // Schedule configuration
+  string draw_frequency = 11; // daily, weekly, bi_weekly, monthly, special
+  repeated string draw_days = 12; // Mon, Tue, Wed, etc.
+  string draw_time = 13; // Time of draw (HH:MM format)
+  string start_time = 14; // Sales start time (HH:MM format)
+  string end_time = 15; // Sales end time (HH:MM format)
+  int32 sales_cutoff_minutes = 16;
+  
+  // Pricing configuration
+  double min_stake = 17; // Minimum stake amount in GHS
+  double max_stake = 18; // Maximum stake amount in GHS
+  double base_price = 19; // Base ticket price in GHS
+  
+  // Player limits
+  int32 max_tickets_per_player = 20;
+  
+  // Multi-draw configuration
+  bool multi_draw_enabled = 21;
+  int32 max_draws_advance = 22;
+  
+  // Status and metadata
+  string status = 23; // Draft, PendingApproval, Active, Suspended, Archived
+  string description = 24;
+  bool weekly_schedule = 25;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 26;
+  google.protobuf.Timestamp updated_at = 27;
+
+  // Version control
+  string version = 28;
+
+  // Branding
+  string logo_url = 29; // URL to the game logo/image
+  string brand_color = 30; // Brand color in HEX format (e.g., #FF5733)
+}
+
+message GameRules {
+  string id = 1;
+  string game_id = 2;
+  int32 numbers_to_pick = 3; // e.g., 5 for 5/90
+  int32 total_numbers = 4;   // e.g., 90 for 5/90
+  int32 min_selections = 5;
+  int32 max_selections = 6;
+  bool allow_quick_pick = 7;
+  string special_rules = 8;
+  google.protobuf.Timestamp effective_from = 9;
+  google.protobuf.Timestamp effective_to = 10;
+}
+
+message PrizeStructure {
+  string id = 1;
+  string game_id = 2;
+  repeated PrizeTier tiers = 3;
+  int64 total_prize_pool = 4; // in pesewas
+  double house_edge_percentage = 5;
+  google.protobuf.Timestamp effective_from = 6;
+  google.protobuf.Timestamp effective_to = 7;
+}
+
+message PrizeTier {
+  int32 tier_number = 1;
+  string name = 2; // e.g., "First Prize", "Second Prize"
+  int32 matches_required = 3;
+  int64 prize_amount = 4; // in pesewas
+  double prize_percentage = 5; // percentage of prize pool
+  int64 estimated_winners = 6;
+  string description = 7;
+}
+
+message GameSchedule {
+  string id = 1;
+  string game_id = 2;
+  google.protobuf.Timestamp scheduled_start = 3;
+  google.protobuf.Timestamp scheduled_end = 4;
+  google.protobuf.Timestamp scheduled_draw = 5;
+  string frequency = 6;
+  bool is_active = 7;
+  string notes = 8;
+  string status = 9; // SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, FAILED
+  string game_name = 10; // Name of the game for better visibility
+  string draw_result_id = 11; // UUID of the draw result when completed
+  string game_code = 12; // Game code like MON-5/90 for ticket issuing
+  string game_category = 13; // Game category: national, private, special
+  repeated BetType bet_types = 14; // Available bet types for this game/schedule
+  string logo_url = 15; // Game logo URL for branding
+  string brand_color = 16; // Game brand color in HEX format (e.g., #FF5733)
+}
+
+
+
+// Request/Response messages
+message CreateGameRequest {
+  string code = 1;
+  string name = 2;
+  string organizer = 3; // nla or rand_lottery
+  string game_category = 4; // national, private, special
+  string game_format = 5; // 5_by_90, 5_by_30, 6_by_90, 6_by_49, etc.
+  string game_type = 6; // Backward compatibility
+  repeated BetType bet_types = 89; // Available bet types for this game
+  
+  // Number configuration
+  int32 number_range_min = 7;
+  int32 number_range_max = 8;
+  int32 selection_count = 9;
+  
+  
+  // Schedule configuration
+  string start_time = 10; // Sales start time
+  string end_time = 11; // Sales end time
+  string draw_frequency = 12;
+  repeated string draw_days = 13;
+  string draw_time = 14;
+  int32 sales_cutoff_minutes = 15;
+  
+  // Pricing configuration
+  double min_stake = 16;
+  double max_stake = 17;
+  double base_price = 18;
+  
+  // Player limits
+  int32 max_tickets_per_player = 19;
+  
+  // Multi-draw configuration
+  bool multi_draw_enabled = 20;
+  int32 max_draws_advance = 21;
+  
+  // Additional configuration
+  bool weekly_schedule = 22;
+  string description = 23;
+}
+
+message CreateGameResponse {
+  Game game = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetGameRequest {
+  string id = 1;
+}
+
+message GetGameResponse {
+  Game game = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdateGameRequest {
+  string id = 1;
+  string name = 2;
+  string draw_frequency = 3;
+  repeated string draw_days = 4;
+  string draw_time = 5;
+  int32 sales_cutoff_minutes = 6;
+  double base_price = 7;
+  int32 max_tickets_per_player = 8;
+  bool multi_draw_enabled = 9;
+  int32 max_draws_advance = 10;
+  string start_time = 11; // Sales start time
+  string end_time = 12; // Sales end time
+  double min_stake = 13; // Minimum stake amount
+  double max_stake = 14; // Maximum stake amount
+  bool weekly_schedule = 15; // Weekly schedule flag
+}
+
+message UpdateGameResponse {
+  Game game = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message ListGamesRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string status_filter = 3;
+  string organizer_filter = 4;
+}
+
+message ListGamesResponse {
+  repeated Game games = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 per_page = 4;
+  bool success = 5;
+  string message = 6;
+}
+
+message DeleteGameRequest {
+  string id = 1;
+}
+
+message DeleteGameResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ActivateGameRequest {
+  string id = 1;
+}
+
+message ActivateGameResponse {
+  Game game = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message SuspendGameRequest {
+  string id = 1;
+  string reason = 2;
+}
+
+message SuspendGameResponse {
+  Game game = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Game Rules Messages
+message CreateGameRulesRequest {
+  string game_id = 1;
+  int32 numbers_to_pick = 2;
+  int32 total_numbers = 3;
+  int32 min_selections = 4;
+  int32 max_selections = 5;
+  bool allow_quick_pick = 6;
+  string special_rules = 7;
+}
+
+message CreateGameRulesResponse {
+  GameRules rules = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetGameRulesRequest {
+  string game_id = 1;
+}
+
+message GetGameRulesResponse {
+  GameRules rules = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdateGameRulesRequest {
+  string id = 1;
+  int32 numbers_to_pick = 2;
+  int32 total_numbers = 3;
+  int32 min_selections = 4;
+  int32 max_selections = 5;
+  bool allow_quick_pick = 6;
+  string special_rules = 7;
+}
+
+message UpdateGameRulesResponse {
+  GameRules rules = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Prize Structure Messages
+message CreatePrizeStructureRequest {
+  string game_id = 1;
+  repeated PrizeTier tiers = 2;
+  int64 total_prize_pool = 3;
+  double house_edge_percentage = 4;
+}
+
+message CreatePrizeStructureResponse {
+  PrizeStructure structure = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetPrizeStructureRequest {
+  string game_id = 1;
+}
+
+message GetPrizeStructureResponse {
+  PrizeStructure structure = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdatePrizeStructureRequest {
+  string id = 1;
+  repeated PrizeTier tiers = 2;
+  int64 total_prize_pool = 3;
+  double house_edge_percentage = 4;
+}
+
+message UpdatePrizeStructureResponse {
+  PrizeStructure structure = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Approval Workflow Messages
+message GameApproval {
+  string id = 1;
+  string game_id = 2;
+  string approval_stage = 3; // SUBMITTED, FIRST_APPROVED, APPROVED, REJECTED
+  string submitted_by = 4;
+  google.protobuf.Timestamp submitted_date = 5;
+  string submission_notes = 6;
+  string first_approved_by = 7;
+  google.protobuf.Timestamp first_approval_date = 8;
+  string first_approval_notes = 9;
+  string second_approved_by = 10;
+  google.protobuf.Timestamp second_approval_date = 11;
+  string second_approval_notes = 12;
+  string rejected_by = 13;
+  google.protobuf.Timestamp rejected_date = 14;
+  string rejection_reason = 15;
+  int32 approval_count = 16;
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+}
+
+message SubmitForApprovalRequest {
+  string game_id = 1;
+  string submitted_by = 2; // User ID submitting for approval
+  string notes = 3; // Submission notes
+}
+
+message SubmitForApprovalResponse {
+  bool success = 1;
+  string message = 2;
+  GameApproval approval = 3;
+}
+
+message ApproveGameRequest {
+  string game_id = 1;
+  string approved_by = 2; // User ID approving
+  string notes = 3; // Approval notes
+}
+
+message ApproveGameResponse {
+  bool success = 1;
+  string message = 2;
+  string approval_stage = 3; // Current stage after approval
+  GameApproval approval = 4;
+}
+
+message RejectGameRequest {
+  string game_id = 1;
+  string rejected_by = 2; // User ID rejecting
+  string reason = 3; // Rejection reason
+}
+
+message RejectGameResponse {
+  bool success = 1;
+  string message = 2;
+  GameApproval approval = 3;
+}
+
+message GetApprovalStatusRequest {
+  string game_id = 1;
+}
+
+message GetApprovalStatusResponse {
+  bool success = 1;
+  string message = 2;
+  GameApproval approval = 3;
+}
+
+message GetPendingApprovalsRequest {
+  string approval_type = 1; // "all", "first", "second"
+  int32 page = 2;
+  int32 per_page = 3;
+}
+
+message GetPendingApprovalsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated GameApproval approvals = 3;
+  int32 total = 4;
+  int32 page = 5;
+  int32 per_page = 6;
+}
+
+// Schedule Messages
+message ScheduleGameRequest {
+  string game_id = 1;
+  google.protobuf.Timestamp scheduled_start = 2;
+  google.protobuf.Timestamp scheduled_end = 3;
+  google.protobuf.Timestamp scheduled_draw = 4;
+  string frequency = 5;
+  string notes = 6;
+}
+
+message ScheduleGameResponse {
+  GameSchedule schedule = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetGameScheduleRequest {
+  string game_id = 1;
+}
+
+message GetGameScheduleResponse {
+  repeated GameSchedule schedules = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message GetScheduleByIdRequest {
+  string schedule_id = 1;
+}
+
+message GetScheduleByIdResponse {
+  GameSchedule schedule = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message UpdateScheduledGameRequest {
+  string schedule_id = 1;
+  google.protobuf.Timestamp scheduled_end = 2;
+  google.protobuf.Timestamp scheduled_draw = 3;
+  string status = 4;
+  bool is_active = 5;
+  string notes = 6;
+}
+
+message UpdateScheduledGameResponse {
+  GameSchedule schedule = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Weekly Schedule Messages
+message GenerateWeeklyScheduleRequest {
+  google.protobuf.Timestamp week_start = 1; // Start of week (Sunday)
+}
+
+message GenerateWeeklyScheduleResponse {
+  repeated GameSchedule schedules = 1;
+  bool success = 2;
+  string message = 3;
+  int32 schedules_created = 4;
+}
+
+message GetWeeklyScheduleRequest {
+  google.protobuf.Timestamp week_start = 1; // Start of week (Sunday)
+}
+
+message GetWeeklyScheduleResponse {
+  repeated GameSchedule schedules = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message ClearWeeklyScheduleRequest {
+  google.protobuf.Timestamp week_start = 1; // Start of week (Sunday)
+}
+
+message ClearWeeklyScheduleResponse {
+  bool success = 1;
+  string message = 2;
+  int32 schedules_deleted = 3;
+}
+
+// Logo management messages
+message UpdateGameLogoRequest {
+  string game_id = 1;
+  string logo_url = 2; // URL to the uploaded logo
+  string brand_color = 3; // Optional brand color in HEX format
+}
+
+message UpdateGameLogoResponse {
+  bool success = 1;
+  string message = 2;
+  string logo_url = 3;
+  string cdn_url = 4;
+  string brand_color = 5;
+}
+
+message DeleteGameLogoRequest {
+  string game_id = 1;
+}
+
+message DeleteGameLogoResponse {
+  bool success = 1;
+  string message = 2;
+}

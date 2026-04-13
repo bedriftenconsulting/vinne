@@ -1,0 +1,6 @@
+# Global values
+global:
+  registry: ghcr.io
+  imagePrefix: nexalabshq
+  imagePullSecrets: []
+  environment: development

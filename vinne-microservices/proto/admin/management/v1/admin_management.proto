@@ -1,0 +1,317 @@
+syntax = "proto3";
+
+package admin.management.v1;
+option go_package = "github.com/randco/randco-microservices/proto/admin/management/v1;adminmanagementv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// AdminManagement service handles CRUD operations for admin users and authentication
+service AdminManagementService {
+  // Admin User operations
+  rpc CreateAdminUser(CreateAdminUserRequest) returns (AdminUserResponse);
+  rpc GetAdminUser(GetAdminUserRequest) returns (AdminUserResponse);
+  rpc ListAdminUsers(ListAdminUsersRequest) returns (ListAdminUsersResponse);
+  rpc UpdateAdminUser(UpdateAdminUserRequest) returns (AdminUserResponse);
+  rpc DeleteAdminUser(DeleteAdminUserRequest) returns (google.protobuf.Empty);
+  rpc ActivateAdminUser(ActivateAdminUserRequest) returns (AdminUserResponse);
+  rpc DeactivateAdminUser(DeactivateAdminUserRequest) returns (AdminUserResponse);
+  
+  // Authentication operations
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Logout(LogoutRequest) returns (google.protobuf.Empty);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+  
+  // MFA operations
+  rpc EnableMFA(EnableMFARequest) returns (EnableMFAResponse);
+  rpc VerifyMFA(VerifyMFARequest) returns (google.protobuf.Empty);
+  rpc DisableMFA(DisableMFARequest) returns (google.protobuf.Empty);
+  
+  // Authentication support operations (internal use)
+  rpc VerifyUserCredentials(VerifyUserCredentialsRequest) returns (VerifyUserCredentialsResponse);
+  rpc GetUserByEmail(GetUserByEmailRequest) returns (AdminUserResponse);
+  rpc UpdateLastLogin(UpdateLastLoginRequest) returns (google.protobuf.Empty);
+  
+  // Role operations
+  rpc CreateRole(CreateRoleRequest) returns (RoleResponse);
+  rpc GetRole(GetRoleRequest) returns (RoleResponse);
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc UpdateRole(UpdateRoleRequest) returns (RoleResponse);
+  rpc DeleteRole(DeleteRoleRequest) returns (google.protobuf.Empty);
+  
+  // Permission operations
+  rpc ListPermissions(ListPermissionsRequest) returns (ListPermissionsResponse);
+  
+  // Role assignment operations
+  rpc AssignRole(AssignRoleRequest) returns (google.protobuf.Empty);
+  rpc RemoveRole(RemoveRoleRequest) returns (google.protobuf.Empty);
+  
+  // Audit operations
+  rpc GetAuditLogs(GetAuditLogsRequest) returns (GetAuditLogsResponse);
+}
+
+// Messages
+message AdminUser {
+  string id = 1;
+  string email = 2;
+  string username = 3;
+  optional string first_name = 4;
+  optional string last_name = 5;
+  bool mfa_enabled = 6;
+  bool is_active = 7;
+  optional google.protobuf.Timestamp last_login = 8;
+  optional string last_login_ip = 9;
+  repeated string ip_whitelist = 10;
+  repeated Role roles = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message Role {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated Permission permissions = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message Permission {
+  string id = 1;
+  string resource = 2;
+  string action = 3;
+  optional string description = 4;
+}
+
+message AuditLog {
+  string id = 1;
+  string admin_user_id = 2;
+  string action = 3;
+  optional string resource = 4;
+  optional string resource_id = 5;
+  string ip_address = 6;
+  string user_agent = 7;
+  string request_data = 8; // JSON string
+  int32 response_status = 9;
+  google.protobuf.Timestamp created_at = 10;
+  optional AdminUser admin_user = 11;
+}
+
+// Request messages
+message CreateAdminUserRequest {
+  string email = 1;
+  string username = 2;
+  string password = 3;
+  optional string first_name = 4;
+  optional string last_name = 5;
+  repeated string role_ids = 6;
+  repeated string ip_whitelist = 7;
+}
+
+message GetAdminUserRequest {
+  string id = 1;
+}
+
+message ListAdminUsersRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  optional string email = 3;
+  optional string username = 4;
+  optional string role_id = 5;
+  optional bool is_active = 6;
+  optional bool mfa_enabled = 7;
+}
+
+message UpdateAdminUserRequest {
+  string id = 1;
+  optional string email = 2;
+  optional string username = 3;
+  optional string first_name = 4;
+  optional string last_name = 5;
+  repeated string ip_whitelist = 6;
+  optional bool mfa_enabled = 7;
+}
+
+message DeleteAdminUserRequest {
+  string id = 1;
+}
+
+message ActivateAdminUserRequest {
+  string id = 1;
+}
+
+message DeactivateAdminUserRequest {
+  string id = 1;
+}
+
+message CreateRoleRequest {
+  string name = 1;
+  string description = 2;
+  repeated string permission_ids = 3;
+}
+
+message GetRoleRequest {
+  string id = 1;
+}
+
+message ListRolesRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message UpdateRoleRequest {
+  string id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  repeated string permission_ids = 4;
+}
+
+message DeleteRoleRequest {
+  string id = 1;
+}
+
+message ListPermissionsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  optional string resource = 3;
+}
+
+message AssignRoleRequest {
+  string user_id = 1;
+  string role_id = 2;
+}
+
+message RemoveRoleRequest {
+  string user_id = 1;
+  string role_id = 2;
+}
+
+message GetAuditLogsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  optional string user_id = 3;
+  optional string action = 4;
+  optional string resource = 5;
+  optional google.protobuf.Timestamp start_date = 6;
+  optional google.protobuf.Timestamp end_date = 7;
+}
+
+// Authentication messages
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+  optional string mfa_token = 3;
+  string ip_address = 4;
+  string user_agent = 5;
+}
+
+message LoginResponse {
+  AdminUser user = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  int32 expires_in = 4;
+}
+
+message LogoutRequest {
+  string user_id = 1;
+  string refresh_token = 2;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int32 expires_in = 3;
+}
+
+message ChangePasswordRequest {
+  string user_id = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+
+message EnableMFARequest {
+  string user_id = 1;
+}
+
+message EnableMFAResponse {
+  string secret = 1;
+  string qr_code_url = 2;
+  repeated string backup_codes = 3;
+}
+
+message VerifyMFARequest {
+  string user_id = 1;
+  string token = 2;
+}
+
+message DisableMFARequest {
+  string user_id = 1;
+  string token = 2;
+}
+
+// Authentication support messages (for internal use)
+message VerifyUserCredentialsRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message VerifyUserCredentialsResponse {
+  bool valid = 1;
+  optional AdminUser user = 2; // Only returned if credentials are valid
+  string message = 3; // Error message if invalid
+}
+
+message GetUserByEmailRequest {
+  string email = 1;
+}
+
+message UpdateLastLoginRequest {
+  string user_id = 1;
+  string ip_address = 2;
+  google.protobuf.Timestamp login_time = 3;
+}
+
+// Response messages
+message AdminUserResponse {
+  AdminUser user = 1;
+}
+
+message ListAdminUsersResponse {
+  repeated AdminUser users = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+}
+
+message RoleResponse {
+  Role role = 1;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+}
+
+message ListPermissionsResponse {
+  repeated Permission permissions = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+}
+
+message GetAuditLogsResponse {
+  repeated AuditLog logs = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+}

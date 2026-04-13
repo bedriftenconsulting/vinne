@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Game Sales Closed - {{.GameName}}</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      .header {
+        text-align: center;
+        padding: 20px 0;
+        border-bottom: 2px solid #ff6b35;
+        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        border-radius: 10px 10px 0 0;
+        margin: -20px -20px 0 -20px;
+      }
+      .logo {
+        font-size: 28px;
+        font-weight: bold;
+        color: #ffffff;
+      }
+      .content {
+        padding: 30px 0;
+      }
+      .title {
+        color: #333;
+        font-size: 24px;
+        margin-bottom: 20px;
+        text-align: center;
+        font-weight: 600;
+      }
+      .info-box {
+        background-color: #fff8f0;
+        border-left: 4px solid #ff6b35;
+        padding: 15px 20px;
+        margin: 20px 0;
+        border-radius: 5px;
+      }
+      .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #ffe5d9;
+      }
+      .info-row:last-child {
+        border-bottom: none;
+      }
+      .info-label {
+        font-weight: 600;
+        color: #495057;
+      }
+      .info-value {
+        color: #212529;
+        text-align: right;
+      }
+      .message {
+        color: #555;
+        font-size: 16px;
+        margin-bottom: 20px;
+        text-align: left;
+      }
+      .status-badge {
+        display: inline-block;
+        background-color: #ff6b35;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .badge-container {
+        text-align: center;
+        margin: 25px 0;
+      }
+      .alert-box {
+        background-color: #fff3cd;
+        border: 1px solid #ffc107;
+        color: #856404;
+        padding: 15px 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+      }
+      .alert-box strong {
+        color: #856404;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px 0;
+        border-top: 1px solid #ddd;
+        color: #666;
+        font-size: 14px;
+      }
+      .timestamp {
+        color: #6c757d;
+        font-size: 14px;
+        font-style: italic;
+        text-align: center;
+        margin-top: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div class="logo">{{.CompanyName}}</div>
+      </div>
+
+      <div class="content">
+        <h1 class="title">Game Sales Closed</h1>
+
+        <div class="badge-container">
+          <span class="status-badge">Sales Cutoff Reached</span>
+        </div>
+
+        <div class="message">
+          <p>
+            Sales for <strong>{{.GameName}}</strong> have now closed and the
+            game is locked for the upcoming draw.
+          </p>
+        </div>
+
+        <div class="info-box">
+          <div class="info-row">
+            <span class="info-label">Game Name:</span>
+            <span class="info-value">{{.GameName}}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Game Code:</span>
+            <span class="info-value">{{.GameCode}}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Scheduled End Time:</span>
+            <span class="info-value">{{.ScheduledEndTime}}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Actual Cutoff Time:</span>
+            <span class="info-value">{{.ActualCutoffTime}}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Next Draw Time:</span>
+            <span class="info-value">{{.NextDrawTime}}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Schedule ID:</span>
+            <span class="info-value">{{.ScheduleID}}</span>
+          </div>
+        </div>
+
+        <div class="alert-box">
+          <strong>Important:</strong> No more tickets can be sold for this game
+          session. The draw will be conducted at the scheduled time.
+        </div>
+
+        <div class="message">
+          <p>
+            <strong>Next Steps:</strong>
+          </p>
+          <ul>
+            <li>Final ticket sales have been recorded</li>
+            <li>Game data is now locked and ready for draw execution</li>
+            <li>Draw will be automatically executed at the scheduled time</li>
+            <li>Results will be published immediately after the draw</li>
+            <li>Winner notifications will be sent automatically</li>
+          </ul>
+        </div>
+
+        <div class="message">
+          <p>
+            The draw for this game session is scheduled for
+            <strong>{{.NextDrawTime}}</strong>. You will receive another
+            notification once the draw is completed.
+          </p>
+        </div>
+
+        <div class="timestamp">
+          Notification generated at {{.NotificationTime}}
+        </div>
+      </div>
+
+      <div class="footer">
+        <p>&copy; {{.CurrentYear}} {{.CompanyName}}. All rights reserved.</p>
+        <p>{{.CompanyAddress}}</p>
+        <p>
+          This is an automated system notification. Please do not reply to this
+          email.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

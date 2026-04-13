@@ -1,0 +1,55 @@
+apiVersion: v2
+name: randco-microservices
+description: Rand Lottery Microservices Platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+dependencies:
+  - name: service-api-gateway
+    version: 1.0.0
+    repository: file://charts/service-api-gateway
+    condition: service-api-gateway.enabled
+  - name: service-admin-management
+    version: 1.0.0
+    repository: file://charts/service-admin-management
+    condition: service-admin-management.enabled
+  - name: service-agent-auth
+    version: 1.0.0
+    repository: file://charts/service-agent-auth
+    condition: service-agent-auth.enabled
+  - name: service-agent-management
+    version: 1.0.0
+    repository: file://charts/service-agent-management
+    condition: service-agent-management.enabled
+  - name: service-draw
+    version: 1.0.0
+    repository: file://charts/service-draw
+    condition: service-draw.enabled
+  - name: service-game
+    version: 1.0.0
+    repository: file://charts/service-game
+    condition: service-game.enabled
+  - name: service-payment
+    version: 1.0.0
+    repository: file://charts/service-payment
+    condition: service-payment.enabled
+  - name: service-terminal
+    version: 1.0.0
+    repository: file://charts/service-terminal
+    condition: service-terminal.enabled
+  - name: service-wallet
+    version: 1.0.0
+    repository: file://charts/service-wallet
+    condition: service-wallet.enabled
+  - name: service-ticket
+    version: 1.0.0
+    repository: file://charts/service-ticket
+    condition: service-ticket.enabled
+  - name: service-notification
+    version: 1.0.0
+    repository: file://charts/service-notification
+    condition: service-notification.enabled
+  - name: service-player
+    version: 1.0.0
+    repository: file://charts/service-player
+    condition: service-player.enabled

@@ -1,0 +1,42 @@
+# Development environment values
+
+replicaCount: 2
+
+image:
+  tag: "develop" # This will be overridden by ArgoCD with the latest SHA
+  pullPolicy: Always # Always pull latest for dev environment
+
+imagePullSecrets:
+  - name: ghcr-secret
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+  hosts:
+    - host: admin.dev.randlottery.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+config:
+  apiUrl: "https://api.dev.randlottery.com"
+  appUrl: "https://admin.dev.randlottery.com"
+  environment: "development"
+  enableDebug: true
+  logLevel: "debug"
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4

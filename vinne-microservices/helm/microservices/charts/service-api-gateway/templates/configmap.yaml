@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chart.fullname" . }}-config
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+data:
+  # Server configuration
+  SERVER_PORT: "4000"
+  SERVER_MODE: "development"
+  SERVER_READ_TIMEOUT: "60s"   # Increased for file uploads
+  SERVER_WRITE_TIMEOUT: "60s"  # Increased for file uploads
+  SERVER_IDLE_TIMEOUT: "60s"
+
+  # Redis configuration (shared session store)
+  REDIS_HOST: "redis-session.external-services.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+
+  # Security configuration
+  SECURITY_JWT_ISSUER: "randlotteryltd"
+  SECURITY_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,https://dev.randlottery.com,https://admin.dev.randlottery.com,https://agent.dev.randlottery.com,https://player.dev.randlottery.com"
+  SECURITY_ALLOWED_HEADERS: "Accept,Authorization,Content-Type,X-Request-ID"
+  SECURITY_ALLOWED_METHODS: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+  SECURITY_ALLOW_CREDENTIALS: "true"
+
+  # Cache configuration
+  CACHE_ENABLED: "true"
+  CACHE_TTL: "300s"
+  CACHE_MAX_SIZE: "1048576"
+
+  # Rate limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_REQUESTS_PER_MIN: "100"
+  RATE_LIMIT_BURST_SIZE: "10"
+
+  # Service discovery - gRPC endpoints
+  SERVICES_ADMIN_MANAGEMENT_HOST: "service-admin-management-dev"
+  SERVICES_ADMIN_MANAGEMENT_PORT: "50057"
+  SERVICES_AGENT_AUTH_HOST: "service-agent-auth-dev"
+  SERVICES_AGENT_AUTH_PORT: "50052"
+  SERVICES_AGENT_MANAGEMENT_HOST: "service-agent-management-dev"
+  SERVICES_AGENT_MANAGEMENT_PORT: "50058"
+  SERVICES_WALLET_HOST: "service-wallet-dev"
+  SERVICES_WALLET_PORT: "50059"
+  SERVICES_GAME_HOST: "service-game-dev"
+  SERVICES_GAME_PORT: "50053"
+  SERVICES_DRAW_HOST: "service-draw-dev"
+  SERVICES_DRAW_PORT: "50060"
+  SERVICES_TICKET_HOST: "service-ticket-dev"
+  SERVICES_TICKET_PORT: "50062"
+  SERVICES_PAYMENT_HOST: "service-payment-dev"
+  SERVICES_PAYMENT_PORT: "50061"
+  SERVICES_TERMINAL_HOST: "service-terminal-dev"
+  SERVICES_TERMINAL_PORT: "50054"
+  SERVICES_NOTIFICATION_HOST: "service-notification-dev"
+  SERVICES_NOTIFICATION_PORT: "50063"
+  SERVICES_PLAYER_HOST: "service-player-dev"
+  SERVICES_PLAYER_PORT: "50064"
+  # Kafka configuration
+  KAFKA_BROKERS: "kafka.external-services.svc.cluster.local:9092"
+
+  # Tracing configuration
+  TRACING_ENABLED: "true"
+  TRACING_JAEGER_ENDPOINT: "http://jaeger.observability.svc.cluster.local:4318"
+  TRACING_SAMPLE_RATE: "1.0"
+  TRACING_SERVICE_NAME: "api-gateway"
+  TRACING_SERVICE_VERSION: "1.0.0"
+  TRACING_ENVIRONMENT: "development"
+
+  # Logging configuration
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+
+  # Metrics configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  METRICS_PATH: "/metrics"
+
+  # Environment
+  ENVIRONMENT: "development"
+  SERVICE_NAME: "api-gateway"
+  SERVICE_VERSION: "1.0.0"
+
+  # Storage configuration (DigitalOcean Spaces)
+  STORAGE_PROVIDER: "spaces"
+  STORAGE_ENDPOINT: "https://lon1.digitaloceanspaces.com"
+  STORAGE_REGION: "lon1"
+  STORAGE_BUCKET: "rand-dev-static"
+  STORAGE_CDN_ENDPOINT: ""
+  STORAGE_FORCE_PATH_STYLE: "false"
+
+  # Feature flags
+  ENABLE_NEW_TERMINAL_AUTH: "true"

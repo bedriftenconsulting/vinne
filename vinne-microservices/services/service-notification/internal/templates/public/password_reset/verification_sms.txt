@@ -1,0 +1,5 @@
+Your verification code is: {{.Code}}
+
+This code expires in {{.ExpiryMinutes}} minutes.
+
+{{.CompanyName}} - Do not share this code.

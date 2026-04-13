@@ -1,0 +1,21 @@
+go 1.24.0
+
+toolchain go1.24.6
+
+use (
+	.
+	./proto
+	./services/api-gateway
+	./services/service-admin-management
+	./services/service-agent-auth
+	./services/service-agent-management
+	./services/service-draw
+	./services/service-game
+	./services/service-notification
+	./services/service-payment
+	./services/service-player
+	./services/service-terminal
+	./services/service-ticket
+	./services/service-wallet
+	./shared
+)

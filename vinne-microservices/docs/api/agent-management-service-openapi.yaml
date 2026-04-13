@@ -1,0 +1,608 @@
+openapi: 3.0.3
+info:
+  title: Agent Management Service API
+  description: |
+    REST API for agent management
+    This API exposes all agent management functionality through the API Gateway.
+  version: 1.0.0
+  contact:
+    name: RandCo Lottery Platform
+    url: https://randco.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Development server
+  - url: https://api.dev.randlottery.com/api/v1
+    description: Production server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /admin/agents:
+    post:
+      summary: Create a new agent
+      tags:
+        - Agent Management
+      description: Create a new agent in the system
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAgentRequest"
+      responses:
+        "201":
+          description: Agent created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAgentResponse"
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+    get:
+      summary: List all agents
+      tags:
+        - Agent Management
+      description: Retrieves details of all agents
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of agents retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAgentResponse"
+        "401":
+          description: Unauthorized
+
+  /admin/agents/{id}:
+    get:
+      summary: Gets agent by ID
+      tags:
+        - Agent Management
+      description: Gets agent details by agent ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The unique identifier of the agent
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Agent retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent:
+                    $ref: "#/components/schemas/Agent"
+        "404":
+          description: Agent not found
+        "401":
+          description: Unauthorized
+
+    put:
+      summary: Updates agent by ID
+      tags:
+        - Agent Management
+      description: Updates agent details by agent ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The unique identifier of the agent
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentRequest"
+      responses:
+        "200":
+          description: Agent updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAgentResponse"
+        "401":
+          description: Unauthorized
+
+  /agents/{id}/status:
+    put:
+      summary: Updates agent status by ID
+      tags:
+        - Agent Management
+      description: Updates agent status (e.g., ACTIVE, INACTIVE, SUSPENDED) by agent ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The unique identifier of the agent
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  description: New status for the agent
+                  enum: [ACTIVE, INACTIVE, SUSPENDED]
+      responses:
+        "200":
+          description: Agent status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    description: Response message from the server
+                    example: Agent status updated successfully
+        "401":
+          description: Unauthorized
+
+  /agents/{id}/commissions:
+    get:
+      summary: Gets agent commissions by ID
+      tags:
+        - Agent Management
+      description: Retrieves commission details for a specific agent by agent ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The unique identifier of the agent
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Agent commissions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCommissionResponse"
+        "401":
+          description: Unauthorized
+
+  #Retailer Mangement
+  /admin/retailers:
+    post:
+      summary: Create a new retailer
+      tags:
+        - Retailer Management
+      description: Create a new retailer in the system
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRetailerRequest"
+      responses:
+        "201":
+          description: Retailer created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateRetailerResponse"
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+    get:
+      summary: List all retailers
+      tags:
+        - Retailer Management
+      description: Retrieves details of all retailers
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of retailers retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListRetailerResponse"
+        "401":
+          description: Unauthorized
+
+  /admin/retailers/{id}:
+    get:
+      summary: Gets retailer by ID
+      tags:
+        - Retailer Management
+      description: Gets retailer details by retailer ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The unique identifier of the retailer
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Retailer retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  retailer:
+                    $ref: "#/components/schemas/Retailer"
+        "404":
+          description: Retailer not found
+        "401":
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for agent authentication
+
+  schemas:
+    # Request schemas
+    CreateAgentRequest:
+      type: object
+      required:
+        - name
+        - email
+        - phone_number
+        - password
+        - address
+        - created_by
+      properties:
+        name:
+          type: string
+          description: Full name of the agent
+        email:
+          type: string
+          format: email
+          description: Agent's email address
+        phone_number:
+          type: string
+          description: Agent's phone number
+        password:
+          type: string
+          format: password
+          description: Agent's account password
+        address:
+          type: string
+          description: Physical or mailing address of the agent
+        commission_percentage:
+          type: number
+          format: float
+          nullable: true
+          description: Commission percentage assigned to the agent (optional)
+        created_by:
+          type: string
+          format: uuid
+          description: ID of the user who created this agent
+
+    CreateRetailerRequest:
+      type: object
+      required:
+        - name
+        - email
+        - phone_number
+        - address
+      properties:
+        name:
+          type: string
+          description: Full name of the retailer
+        email:
+          type: string
+          format: email
+          description: Retailer's email address
+        phone_number:
+          type: string
+          description: Retailer's phone number
+        address:
+          type: string
+          description: Physical or mailing address of the retailer
+        agent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Agent to which retailer belongs
+        created_by:
+          type: string
+          format: uuid
+          description: ID of the user who created this retailer
+
+    UpdateAgentRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Full name of the agent
+        email:
+          type: string
+          format: email
+          description: Agent's email address
+        phone_number:
+          type: string
+          description: Agent's phone number
+        address:
+          type: string
+          description: Physical or mailing address of the agent
+        commission_percentage:
+          type: number
+          format: float
+          nullable: true
+          description: Commission percentage assigned to the agent (optional)
+
+    # Response schemas
+    CreateAgentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Indicates if the request was successful
+          example: true
+        message:
+          type: string
+          description: Response message from the server
+          example: Agent created successfully
+        agent:
+          $ref: "#/components/schemas/Agent"
+        auth:
+          type: object
+          properties:
+            agent_id:
+              type: string
+              format: uuid
+              description: Unique ID of the created agent
+            agent_code:
+              type: string
+              description: Code assigned to the agent for authentication or identification
+            success:
+              type: boolean
+              description: Indicates if the authentication setup was successful
+          required:
+            - agent_id
+            - agent_code
+            - success
+      required:
+        - success
+        - message
+        - agent
+        - auth
+
+    CreateRetailerResponse:
+      type: object
+      properties:
+        retailer:
+          $ref: "#/components/schemas/Retailer"
+        auth_created:
+          type: boolean
+          description: Indicates if the authentication was created for retailer successfuly
+          example: true
+        message:
+          type: string
+          description: Response message from the server
+          example: Agent created successfully
+      required:
+        - success
+        - message
+        - agent
+        - auth
+
+    ListAgentResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Agent"
+        pagination:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pagination"
+
+    ListRetailerResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Retailer"
+        pagination:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pagination"
+
+    GetCommissionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Indicates whether the request was successful
+          example: true
+        data:
+          type: object
+          properties:
+            agent_id:
+              type: string
+              format: uuid
+              description: Unique identifier of the agent
+            today_commission:
+              type: number
+              format: float
+              description: Commission earned by the agent today
+              example: 0
+            month_commission:
+              type: number
+              format: float
+              description: Commission earned by the agent in the current month
+              example: 0
+            total_commission:
+              type: number
+              format: float
+              description: Total commission earned by the agent to date
+              example: 0
+            commission_percentage:
+              type: number
+              format: float
+              description: Commission percentage assigned to the agent
+              example: 30
+            transactions:
+              type: array
+              description: List of recent commission-related transactions
+              items:
+                type: object
+                description: Transaction details (empty for now)
+          required:
+            - agent_id
+            - today_commission
+            - month_commission
+            - total_commission
+            - commission_percentage
+            - transactions
+      required:
+        - success
+        - data
+
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the agent
+        agent_code:
+          type: string
+          description: Code assigned to the agent for identification
+        name:
+          type: string
+          description: Full name of the agent
+        email:
+          type: string
+          format: email
+          description: Agent's email address
+        phone_number:
+          type: string
+          description: Agent's phone number
+          example: "+233241234567"
+        address:
+          type: string
+          description: Agent's business or residential address
+        commission_percentage:
+          type: number
+          format: float
+          nullable: true
+          description: Commission rate assigned to the agent
+        status:
+          type: string
+          description: Current status of the agent account
+          enum: [ACTIVE, INACTIVE, SUSPENDED]
+        created_by:
+          type: string
+          description: ID or code of the user who created the agent record
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the agent was created
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the agent record was last updated
+      required:
+        - id
+        - agent_code
+        - name
+        - email
+        - phone_number
+        - address
+        - status
+        - created_by
+        - created_at
+        - updated_at
+
+    Retailer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the retailer
+        retailer_code:
+          type: string
+          description: Code assigned to the retailer for identification
+        name:
+          type: string
+          description: Full name of the retailer
+        email:
+          type: string
+          format: email
+          description: Retailer's email address
+        phone_number:
+          type: string
+          description: Retailer's phone number
+          example: "+233241234567"
+        address:
+          type: string
+          description: retailer's business or residential address
+        status:
+          type: string
+          description: Current status of the retailer account
+          enum: [ACTIVE, INACTIVE, SUSPENDED]
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the retailer was created
+      required:
+        - id
+        - retailer_code
+        - name
+        - email
+        - phone_number
+        - address
+        - status
+        - created_at
+
+    Pagination:
+      type: object
+      properties:
+        total_count:
+          type: integer
+        page:
+          type: integer
+        page_count:
+          type: integer

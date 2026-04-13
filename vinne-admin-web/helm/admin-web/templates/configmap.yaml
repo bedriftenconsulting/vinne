@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "admin-web.fullname" . }}
+  labels:
+    {{- include "admin-web.labels" . | nindent 4 }}
+data:
+  config.js: |
+    // Runtime configuration from Kubernetes ConfigMap
+    window.RUNTIME_CONFIG = {
+      API_URL: '{{ .Values.config.apiUrl }}',
+      APP_URL: '{{ .Values.config.appUrl | default "https://admin.dev.randlottery.com" }}',
+      ENVIRONMENT: '{{ .Values.config.environment }}',
+      ENABLE_DEBUG: {{ .Values.config.enableDebug | default false }},
+      LOG_LEVEL: '{{ .Values.config.logLevel | default "info" }}'
+    };

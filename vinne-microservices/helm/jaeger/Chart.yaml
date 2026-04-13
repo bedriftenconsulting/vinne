@@ -1,0 +1,13 @@
+apiVersion: v2
+name: jaeger
+description: Jaeger tracing system for Rand Lottery microservices
+type: application
+version: 1.0.0
+appVersion: "latest"
+keywords:
+  - jaeger
+  - tracing
+  - observability
+  - opentelemetry
+maintainers:
+  - name: Rand Lottery DevOps Team

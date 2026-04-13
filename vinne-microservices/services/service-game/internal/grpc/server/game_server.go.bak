@@ -1,0 +1,713 @@
+package server
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+	pb "github.com/randco/randco-microservices/services/service-game/proto"
+	"github.com/randco/service-game/internal/models"
+	"github.com/randco/service-game/internal/services"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// GameServer implements the gRPC GameService
+type GameServer struct {
+	pb.UnimplementedGameServiceServer
+	gameService     services.GameService
+	rulesService    services.GameRulesService
+	prizeService    services.PrizeStructureService
+	approvalService services.GameApprovalService
+	scheduleService services.GameScheduleService
+}
+
+// NewGameServer creates a new GameServer
+func NewGameServer(
+	gameService services.GameService,
+	rulesService services.GameRulesService,
+	prizeService services.PrizeStructureService,
+	approvalService services.GameApprovalService,
+	scheduleService services.GameScheduleService,
+) *GameServer {
+	return &GameServer{
+		gameService:     gameService,
+		rulesService:    rulesService,
+		prizeService:    prizeService,
+		approvalService: approvalService,
+		scheduleService: scheduleService,
+	}
+}
+
+// CreateGame creates a new game
+func (s *GameServer) CreateGame(ctx context.Context, req *pb.CreateGameRequest) (*pb.CreateGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "CreateGame"),
+		attribute.String("game.name", req.Name),
+	)
+
+	// Convert protobuf request to service request
+	serviceReq := models.CreateGameRequest{
+		Code:                req.Code,
+		Name:                req.Name,
+		Organizer:           req.Organizer,
+		GameCategory:        req.GameCategory,
+		GameFormat:          req.GameFormat,
+		GameType:            convertProtoStringPtr(req.GameType),
+		NumberRangeMin:      req.NumberRangeMin,
+		NumberRangeMax:      req.NumberRangeMax,
+		SelectionCount:      req.SelectionCount,
+		BonusNumberEnabled:  req.BonusNumberEnabled,
+		BonusRangeMin:       convertProtoInt32Ptr(req.BonusRangeMin),
+		BonusRangeMax:       convertProtoInt32Ptr(req.BonusRangeMax),
+		BonusCount:          convertProtoInt32Ptr(req.BonusCount),
+		StartDate:           convertProtoStringPtr(req.StartDate),
+		StartTime:           convertProtoStringPtr(req.StartTime),
+		EndDate:             convertProtoStringPtr(req.EndDate),
+		EndTime:             convertProtoStringPtr(req.EndTime),
+		DrawFrequency:       req.DrawFrequency,
+		DrawDays:            req.DrawDays,
+		DrawTime:            convertProtoStringPtr(req.DrawTime),
+		SalesCutoffMinutes:  req.SalesCutoffMinutes,
+		MinStake:            req.MinStake,
+		MaxStake:            req.MaxStake,
+		BasePrice:           req.BasePrice,
+		MaxTicketsPerPlayer: req.MaxTicketsPerPlayer,
+		MultiDrawEnabled:    req.MultiDrawEnabled,
+		MaxDrawsAdvance:     convertProtoInt32Ptr(req.MaxDrawsAdvance),
+		WeeklySchedule:      convertProtoBoolPtr(req.WeeklySchedule),
+		Description:         convertProtoStringPtr(req.Description),
+	}
+
+	// Call service
+	game, err := s.gameService.CreateGame(ctx, serviceReq)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.CreateGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Convert to protobuf response
+	return &pb.CreateGameResponse{
+		Game:    convertGameToProto(game),
+		Success: true,
+		Message: "Game created successfully",
+	}, nil
+}
+
+// GetGame retrieves a game by ID
+func (s *GameServer) GetGame(ctx context.Context, req *pb.GetGameRequest) (*pb.GetGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "GetGame"),
+		attribute.String("game.id", req.Id),
+	)
+
+	// Parse UUID
+	id, err := uuid.Parse(req.Id)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.GetGameResponse{
+			Success: false,
+			Message: "Invalid game ID format",
+		}, nil
+	}
+
+	// Call service
+	game, err := s.gameService.GetGame(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.GetGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Convert to protobuf response
+	return &pb.GetGameResponse{
+		Game:    convertGameToProto(game),
+		Success: true,
+		Message: "Game retrieved successfully",
+	}, nil
+}
+
+// UpdateGame updates an existing game
+func (s *GameServer) UpdateGame(ctx context.Context, req *pb.UpdateGameRequest) (*pb.UpdateGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "UpdateGame"),
+		attribute.String("game.id", req.Id),
+	)
+
+	// Parse UUID
+	id, err := uuid.Parse(req.Id)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.UpdateGameResponse{
+			Success: false,
+			Message: "Invalid game ID format",
+		}, nil
+	}
+
+	// Convert protobuf request to service request
+	// Parse draw time if provided
+	var drawTime *time.Time
+	if req.DrawTime != "" {
+		if parsed, err := time.Parse("15:04", req.DrawTime); err == nil {
+			drawTime = &parsed
+		}
+	}
+	
+	serviceReq := models.UpdateGameRequest{
+		ID:             id,
+		Name:           convertProtoStringPtr(req.Name),
+		Description:    convertProtoStringPtr(req.Description),
+		DrawTime:       drawTime,
+	}
+
+	// Call service
+	game, err := s.gameService.UpdateGame(ctx, serviceReq)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.UpdateGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Convert to protobuf response
+	return &pb.UpdateGameResponse{
+		Game:    convertGameToProto(game),
+		Success: true,
+		Message: "Game updated successfully",
+	}, nil
+}
+
+// ListGames lists games with filters
+func (s *GameServer) ListGames(ctx context.Context, req *pb.ListGamesRequest) (*pb.ListGamesResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "ListGames"),
+		attribute.Int64("pagination.page", int64(req.Page)),
+		attribute.Int64("pagination.per_page", int64(req.PerPage)),
+	)
+
+	// Convert protobuf filters to service filters
+	filter := models.GameFilter{
+		// Type:        convertProtoGameTypeFilter(req.TypeFilter), // Skip for now since GameFilter needs updating
+		Organizer:   convertProtoOrganizerFilter(req.OrganizerFilter),
+		Status:      convertProtoStatusFilter(req.StatusFilter),
+		SearchQuery: convertProtoStringPtr(req.SearchQuery),
+	}
+
+	// Default pagination values
+	page := int(req.Page)
+	perPage := int(req.PerPage)
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
+
+	// Call service
+	games, totalCount, err := s.gameService.ListGames(ctx, filter, page, perPage)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.ListGamesResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Convert to protobuf response
+	protoGames := make([]*pb.Game, len(games))
+	for i, game := range games {
+		protoGames[i] = convertGameToProto(game)
+	}
+
+	return &pb.ListGamesResponse{
+		Games:      protoGames,
+		TotalCount: totalCount,
+		Page:       int32(page),
+		PerPage:    int32(perPage),
+		Success:    true,
+		Message:    "Games retrieved successfully",
+	}, nil
+}
+
+// DeleteGame deletes a game
+func (s *GameServer) DeleteGame(ctx context.Context, req *pb.DeleteGameRequest) (*pb.DeleteGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "DeleteGame"),
+		attribute.String("game.id", req.Id),
+	)
+
+	// Parse UUID
+	id, err := uuid.Parse(req.Id)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.DeleteGameResponse{
+			Success: false,
+			Message: "Invalid game ID format",
+		}, nil
+	}
+
+	// Call service
+	err = s.gameService.DeleteGame(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return &pb.DeleteGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.DeleteGameResponse{
+		Success: true,
+		Message: "Game deleted successfully",
+	}, nil
+}
+
+// CreateGameRules creates game rules
+func (s *GameServer) CreateGameRules(ctx context.Context, req *pb.CreateGameRulesRequest) (*pb.CreateGameRulesResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "CreateGameRules"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.CreateGameRulesResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Create service request
+	serviceReq := models.CreateGameRulesRequest{
+		GameID:         gameID,
+		NumbersToPick:  req.NumbersToPick,
+		TotalNumbers:   req.TotalNumbers,
+		MinSelections:  req.MinSelections,
+		MaxSelections:  req.MaxSelections,
+		AllowQuickPick: req.AllowQuickPick,
+		SpecialRules:   convertProtoString(req.SpecialRules),
+	}
+
+	// Call service
+	rules, err := s.rulesService.CreateGameRules(ctx, serviceReq)
+	if err != nil {
+		return &pb.CreateGameRulesResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.CreateGameRulesResponse{
+		Success: true,
+		Message: "Game rules created successfully",
+		Rules:   convertGameRulesToProto(rules),
+	}, nil
+}
+
+// GetGameRules gets game rules
+func (s *GameServer) GetGameRules(ctx context.Context, req *pb.GetGameRulesRequest) (*pb.GetGameRulesResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "GetGameRules"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.GetGameRulesResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Get rules
+	rules, err := s.rulesService.GetGameRules(ctx, gameID)
+	if err != nil {
+		return &pb.GetGameRulesResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.GetGameRulesResponse{
+		Success: true,
+		Message: "Game rules retrieved successfully",
+		Rules:   convertGameRulesToProto(rules),
+	}, nil
+}
+
+// UpdateGameRules updates game rules
+func (s *GameServer) UpdateGameRules(ctx context.Context, req *pb.UpdateGameRulesRequest) (*pb.UpdateGameRulesResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "UpdateGameRules"),
+		attribute.String("rules.id", req.Id),
+	)
+
+	// Get existing rules first
+	rulesID, _ := uuid.Parse(req.Id)
+	existingRules, err := s.rulesService.GetGameRules(ctx, rulesID)
+	if err != nil {
+		return &pb.UpdateGameRulesResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Update fields from request
+	rules := existingRules
+	rules.NumbersToPick = req.NumbersToPick
+	rules.TotalNumbers = req.TotalNumbers
+	rules.MinSelections = req.MinSelections
+	rules.MaxSelections = req.MaxSelections
+	rules.AllowQuickPick = req.AllowQuickPick
+	if req.SpecialRules != "" {
+		rules.SpecialRules = &req.SpecialRules
+	}
+
+	// Update rules
+	if err := s.rulesService.UpdateGameRules(ctx, rules); err != nil {
+		return &pb.UpdateGameRulesResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.UpdateGameRulesResponse{
+		Success: true,
+		Message: "Game rules updated successfully",
+	}, nil
+}
+
+// CreatePrizeStructure creates prize structure
+func (s *GameServer) CreatePrizeStructure(ctx context.Context, req *pb.CreatePrizeStructureRequest) (*pb.CreatePrizeStructureResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "CreatePrizeStructure"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.CreatePrizeStructureResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Convert tiers
+	tiers := make([]models.PrizeTier, len(req.Tiers))
+	for i, tier := range req.Tiers {
+		tiers[i] = convertProtoToPrizeTier(tier)
+	}
+
+	// Create service request
+	serviceReq := models.CreatePrizeStructureRequest{
+		GameID:              gameID,
+		TotalPrizePool:      req.TotalPrizePool,
+		HouseEdgePercentage: req.HouseEdgePercentage,
+		Tiers:               tiers,
+	}
+
+	// Call service
+	structure, err := s.prizeService.CreatePrizeStructure(ctx, serviceReq)
+	if err != nil {
+		return &pb.CreatePrizeStructureResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.CreatePrizeStructureResponse{
+		Success:   true,
+		Message:   "Prize structure created successfully",
+		Structure: convertPrizeStructureToProto(structure),
+	}, nil
+}
+
+// GetPrizeStructure gets prize structure
+func (s *GameServer) GetPrizeStructure(ctx context.Context, req *pb.GetPrizeStructureRequest) (*pb.GetPrizeStructureResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "GetPrizeStructure"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.GetPrizeStructureResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Get prize structure
+	structure, err := s.prizeService.GetPrizeStructure(ctx, gameID)
+	if err != nil {
+		return &pb.GetPrizeStructureResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.GetPrizeStructureResponse{
+		Success:   true,
+		Message:   "Prize structure retrieved successfully",
+		Structure: convertPrizeStructureToProto(structure),
+	}, nil
+}
+
+// UpdatePrizeStructure updates prize structure
+func (s *GameServer) UpdatePrizeStructure(ctx context.Context, req *pb.UpdatePrizeStructureRequest) (*pb.UpdatePrizeStructureResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "UpdatePrizeStructure"),
+		attribute.String("structure.id", req.Id),
+	)
+
+	// Get existing structure first
+	structureID, _ := uuid.Parse(req.Id)
+	existingStructure, err := s.prizeService.GetPrizeStructure(ctx, structureID)
+	if err != nil {
+		return &pb.UpdatePrizeStructureResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Update fields from request
+	structure := existingStructure
+	structure.TotalPrizePool = req.TotalPrizePool
+	structure.HouseEdgePercentage = req.HouseEdgePercentage
+
+	// Convert tiers
+	if len(req.Tiers) > 0 {
+		structure.Tiers = []models.PrizeTier{}
+		for _, tier := range req.Tiers {
+			structure.Tiers = append(structure.Tiers, convertProtoToPrizeTier(tier))
+		}
+	}
+
+	// Update structure
+	if err := s.prizeService.UpdatePrizeStructure(ctx, structure); err != nil {
+		return &pb.UpdatePrizeStructureResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.UpdatePrizeStructureResponse{
+		Success: true,
+		Message: "Prize structure updated successfully",
+	}, nil
+}
+
+// SubmitForApproval submits game for approval
+func (s *GameServer) SubmitForApproval(ctx context.Context, req *pb.SubmitForApprovalRequest) (*pb.SubmitForApprovalResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "SubmitForApproval"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.SubmitForApprovalResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Submit for approval
+	if err := s.approvalService.SubmitForApproval(ctx, gameID, req.Notes); err != nil {
+		return &pb.SubmitForApprovalResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.SubmitForApprovalResponse{
+		Success: true,
+		Message: "Game submitted for approval successfully",
+	}, nil
+}
+
+// ApproveGame approves a game
+func (s *GameServer) ApproveGame(ctx context.Context, req *pb.ApproveGameRequest) (*pb.ApproveGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "ApproveGame"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse IDs
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.ApproveGameResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	approvedBy, err := uuid.Parse(req.ApprovedBy)
+	if err != nil {
+		return &pb.ApproveGameResponse{
+			Success: false,
+			Message: "Invalid approver ID",
+		}, nil
+	}
+
+	// Approve game
+	if err := s.approvalService.ApproveGame(ctx, gameID, approvedBy, req.Notes); err != nil {
+		return &pb.ApproveGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.ApproveGameResponse{
+		Success: true,
+		Message: "Game approved successfully",
+	}, nil
+}
+
+// RejectGame rejects a game
+func (s *GameServer) RejectGame(ctx context.Context, req *pb.RejectGameRequest) (*pb.RejectGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "RejectGame"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse IDs
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.RejectGameResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	rejectedBy, err := uuid.Parse(req.RejectedBy)
+	if err != nil {
+		return &pb.RejectGameResponse{
+			Success: false,
+			Message: "Invalid rejector ID",
+		}, nil
+	}
+
+	// Reject game
+	if err := s.approvalService.RejectGame(ctx, gameID, rejectedBy, req.Reason); err != nil {
+		return &pb.RejectGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.RejectGameResponse{
+		Success: true,
+		Message: "Game rejected successfully",
+	}, nil
+}
+
+// ScheduleGame schedules a game
+func (s *GameServer) ScheduleGame(ctx context.Context, req *pb.ScheduleGameRequest) (*pb.ScheduleGameResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "ScheduleGame"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.ScheduleGameResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Convert timestamps
+	startTime := convertProtoTimestamp(req.ScheduledStart)
+	endTime := convertProtoTimestamp(req.ScheduledEnd)
+	drawTime := convertProtoTimestamp(req.ScheduledDraw)
+
+	if startTime == nil || endTime == nil || drawTime == nil {
+		return &pb.ScheduleGameResponse{
+			Success: false,
+			Message: "Start time, end time, and draw time are required",
+		}, nil
+	}
+
+	// Schedule game
+	frequency := string(convertProtoFrequency(req.Frequency))
+	schedule, err := s.scheduleService.ScheduleGame(ctx, gameID, *startTime, *endTime, *drawTime, frequency)
+	if err != nil {
+		return &pb.ScheduleGameResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.ScheduleGameResponse{
+		Success:  true,
+		Message:  "Game scheduled successfully",
+		Schedule: convertGameScheduleToProto(schedule),
+	}, nil
+}
+
+// GetGameSchedule gets game schedule
+func (s *GameServer) GetGameSchedule(ctx context.Context, req *pb.GetGameScheduleRequest) (*pb.GetGameScheduleResponse, error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("grpc.method", "GetGameSchedule"),
+		attribute.String("game.id", req.GameId),
+	)
+
+	// Parse game ID
+	gameID, err := uuid.Parse(req.GameId)
+	if err != nil {
+		return &pb.GetGameScheduleResponse{
+			Success: false,
+			Message: "Invalid game ID",
+		}, nil
+	}
+
+	// Get schedules
+	schedules, err := s.scheduleService.GetGameSchedule(ctx, gameID)
+	if err != nil {
+		return &pb.GetGameScheduleResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Convert schedules to proto
+	protoSchedules := make([]*pb.GameSchedule, len(schedules))
+	for i, schedule := range schedules {
+		protoSchedules[i] = convertGameScheduleToProto(schedule)
+	}
+
+	return &pb.GetGameScheduleResponse{
+		Success:   true,
+		Message:   "Game schedules retrieved successfully",
+		Schedules: protoSchedules,
+	}, nil
+}

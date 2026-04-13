@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chart.fullname" . }}-config
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+data:
+  # Service configuration
+  SERVICE_NAME: "service-notification"
+  SERVER_PORT: "50063"
+  SERVER_MODE: "dev"
+  ENVIRONMENT: "dev"
+  LOGGING_LEVEL: "info"
+  LOGGING_FORMAT: "json"
+
+  # Database configuration
+  DATABASE_HOST: "postgres-notification.external-services.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "notification_service"
+  DATABASE_USER: "notification"
+  DATABASE_SSL_MODE: "disable"
+  DATABASE_MAX_OPEN_CONNS: "25"
+  DATABASE_MAX_IDLE_CONNS: "10"
+  DATABASE_CONN_MAX_LIFETIME: "1800"
+  DATABASE_CONN_MAX_IDLE_TIME: "600"
+
+  # Redis configuration
+  REDIS_HOST: "redis-notification.external-services.svc.cluster.local"
+  REDIS_PORT: "6390"
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "20"
+  REDIS_MIN_IDLE_CONNS: "5"
+  REDIS_MAX_CONN_AGE: "1800"        # 30 minutes in seconds
+  REDIS_CONNECT_TIMEOUT: "5000"     # 5 seconds in milliseconds
+  REDIS_READ_TIMEOUT: "3000"        # 3 seconds in milliseconds
+  REDIS_WRITE_TIMEOUT: "3000"       # 3 seconds in milliseconds
+  REDIS_RETRY_COUNT: "3"
+  REDIS_RETRY_DELAY: "1000"         # 1 second in milliseconds
+
+  # Tracing configuration
+  TRACING_ENABLED: "true"
+  TRACING_JAEGER_ENDPOINT: "http://jaeger.observability.svc.cluster.local:4318"
+  TRACING_SERVICE_NAME: "notification-service"
+  TRACING_SERVICE_VERSION: "1.0.0"
+  TRACING_SAMPLE_RATE: "1.0"
+  TRACING_ENVIRONMENT: "dev"
+
+  # Kafka configuration
+  KAFKA_BROKERS: "kafka.external-services.svc.cluster.local:9092"
+  KAFKA_CONSUMER_GROUP: "notification-service-group"
+  KAFKA_TOPIC_PREFIX: "randco"
+
+  # Jaeger configuration
+  JAEGER_ENDPOINT: "http://jaeger.observability.svc.cluster.local:4318"
+
+  # Email Provider Configuration
+  PROVIDERS_EMAIL_DEFAULT_PROVIDER: "mailgun"
+  PROVIDERS_EMAIL_MAILGUN_ENABLED: "false"  # EMERGENCY: Disabled to stop email flood
+  PROVIDERS_EMAIL_MAILGUN_BASE_URL: "https://api.mailgun.net"
+
+  # SMS Provider Configuration
+  PROVIDERS_SMS_DEFAULT_PROVIDER: "hubtel"
+  PROVIDERS_SMS_HUBTEL_ENABLED: "true"
+  PROVIDERS_SMS_HUBTEL_BASE_URL: "https://smsc.hubtel.com/v1/messages"
+
+  # Rate Limiting Configuration
+  RATELIMIT_EMAIL_RATE_PER_HOUR: "90"  # Max emails per hour (distributed via Redis)
+  RATELIMIT_SMS_RATE_PER_MINUTE: "60"  # Max SMS per minute
+
+  # Push Notification Configuration (Firebase)
+  PUSH_FIREBASE_ENABLED: "true"
+  PUSH_FIREBASE_PROJECT_ID: "rand-lottery-e82d4"
+  PUSH_FIREBASE_CREDENTIALS_PATH: "/etc/firebase/credentials.json"
+
+  # Service Discovery - Admin Management Service
+  SERVICES_ADMIN_MANAGEMENT_HOST: "service-admin-management-dev"
+  SERVICES_ADMIN_MANAGEMENT_PORT: "50057"

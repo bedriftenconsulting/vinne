@@ -1,0 +1,258 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
+	"github.com/randco/randco-microservices/shared/common/logger"
+	paymentpb "github.com/randco/service-payment/proto"
+	"google.golang.org/grpc"
+)
+
+// PaymentHandler handles payment-related requests
+type PaymentHandler struct {
+	paymentConn *grpc.ClientConn
+	logger      logger.Logger
+}
+
+// NewPaymentHandler creates a new payment handler
+func NewPaymentHandler(paymentConn *grpc.ClientConn, logger logger.Logger) *PaymentHandler {
+	return &PaymentHandler{
+		paymentConn: paymentConn,
+		logger:      logger,
+	}
+}
+
+// ProcessPaymentRequest represents the request to process a payment
+type ProcessPaymentRequest struct {
+	Amount        float64           `json:"amount" validate:"required,min=0.01"`
+	Currency      string            `json:"currency" validate:"required,len=3"`
+	Description   string            `json:"description"`
+	PaymentMethod string            `json:"payment_method" validate:"required"`
+	PhoneNumber   string            `json:"phone_number,omitempty"`
+	MoMoProvider  string            `json:"momo_provider,omitempty"`
+	AccountNumber string            `json:"account_number,omitempty"`
+	BankCode      string            `json:"bank_code,omitempty"`
+	AccountName   string            `json:"account_name,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+}
+
+// ProcessPaymentResponse represents the response after processing a payment
+type ProcessPaymentResponse struct {
+	PaymentID   string `json:"payment_id"`
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	ProviderURL string `json:"provider_url,omitempty"`
+}
+
+// GetPaymentResponse represents payment details
+type GetPaymentResponse struct {
+	PaymentID     string            `json:"payment_id"`
+	Amount        float64           `json:"amount"`
+	Currency      string            `json:"currency"`
+	Status        string            `json:"status"`
+	PaymentMethod string            `json:"payment_method"`
+	Description   string            `json:"description"`
+	Reference     string            `json:"reference,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at,omitempty"`
+	CompletedAt   *time.Time        `json:"completed_at,omitempty"`
+}
+
+// ProcessPayment processes a payment
+func (h *PaymentHandler) ProcessPayment(w http.ResponseWriter, r *http.Request) error {
+	// Get user ID from context
+	userID, ok := r.Context().Value(router.ContextUserID).(string)
+	if !ok || userID == "" {
+		return router.ErrorResponse(w, http.StatusUnauthorized, "unauthorized")
+	}
+
+	var req ProcessPaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return router.ErrorResponse(w, http.StatusBadRequest, "invalid request body")
+	}
+
+	// Create gRPC client
+	client := paymentpb.NewPaymentServiceClient(h.paymentConn)
+
+	// Convert amount to pesewas
+	amountPesewas := int64(req.Amount * 100)
+
+	// Call gRPC service based on payment method
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	var paymentID string
+	var status string
+	var message string
+	var providerURL string
+
+	if req.PaymentMethod == "mobile_money" {
+		// Validate MoMo fields
+		if req.PhoneNumber == "" || req.MoMoProvider == "" {
+			return router.ErrorResponse(w, http.StatusBadRequest, "phone_number and momo_provider are required for mobile money")
+		}
+
+		// Convert provider string to enum
+		var provider paymentpb.MoMoProvider
+		switch strings.ToUpper(req.MoMoProvider) {
+		case "MTN", "MTN_MOMO":
+			provider = paymentpb.MoMoProvider_MTN_MOMO
+		case "TELECEL", "TELECEL_CASH":
+			provider = paymentpb.MoMoProvider_TELECEL_CASH
+		case "AIRTELTIGO", "AIRTELTIGO_MONEY":
+			provider = paymentpb.MoMoProvider_AIRTELTIGO_MONEY
+		default:
+			return router.ErrorResponse(w, http.StatusBadRequest, "invalid momo_provider")
+		}
+
+		// Initiate MoMo payment
+		resp, err := client.InitiateMoMoPayment(ctx, &paymentpb.InitiateMoMoPaymentRequest{
+			PaymentId:   uuid.New().String(),
+			Amount:      amountPesewas,
+			PhoneNumber: req.PhoneNumber,
+			Provider:    provider,
+			Description: req.Description,
+			Metadata:    req.Metadata,
+		})
+		if err != nil {
+			h.logger.Error("Failed to initiate MoMo payment", "error", err)
+			return router.ErrorResponse(w, http.StatusInternalServerError, "failed to process payment")
+		}
+
+		paymentID = resp.TransactionId
+		status = resp.Status
+		message = resp.Message
+		providerURL = resp.UssdCode
+
+	} else if req.PaymentMethod == "bank_transfer" {
+		// Validate bank transfer fields
+		if req.AccountNumber == "" || req.BankCode == "" {
+			return router.ErrorResponse(w, http.StatusBadRequest, "account_number and bank_code are required for bank transfer")
+		}
+
+		// Initiate bank transfer
+		resp, err := client.InitiateBankTransfer(ctx, &paymentpb.InitiateBankTransferRequest{
+			PaymentId: uuid.New().String(),
+			BankDetails: &paymentpb.BankDetails{
+				AccountNumber: req.AccountNumber,
+				BankCode:      req.BankCode,
+				AccountName:   req.AccountName,
+			},
+			Amount:      amountPesewas,
+			Description: req.Description,
+			Metadata:    req.Metadata,
+		})
+		if err != nil {
+			h.logger.Error("Failed to initiate bank transfer", "error", err)
+			return router.ErrorResponse(w, http.StatusInternalServerError, "failed to process payment")
+		}
+
+		paymentID = resp.TransferReference
+		status = "PENDING"
+		message = resp.Message
+
+	} else {
+		// Use generic ProcessPayment for other methods
+		resp, err := client.ProcessPayment(ctx, &paymentpb.ProcessPaymentRequest{
+			Type:        paymentpb.PaymentType_WALLET_CREDIT,
+			Amount:      amountPesewas,
+			Currency:    req.Currency,
+			Description: req.Description,
+			PayerId:     userID,
+			Metadata:    req.Metadata,
+		})
+		if err != nil {
+			h.logger.Error("Failed to process payment", "error", err)
+			return router.ErrorResponse(w, http.StatusInternalServerError, "failed to process payment")
+		}
+
+		if resp.Payment != nil {
+			paymentID = resp.Payment.Id
+			status = resp.Payment.Status.String()
+		}
+		message = resp.Message
+		providerURL = resp.ProviderUrl
+	}
+
+	// Return response
+	response := ProcessPaymentResponse{
+		PaymentID:   paymentID,
+		Status:      status,
+		Message:     message,
+		ProviderURL: providerURL,
+	}
+
+	return router.WriteJSON(w, http.StatusOK, response)
+}
+
+// GetPayment retrieves payment details
+func (h *PaymentHandler) GetPayment(w http.ResponseWriter, r *http.Request) error {
+	// Get payment ID from URL path - expecting /payments/{id}
+	path := r.URL.Path
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	paymentID := ""
+	for i, part := range parts {
+		if part == "payments" && i+1 < len(parts) {
+			paymentID = parts[i+1]
+			break
+		}
+	}
+	if paymentID == "" {
+		return router.ErrorResponse(w, http.StatusBadRequest, "payment_id is required")
+	}
+
+	// Validate UUID format
+	if _, err := uuid.Parse(paymentID); err != nil {
+		return router.ErrorResponse(w, http.StatusBadRequest, "invalid payment_id format")
+	}
+
+	// Create gRPC client
+	client := paymentpb.NewPaymentServiceClient(h.paymentConn)
+
+	// Call gRPC service
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetPayment(ctx, &paymentpb.GetPaymentRequest{
+		PaymentId: paymentID,
+	})
+	if err != nil {
+		h.logger.Error("Failed to get payment", "error", err, "payment_id", paymentID)
+		return router.ErrorResponse(w, http.StatusNotFound, "payment not found")
+	}
+
+	if resp.Payment == nil {
+		return router.ErrorResponse(w, http.StatusNotFound, "payment not found")
+	}
+
+	// Convert response
+	response := GetPaymentResponse{
+		PaymentID:     resp.Payment.Id,
+		Amount:        float64(resp.Payment.Amount) / 100, // Convert from pesewas
+		Currency:      resp.Payment.Currency,
+		Status:        resp.Payment.Status.String(),
+		PaymentMethod: resp.Payment.MethodType.String(),
+		Description:   resp.Payment.Description,
+		Reference:     resp.Payment.Reference,
+		Metadata:      resp.Payment.Metadata,
+		CreatedAt:     resp.Payment.CreatedAt.AsTime(),
+	}
+
+	if resp.Payment.UpdatedAt != nil {
+		response.UpdatedAt = resp.Payment.UpdatedAt.AsTime()
+	}
+
+	if resp.Payment.ProcessedAt != nil {
+		processedAt := resp.Payment.ProcessedAt.AsTime()
+		response.CompletedAt = &processedAt
+	}
+
+	return router.WriteJSON(w, http.StatusOK, response)
+}

@@ -1,0 +1,248 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"time"
+
+	agentmgmtpb "github.com/randco/randco-microservices/proto/agent/management/v1"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
+)
+
+// CreateRetailer handles creating a new retailer
+func (h *retailerHandlerImpl) CreateRetailer(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Name        string  `json:"name"`
+		Email       string  `json:"email"`
+		PhoneNumber string  `json:"phone_number"`
+		Address     string  `json:"address"`
+		AgentID     *string `json:"agent_id"`
+		CreatedBy   string  `json:"created_by"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return router.ErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+	}
+
+	client, err := h.grpcManager.AgentManagementClient()
+	if err != nil {
+		h.log.Error("Failed to get agent management client", "error", err)
+		return router.ErrorResponse(w, http.StatusServiceUnavailable, "Agent management service unavailable")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &agentmgmtpb.CreateRetailerRequest{
+		Name:        req.Name,
+		Email:       req.Email,
+		PhoneNumber: req.PhoneNumber,
+		Address:     req.Address,
+		CreatedBy:   req.CreatedBy,
+	}
+
+	if req.AgentID != nil {
+		grpcReq.AgentId = *req.AgentID
+	}
+
+	resp, err := client.CreateRetailer(ctx, grpcReq)
+	if err != nil {
+		h.log.Debug("Create retailer failed", "name", req.Name, "error", err)
+		return router.ErrorResponse(w, http.StatusBadRequest, "Failed to create retailer")
+	}
+
+	return router.WriteJSON(w, http.StatusCreated, map[string]interface{}{
+		"success":  true,
+		"message":  "Retailer created successfully",
+		"retailer": convertRetailerToMap(resp),
+	})
+}
+
+// GetRetailer handles getting a retailer by ID
+func (h *retailerHandlerImpl) GetRetailer(w http.ResponseWriter, r *http.Request) error {
+	retailerID := router.GetParam(r, "id")
+	if retailerID == "" {
+		return router.ErrorResponse(w, http.StatusBadRequest, "Retailer ID is required")
+	}
+
+	client, err := h.grpcManager.AgentManagementClient()
+	if err != nil {
+		h.log.Error("Failed to get agent management client", "error", err)
+		return router.ErrorResponse(w, http.StatusServiceUnavailable, "Agent management service unavailable")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	grpcReq := &agentmgmtpb.GetRetailerRequest{
+		Id: retailerID,
+	}
+
+	resp, err := client.GetRetailer(ctx, grpcReq)
+	if err != nil {
+		h.log.Debug("Get retailer failed", "retailer_id", retailerID, "error", err)
+		return router.ErrorResponse(w, http.StatusNotFound, "Retailer not found")
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"retailer": convertRetailerToMap(resp),
+	})
+}
+
+// ListRetailers handles listing retailers with pagination and filters
+func (h *retailerHandlerImpl) ListRetailers(w http.ResponseWriter, r *http.Request) error {
+	// Parse query parameters
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	client, err := h.grpcManager.AgentManagementClient()
+	if err != nil {
+		h.log.Error("Failed to get agent management client", "error", err)
+		return router.ErrorResponse(w, http.StatusServiceUnavailable, "Agent management service unavailable")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &agentmgmtpb.ListRetailersRequest{
+		Page:     int32(page),
+		PageSize: int32(pageSize),
+	}
+
+	// Create filter
+	filter := &agentmgmtpb.RetailerFilter{}
+
+	if status := r.URL.Query().Get("status"); status != "" {
+		// Convert status string to enum
+		filter.Status = convertStatusStringToEnum(status)
+	}
+	if agentID := r.URL.Query().Get("agent_id"); agentID != "" {
+		filter.AgentId = agentID
+	}
+	if name := r.URL.Query().Get("name"); name != "" {
+		filter.Name = name
+	}
+	if email := r.URL.Query().Get("email"); email != "" {
+		filter.Email = email
+	}
+
+	grpcReq.Filter = filter
+
+	resp, err := client.ListRetailers(ctx, grpcReq)
+	if err != nil {
+		h.log.Error("List retailers failed", "error", err)
+		return router.ErrorResponse(w, http.StatusInternalServerError, "Failed to list retailers")
+	}
+
+	retailers := make([]map[string]interface{}, len(resp.Retailers))
+	for i, retailer := range resp.Retailers {
+		retailers[i] = convertRetailerToMap(retailer)
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": retailers,
+		"pagination": map[string]interface{}{
+			"total_count": resp.TotalCount,
+			"page":        resp.Page,
+			"page_size":   resp.PageSize,
+		},
+	})
+}
+
+// UpdateRetailer updates an existing retailer
+func (h *retailerHandlerImpl) UpdateRetailer(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Name        string `json:"name"`
+		Email       string `json:"email"`
+		PhoneNumber string `json:"phone_number"`
+		Address     string `json:"address"`
+		UpdatedBy   string `json:"updated_by"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return router.ErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+	}
+
+	retailerID := router.GetParam(r, "id")
+	if retailerID == "" {
+		return router.ErrorResponse(w, http.StatusBadRequest, "Retailer ID is required")
+	}
+
+	client, err := h.grpcManager.AgentManagementClient()
+	if err != nil {
+		h.log.Error("Failed to get agent management client", "error", err)
+		return router.ErrorResponse(w, http.StatusServiceUnavailable, "Agent management service unavailable")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &agentmgmtpb.UpdateRetailerRequest{
+		Id:          retailerID,
+		Name:        req.Name,
+		Email:       req.Email,
+		PhoneNumber: req.PhoneNumber,
+		Address:     req.Address,
+		UpdatedBy:   req.UpdatedBy,
+	}
+
+	resp, err := client.UpdateRetailer(ctx, grpcReq)
+	if err != nil {
+		h.log.Debug("Update retailer failed", "id", retailerID, "error", err)
+		return router.ErrorResponse(w, http.StatusBadRequest, "Failed to update retailer")
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": convertRetailerToMap(resp),
+	})
+}
+
+// UpdateRetailerStatus updates a retailer's status
+func (h *retailerHandlerImpl) UpdateRetailerStatus(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Status    string `json:"status"`
+		UpdatedBy string `json:"updated_by"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return router.ErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+	}
+
+	retailerID := router.GetParam(r, "id")
+	if retailerID == "" {
+		return router.ErrorResponse(w, http.StatusBadRequest, "Retailer ID is required")
+	}
+
+	client, err := h.grpcManager.AgentManagementClient()
+	if err != nil {
+		h.log.Error("Failed to get agent management client", "error", err)
+		return router.ErrorResponse(w, http.StatusServiceUnavailable, "Agent management service unavailable")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &agentmgmtpb.UpdateRetailerStatusRequest{
+		Id:        retailerID,
+		Status:    convertStatusStringToEnum(req.Status),
+		UpdatedBy: req.UpdatedBy,
+	}
+
+	_, err = client.UpdateRetailerStatus(ctx, grpcReq)
+	if err != nil {
+		h.log.Debug("Update retailer status failed", "id", retailerID, "status", req.Status, "error", err)
+		return router.ErrorResponse(w, http.StatusBadRequest, "Failed to update retailer status")
+	}
+
+	return router.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Retailer status updated successfully",
+	})
+}

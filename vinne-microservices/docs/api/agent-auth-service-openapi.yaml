@@ -1,0 +1,812 @@
+openapi: 3.0.3
+info:
+  title: Agent Auth Service API
+  description: |
+    REST API for agent and retailer authentication.
+    This API exposes all agent and retailer authentication service functionality through the API Gateway.
+  version: 1.0.0
+  contact:
+    name: RandCo Lottery Platform
+    url: https://randco.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Development server
+  - url: https://api.dev.randlottery.com/api/v1
+    description: Production server
+
+security:
+  - BearerAuth: []
+  - AdminAuth: []
+
+paths:
+  /api/v1/agent/auth/login:
+    post:
+      tags: [Agent Authentication]
+      summary: Login
+      description: |
+        Logs in an agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_code, password, device_id]
+              properties:
+                agent_code:
+                  type: string
+                  description: 8 digit number assigned to agent
+                password:
+                  type: string
+                device_id:
+                  type: string
+      responses:
+        "200":
+          description: Login successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid credentials"
+
+  /retailer/auth/pos-login:
+    post:
+      tags:
+        - Retailer Authentication
+      summary: Retailer POS Login
+      description: |
+        Logs in a retailer using their retailer code and POS PIN.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [retailer_code, pin, device_imei]
+              properties:
+                retailer_code:
+                  type: string
+                  description: Unique code assigned to the retailer
+                pin:
+                  type: string
+                  description: 4-digit POS PIN of the retailer
+                device_imei:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid credentials"
+
+  /retailer/auth/pin/change:
+    post:
+      tags:
+        - Retailer Authentication
+      summary: Change Retailer POS PIN
+      description: |
+        Allows a retailer to change their POS PIN.  
+        The retailer must provide their current PIN, new PIN, and confirmation PIN.  
+        Authentication via Bearer token is required.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_pin:
+                  type: string
+                  pattern: '^\d{4}$'
+                  description: Current 4-digit PIN
+                  example: "1234"
+                new_pin:
+                  type: string
+                  pattern: '^\d{4}$'
+                  description: New 4-digit PIN
+                  example: "5678"
+                confirm_new_pin:
+                  type: string
+                  pattern: '^\d{4}$'
+                  description: Confirmation of new 4-digit PIN
+                  example: "5678"
+                retailer_code:
+                  type: string
+                  description: Retailer’s unique code
+                  example: "00000005"
+                device_imei:
+                  type: string
+                  description: Optional device IMEI for security tracking
+                  example: "356938035643809"
+      responses:
+        "200":
+          description: PIN changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "PIN changed successfully"
+                  sessions_invalidated:
+                    type: boolean
+                    example: true
+        "400":
+          description: Bad request — invalid input or mismatched PINs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "New PIN and current PIN must be different"
+        "401":
+          description: Unauthorized — invalid or missing token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid or expired token"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Notification was not sent"
+
+  /agent/auth/change-password:
+    post:
+      tags: [Agent Authentication]
+      summary: Change password
+      description: Allows an authenticated agent to change their password.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  description: Current password of the agent.
+                new_password:
+                  type: string
+                  description: New password for the agent.
+                  minLength: 8
+                  maxLength: 100
+                  pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,}$'
+      responses:
+        "200":
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Password changed successfully
+        "400":
+          description: Bad request — invalid input
+        "401":
+          description: Unauthorized — invalid or missing token
+        "403":
+          description: Forbidden — current password incorrect
+
+  /agent/auth/password-reset/request:
+    post:
+      tags: [Agent Authentication]
+      summary: Request password reset
+      description: |
+        Initiates a password reset for an agent.  
+        If the account exists, an OTP will be sent via the specified channel (email or SMS).  
+        Always returns a generic success message to prevent user enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, channel, user_type]
+              properties:
+                identifier:
+                  type: string
+                  description: Email, phone number, or agent code.
+                channel:
+                  type: string
+                  enum: [email, sms]
+                  description: Delivery method for OTP.
+                ip_address:
+                  type: string
+                  format: ipv4
+                  description: Origin IP of the request.
+                user_type:
+                  type: string
+                  enum: [AGENT]
+                  description: Type of user requesting password reset.
+      responses:
+        "200":
+          description: OTP dispatch initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: If the account exists, an OTP has been sent
+                  reset_token:
+                    type: string
+                    description: Token used to validate OTP and reset password.
+                    example: "7b81a7de-3a09-40d9-90ce-3f2d9e0a4bda"
+                  otp_expiry_seconds:
+                    type: integer
+                    example: 300
+        "403":
+          description: Invalid input or forbidden action
+
+  /agent/auth/password-reset/validate-otp:
+    post:
+      tags: [Agent Authentication]
+      summary: Validate OTP
+      description: |
+        Validates the OTP sent to the agent.  
+        If valid, the user can proceed to confirm their new password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reset_token, otp_code]
+              properties:
+                reset_token:
+                  type: string
+                  description: Token issued from password reset request.
+                otp_code:
+                  type: string
+                  description: 6-digit OTP sent via email or SMS.
+      responses:
+        "200":
+          description: OTP validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: OTP verified successfully
+                  remaining_attempts:
+                    type: integer
+                    example: 2
+        "403":
+          description: Invalid or expired OTP
+
+  /agent/auth/password-reset/confirm:
+    post:
+      tags: [Agent Authentication]
+      summary: Confirm password reset
+      description: |
+        Completes the password reset process by verifying the OTP and setting a new password.
+        Both `new_password` and `confirm_password` must match.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reset_token, otp_code, new_password, confirm_password]
+              properties:
+                reset_token:
+                  type: string
+                otp_code:
+                  type: string
+                new_password:
+                  type: string
+                  format: password
+                confirm_password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Password reset success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Password has been reset successfully
+        "403":
+          description: Invalid reset token or OTP
+
+  /agent/auth/password-reset/resend-otp:
+    post:
+      tags: [Agent Authentication]
+      summary: Resend OTP
+      description: |
+        Resends the OTP for an ongoing password reset session.  
+        Each reset session allows up to 3 resends, with a 60-second cooldown between attempts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, reset_token, channel]
+              properties:
+                identifier:
+                  type: string
+                  description: Email, phone number, or agent code.
+                reset_token:
+                  type: string
+                channel:
+                  type: string
+                  enum: [email, sms]
+      responses:
+        "200":
+          description: OTP resent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: OTP resent successfully
+                  otp_expiry_seconds:
+                    type: integer
+                    example: 300
+                  next_resend_seconds:
+                    type: integer
+                    example: 60
+        "403":
+          description: Resend limit reached or invalid toke
+
+  /agent/auth/refresh:
+    post:
+      tags: [Agent Authentication]
+      summary: Refresh access token
+      description: |
+        Refreshes the JWT access token using a valid refresh token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: Valid refresh token issued during login.
+      responses:
+        "200":
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: New JWT access token
+                  refresh_token:
+                    type: string
+                    description: New JWT refresh token
+                  expires_in:
+                    type: integer
+                    description: Token expiry time in seconds
+                    example: 3600
+        "401":
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid or expired refresh token"
+
+  /retailer/auth/refresh:
+    post:
+      tags: [Retailer Authentication]
+      summary: Refresh access token
+      description: |
+        Refreshes the JWT access token using a valid refresh token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: Valid refresh token issued during login.
+      responses:
+        "200":
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: New JWT access token
+                  refresh_token:
+                    type: string
+                    description: New JWT refresh token
+                  expires_in:
+                    type: integer
+                    description: Token expiry time in seconds
+                    example: 3600
+        "401":
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid or expired refresh token"
+
+  /agent/auth/logout:
+    post:
+      tags: [Agent Authentication]
+      summary: Logout
+      description: |
+        Logs out the agent by invalidating their current access and refresh tokens.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: Valid refresh token to be invalidated.
+                device_imei:
+                  type: string
+                  description: Device Id of agent.
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Logged out successfully
+        "401":
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid or expired token"
+
+  /retailer/auth/logout:
+    post:
+      tags: [Retailer Authentication]
+      summary: Logout
+      description: |
+        Logs out the retailer by invalidating their current access and refresh tokens.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: Valid refresh token to be invalidated.
+                device_id:
+                  type: string
+                  description: Device Id of retailer.
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Logged out successfully
+        "401":
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid or expired token"
+
+  /agent/profile:
+    get:
+      tags: [Agent Authentication]
+      summary: Get agent profile
+      description: |
+        Retrieves the agentID of the authenticated agent.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Agent profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id:
+                    type: string
+                    format: uuid
+                    description: Unique ID of the agent
+                  message:
+                    type: string
+                    description: Message to use agent-mgt endpoint
+
+        "401":
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid or expired token"
+
+  /agent/devices:
+    get:
+      tags: [Agent Authentication]
+      summary: Get registered devices
+      description: |
+        Retrieves a list of devices registered to the authenticated agent.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Registered devices retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+
+        "401":
+          description: Unauthorized
+
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Failed to list devices"
+
+  /agent/permissions:
+    get:
+      tags: [Agent Authentication]
+      summary: Get agent permissions
+      description: |
+        Retrieves a list of permissions assigned to the authenticated agent.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Agent permissions retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+
+        "401":
+          description: Unauthorized
+
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Failed to list permissions"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for user authentication
+    AdminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for admin authentication
+
+  schemas:
+    AuthUser:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+        refresh_token:
+          type: string
+          description: Refresh token used to get a new access token
+        expires_in:
+          type: integer
+          description: Token expiry time in seconds
+          example: 3600
+        device_registered:
+          type: boolean
+          description: Indicates if the device is already registered
+        agent:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: Unique ID of the agent
+            agent_code:
+              type: string
+              description: Unique code identifying the agent
+            email:
+              type: string
+              format: email
+            phone:
+              type: string
+              description: Agent's phone number
+            first_name:
+              type: string
+            last_name:
+              type: string
+            role:
+              type: string
+              description: Role of the user (e.g., admin, agent)
+            is_active:
+              type: boolean
+            created_at:
+              type: string
+              format: date-time
+              description: Date when the account was created
+            updated_at:
+              type: string
+              format: date-time
+              description: Date when the account was last updated
+      required:
+        - access_token
+        - refresh_token
+        - expires_in
+        - device_registered
+        - agent
+
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique device identifier
+        user_id:
+          type: string
+          format: uuid
+          description: ID of the user who owns the device
+        user_type:
+          type: string
+          description: Type of user (e.g., retailer, agent, admin)
+        device_name:
+          type: string
+          description: Human-readable name of the device
+        device_type:
+          type: string
+          description: Type or model of the device
+        imei:
+          type: string
+          description: Device IMEI number
+        status:
+          type: string
+          description: Current device status
+        is_active:
+          type: boolean
+          description: Whether the device is currently active
+        last_used:
+          type: string
+          format: date-time
+          description: Timestamp of when the device was last used
+        registered_at:
+          type: string
+          format: date-time
+          description: Timestamp of when the device was first registered
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp of the last device update

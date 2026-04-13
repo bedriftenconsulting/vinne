@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: service-terminal-dev
+  namespace: argocd
+  labels:
+    environment: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: service-terminal=ghcr.io/nexalabshq/rand-terminal:develop
+    argocd-image-updater.argoproj.io/service-terminal.update-strategy: latest
+    argocd-image-updater.argoproj.io/service-terminal.allow-tags: regexp:^develop-[a-f0-9]{7}$
+    argocd-image-updater.argoproj.io/service-terminal.helm.image-name: image.tag
+    argocd-image-updater.argoproj.io/service-terminal.helm.image-spec: tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: microservices-dev
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  source:
+    repoURL: https://github.com/nexalabshq/rand-microservices
+    targetRevision: develop
+    path: helm/microservices/charts/service-terminal
+    helm:
+      releaseName: service-terminal-dev
+      valueFiles:
+        - ../../values.yaml
+        - ../../values-dev.yaml
+      values: |
+        fullnameOverride: service-terminal-dev

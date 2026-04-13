@@ -1,0 +1,7 @@
+apiVersion: v2
+appVersion: 1.0.0
+description: Wallet Service
+name: service-wallet
+type: application
+version: 1.0.0
+

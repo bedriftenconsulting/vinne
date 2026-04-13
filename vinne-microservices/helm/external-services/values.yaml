@@ -1,0 +1,80 @@
+# External services configuration
+postgres:
+  admin-management:
+    host: 10.2.0.8  # rand-dev-postgres-primary private IP
+    port: 5432
+  agent-auth:
+    host: 10.2.0.8
+    port: 5432
+  agent-management:
+    host: 10.2.0.8
+    port: 5432
+  draw:
+    host: 10.2.0.8
+    port: 5432
+  game:
+    host: 10.2.0.8
+    port: 5432
+  payment:
+    host: 10.2.0.8
+    port: 5432
+  terminal:
+    host: 10.2.0.8
+    port: 5432
+  ticket:
+    host: 10.2.0.8
+    port: 5432
+  wallet:
+    host: 10.2.0.8
+    port: 5432
+  notification:
+    host: 10.2.0.8
+    port: 5432
+  player:
+    host: 10.2.0.8
+    port: 5432
+
+redis:
+  # Shared session store
+  session:
+    host: 10.2.0.9  # rand-dev-redis-master-1 private IP
+    port: 6379
+  # Service-specific Redis instances with dedicated ports
+  admin-management:
+    host: 10.2.0.9
+    port: 6384
+  agent-auth:
+    host: 10.2.0.9
+    port: 6380
+  agent-management:
+    host: 10.2.0.9
+    port: 6382
+  draw:
+    host: 10.2.0.9
+    port: 6383
+  game:
+    host: 10.2.0.9
+    port: 6388
+  payment:
+    host: 10.2.0.9
+    port: 6387
+  terminal:
+    host: 10.2.0.9
+    port: 6386
+  ticket:
+    host: 10.2.0.9
+    port: 6389
+  wallet:
+    host: 10.2.0.9
+    port: 6385
+  notification:
+    host: 10.2.0.9
+    port: 6390
+  player:
+    host: 10.2.0.9
+    port: 6391
+
+kafka:
+  broker:
+    host: 10.2.0.10  # rand-dev-kafka-1 private IP
+    port: 9092

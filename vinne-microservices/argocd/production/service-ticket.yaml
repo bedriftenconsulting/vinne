@@ -1,0 +1,64 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: service-ticket-production
+  namespace: argocd
+  labels:
+    environment: production
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: service-ticket=ghcr.io/nexalabshq/rand-ticket:main
+    argocd-image-updater.argoproj.io/service-ticket.update-strategy: semver
+    argocd-image-updater.argoproj.io/service-ticket.allow-tags: regexp:^v[0-9]+\.[0-9]+\.[0-9]+$
+    argocd-image-updater.argoproj.io/service-ticket.helm.image-name: service-ticket.image.repository
+    argocd-image-updater.argoproj.io/service-ticket.helm.image-tag: service-ticket.image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: microservices-production
+  project: default
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  source:
+    repoURL: https://github.com/nexalabshq/rand-microservices
+    targetRevision: main
+    path: helm/microservices
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+      parameters:
+        - name: service-admin-management.enabled
+          value: "false"
+        - name: service-agent-auth.enabled
+          value: "false"
+        - name: service-agent-management.enabled
+          value: "false"
+        - name: service-api-gateway.enabled
+          value: "false"
+        - name: service-draw.enabled
+          value: "false"
+        - name: service-game.enabled
+          value: "false"
+        - name: service-payment.enabled
+          value: "false"
+        - name: service-terminal.enabled
+          value: "false"
+        - name: service-ticket.enabled
+          value: "true"
+        - name: service-wallet.enabled
+          value: "false"
+      values: |
+        global:
+          imagePullSecrets:
+            - name: ghcr-secret

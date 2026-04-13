@@ -1,0 +1,676 @@
+syntax = "proto3";
+
+package wallet.v1;
+
+option go_package = "github.com/randco/randco-microservices/proto/wallet/v1;walletv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// WalletService provides wallet and commission management operations
+service WalletService {
+  // Wallet creation operations
+  rpc CreateAgentWallet(CreateAgentWalletRequest) returns (CreateAgentWalletResponse);
+  rpc CreateRetailerWallets(CreateRetailerWalletsRequest) returns (CreateRetailerWalletsResponse);
+  
+  // Agent wallet operations
+  rpc CreditAgentWallet(CreditAgentWalletRequest) returns (CreditAgentWalletResponse);
+  rpc GetAgentWalletBalance(GetAgentWalletBalanceRequest) returns (GetAgentWalletBalanceResponse);
+  
+  // Retailer wallet operations (Direct)
+  rpc CreditRetailerWallet(CreditRetailerWalletRequest) returns (CreditRetailerWalletResponse);
+  rpc DebitRetailerWallet(DebitRetailerWalletRequest) returns (DebitRetailerWalletResponse);
+  rpc GetRetailerWalletBalance(GetRetailerWalletBalanceRequest) returns (GetRetailerWalletBalanceResponse);
+
+  // Retailer wallet operations (Two-Phase Commit for external transactions)
+  rpc ReserveRetailerWalletFunds(ReserveRetailerWalletFundsRequest) returns (ReserveRetailerWalletFundsResponse);
+  rpc CommitReservedDebit(CommitReservedDebitRequest) returns (CommitReservedDebitResponse);
+  rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
+  rpc PlaceHoldOnWallet (PlaceHoldOnWalletRequest) returns (PlaceHoldOnWalletResponse);
+  rpc ReleaseHoldOnWallet(ReleaseHoldOnWalletRequest) returns (ReleaseHoldOnWalletResponse);
+  rpc GetHoldOnWallet(GetHoldOnWalletRequest) returns (GetHoldOnWalletResponse);
+  rpc GetHoldByRetailer(GetHoldByRetailerRequest) returns (GetHoldByRetailerResponse);
+  
+  // Transaction history
+  rpc GetTransactionHistory(GetTransactionHistoryRequest) returns (GetTransactionHistoryResponse);
+
+  // Admin transaction operations
+  rpc GetAllTransactions(GetAllTransactionsRequest) returns (GetAllTransactionsResponse);
+  rpc ReverseTransaction(ReverseTransactionRequest) returns (ReverseTransactionResponse);
+  
+  // Commission operations
+  rpc SetCommissionRate(SetCommissionRateRequest) returns (SetCommissionRateResponse);
+  rpc GetCommissionRate(GetCommissionRateRequest) returns (GetCommissionRateResponse);
+  rpc GetCommissionReport(GetCommissionReportRequest) returns (GetCommissionReportResponse);
+  rpc UpdateAgentCommission(UpdateAgentCommissionRequest) returns (UpdateAgentCommissionResponse);
+  rpc GetDailyCommissions(GetDailyCommissionsRequest) returns (GetDailyCommissionsResponse);
+  
+  // Transfer operations
+  rpc TransferAgentToRetailer(TransferAgentToRetailerRequest) returns (TransferAgentToRetailerResponse);
+  
+  // Player wallet operations
+  rpc CreatePlayerWallet(CreatePlayerWalletRequest) returns (CreatePlayerWalletResponse);
+  rpc CreditPlayerWallet(CreditPlayerWalletRequest) returns (CreditPlayerWalletResponse);
+  rpc DebitPlayerWallet(DebitPlayerWalletRequest) returns (DebitPlayerWalletResponse);
+  rpc GetPlayerWalletBalance(GetPlayerWalletBalanceRequest) returns (GetPlayerWalletBalanceResponse);
+  rpc ReservePlayerWalletFunds(ReservePlayerWalletFundsRequest) returns (ReservePlayerWalletFundsResponse);
+}
+
+// Wallet types
+enum WalletType {
+  WALLET_TYPE_UNSPECIFIED = 0;
+  AGENT_STAKE = 1;
+  RETAILER_STAKE = 2;
+  RETAILER_WINNING = 3;
+  PLAYER_WALLET = 4;
+}
+
+// Transaction types
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  CREDIT = 1;
+  DEBIT = 2;
+  TRANSFER = 3;
+  COMMISSION = 4;
+  PAYOUT = 5;
+}
+
+// Transaction status
+enum TransactionStatus {
+  TRANSACTION_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  COMPLETED = 2;
+  FAILED = 3;
+  REVERSED = 4;
+}
+
+// Credit source - tracks how wallet credits originated
+enum CreditSource {
+  CREDIT_SOURCE_UNSPECIFIED = 0;
+  CREDIT_SOURCE_ADMIN_DIRECT = 1;      // Admin manually credited wallet (completes immediately)
+  CREDIT_SOURCE_MOBILE_MONEY = 2;      // Mobile money self top-up (async payment saga)
+  CREDIT_SOURCE_BANK_TRANSFER = 3;     // Bank transfer deposit
+  CREDIT_SOURCE_SYSTEM_ADJUSTMENT = 4; // System-initiated adjustment
+  CREDIT_SOURCE_REVERSAL = 5;          // Transaction reversal
+}
+
+// Create agent wallet request
+message CreateAgentWalletRequest {
+  string agent_id = 1;
+  string agent_code = 2;
+  double initial_commission_rate = 3; // As decimal (0.30 for 30%)
+  string created_by = 4;
+}
+
+// Create agent wallet response
+message CreateAgentWalletResponse {
+  bool success = 1;
+  string wallet_id = 2;
+  string agent_id = 3;
+  double balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// Create retailer wallets request
+message CreateRetailerWalletsRequest {
+  string retailer_id = 1;
+  string retailer_code = 2;
+  string parent_agent_id = 3; // Optional, for agent-managed retailers
+  string created_by = 4;
+}
+
+// Create retailer wallets response
+message CreateRetailerWalletsResponse {
+  bool success = 1;
+  string stake_wallet_id = 2;
+  string winning_wallet_id = 3;
+  string retailer_id = 4;
+  string message = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// Agent wallet credit request
+message CreditAgentWalletRequest {
+  string agent_id = 1;
+  double amount = 2; // Base amount in pesewas (before gross-up). Backend will apply fixed 30% commission.
+  string reference = 3;
+  string payment_method = 4;
+  string notes = 5;
+  string idempotency_key = 6;
+  CreditSource credit_source = 7; // Source of the credit (admin_direct, mobile_money, etc.)
+}
+
+// Agent wallet credit response
+message CreditAgentWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double base_amount = 3; // Original base amount in pesewas (what admin entered)
+  double commission_amount = 4; // Fixed 30% commission in pesewas
+  double gross_amount = 5; // Total credited = base_amount + commission_amount in pesewas
+  double new_balance = 6; // Updated wallet balance in pesewas
+  string message = 7;
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// Get agent wallet balance request
+message GetAgentWalletBalanceRequest {
+  string agent_id = 1;
+}
+
+// Get agent wallet balance response
+message GetAgentWalletBalanceResponse {
+  string agent_id = 1;
+  double balance = 2;
+  double pending_balance = 3;
+  double available_balance = 4;
+  google.protobuf.Timestamp last_updated = 5;
+}
+
+message PlaceHoldOnWalletRequest {
+  string retailer_id = 1;
+  string placed_by = 2; // Who placed the hold
+  string reason = 3;
+  google.protobuf.Timestamp expires_at =  4;
+}
+
+message PlaceHoldOnWalletResponse {
+  string retailer_id = 1;
+  string placed_by = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// Wallet-wide hold model (for retailer winning wallet)
+message Hold {
+  string id = 1; // hold_id (UUID)
+  string retailer_id = 2;
+  WalletType wallet_type = 3; // Must be RETAILER_WINNING
+  string status = 4; // ACTIVE | RELEASED | EXPIRED
+  string reason = 5;
+  string created_by = 6;
+  string released_by = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  google.protobuf.Timestamp released_at = 10;
+  map<string, string> metadata = 11;
+}
+
+message ReleaseHoldOnWalletRequest {
+  string hold_id = 1;
+  string released_by = 2;
+  string reason = 3;
+}
+
+message ReleaseHoldOnWalletResponse {
+  bool success = 1;
+  Hold hold = 2;
+}
+
+message GetHoldOnWalletRequest {
+  string hold_id = 1;
+}
+
+message GetHoldOnWalletResponse {
+  Hold hold = 1; // empty if not found
+}
+
+message GetHoldByRetailerRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2; // default to RETAILER_WINNING if unspecified
+}
+
+message GetHoldByRetailerResponse {
+  Hold hold = 1; // empty if none
+}
+
+// Retailer wallet credit request
+message CreditRetailerWalletRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+  double amount = 3; // Base amount in pesewas (before gross-up). Backend will apply fixed 30% commission if via agent.
+  string reference = 4;
+  string agent_id = 5; // If credited by agent
+  string notes = 6;
+  string idempotency_key = 7;
+  CreditSource credit_source = 8; // Source of the credit (admin_direct, mobile_money, etc.)
+}
+
+// Retailer wallet credit response
+message CreditRetailerWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double base_amount = 3; // Original base amount in pesewas (what admin entered)
+  double commission_amount = 4; // Fixed 30% commission in pesewas (if applicable)
+  double gross_amount = 5; // Total credited = base_amount + commission_amount in pesewas
+  double new_balance = 6; // Updated wallet balance in pesewas
+  string message = 7;
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// Retailer wallet debit request
+message DebitRetailerWalletRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+  double amount = 3;
+  string reference = 4;
+  string reason = 5;
+  string idempotency_key = 6;
+}
+
+// Retailer wallet debit response
+message DebitRetailerWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double debited_amount = 3;
+  double new_balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+// Get retailer wallet balance request
+message GetRetailerWalletBalanceRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+}
+
+// Get retailer wallet balance response  
+message GetRetailerWalletBalanceResponse {
+  string retailer_id = 1;
+  WalletType wallet_type = 2;
+  double balance = 3;
+  double pending_balance = 4;
+  double available_balance = 5;
+  google.protobuf.Timestamp last_updated = 6;
+}
+
+// Transaction history request
+message GetTransactionHistoryRequest {
+  string wallet_owner_id = 1; // Agent or Retailer ID
+  WalletType wallet_type = 2;
+  google.protobuf.Timestamp start_date = 3;
+  google.protobuf.Timestamp end_date = 4;
+  TransactionType transaction_type = 5;
+  int32 page = 6;
+  int32 page_size = 7;
+}
+
+// Transaction record
+message Transaction {
+  string id = 1;
+  string wallet_owner_id = 2;
+  WalletType wallet_type = 3;
+  TransactionType type = 4;
+  double amount = 5;
+  double balance_before = 6;
+  double balance_after = 7;
+  string reference = 8;
+  string description = 9;
+  TransactionStatus status = 10;
+  google.protobuf.Timestamp created_at = 11;
+  map<string, string> metadata = 12;
+}
+
+// Transaction history response
+message GetTransactionHistoryResponse {
+  repeated Transaction transactions = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  bool has_more = 5;
+}
+
+// Get all transactions request (Admin only)
+message GetAllTransactionsRequest {
+  repeated TransactionType transaction_types = 1; // Filter by transaction types (empty = all)
+  repeated WalletType wallet_types = 2; // Filter by wallet types (empty = all)
+  repeated TransactionStatus statuses = 3; // Filter by statuses (empty = all)
+  google.protobuf.Timestamp start_date = 4; // Filter by created_at >= start_date
+  google.protobuf.Timestamp end_date = 5; // Filter by created_at <= end_date
+  string search_term = 6; // Search in reference, description, transaction_id
+  int32 page = 7; // Page number (1-indexed)
+  int32 page_size = 8; // Items per page (max 100)
+  string sort_by = 9; // Field to sort by (default: "created_at")
+  string sort_order = 10; // "asc" or "desc" (default: "desc")
+}
+
+// Enhanced transaction record with owner information
+message TransactionDetail {
+  string id = 1;
+  string transaction_id = 2;
+  string wallet_owner_id = 3;
+  string wallet_owner_name = 4; // Agent or Retailer name (from metadata or service)
+  string wallet_owner_code = 5; // Agent or Retailer code (from metadata)
+  WalletType wallet_type = 6;
+  TransactionType type = 7;
+  double amount = 8; // in pesewas
+  double balance_before = 9; // in pesewas
+  double balance_after = 10; // in pesewas
+  string reference = 11;
+  string description = 12;
+  TransactionStatus status = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp completed_at = 15;
+  google.protobuf.Timestamp reversed_at = 16;
+  map<string, string> metadata = 17;
+}
+
+// Transaction statistics (aggregated based on current filters)
+message TransactionStatistics {
+  double total_volume = 1; // Sum of absolute values of all amounts matching filters
+  double total_credits = 2; // Sum of all credit transaction amounts
+  double total_debits = 3; // Sum of all debit transaction amounts (absolute value)
+  double pending_amount = 4; // Sum of all pending transaction amounts (absolute value)
+  int32 pending_count = 5; // Count of pending transactions
+  int32 completed_count = 6; // Count of completed transactions
+  int32 failed_count = 7; // Count of failed transactions
+  int32 credit_count = 8; // Count of credit transactions
+  int32 debit_count = 9; // Count of debit transactions
+  int32 transfer_count = 10; // Count of transfer transactions
+  int32 commission_count = 11; // Count of commission transactions
+  int32 payout_count = 12; // Count of payout transactions
+}
+
+// Get all transactions response
+message GetAllTransactionsResponse {
+  repeated TransactionDetail transactions = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+  bool has_more = 6;
+  TransactionStatistics statistics = 7; // Aggregated statistics based on filters
+}
+
+// Set commission rate request
+message SetCommissionRateRequest {
+  string agent_id = 1;
+  double rate = 2; // Percentage as decimal (e.g., 0.30 for 30%)
+  string effective_from = 3;
+  string notes = 4;
+  string set_by = 5; // Admin user ID
+}
+
+// Set commission rate response
+message SetCommissionRateResponse {
+  bool success = 1;
+  string message = 2;
+  double new_rate = 3;
+  google.protobuf.Timestamp effective_from = 4;
+}
+
+// Get commission rate request
+message GetCommissionRateRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp as_of_date = 2; // Optional: get rate as of specific date
+}
+
+// Get commission rate response
+message GetCommissionRateResponse {
+  string agent_id = 1;
+  double rate = 2;
+  google.protobuf.Timestamp effective_from = 3;
+  google.protobuf.Timestamp created_at = 4;
+  string created_by = 5;
+}
+
+// Commission report request
+message GetCommissionReportRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+// Commission entry
+message CommissionEntry {
+  string id = 1;
+  string transaction_id = 2;
+  string agent_id = 3;
+  double original_amount = 4;
+  double gross_amount = 5;
+  double commission_amount = 6;
+  double commission_rate = 7;
+  string type = 8; // DEPOSIT, TRANSFER, etc.
+  google.protobuf.Timestamp created_at = 9;
+  string reference = 10;
+}
+
+// Commission report response
+message GetCommissionReportResponse {
+  repeated CommissionEntry entries = 1;
+  double total_commission = 2;
+  int32 total_count = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+  bool has_more = 6;
+}
+
+// Agent to retailer transfer request
+message TransferAgentToRetailerRequest {
+  string agent_id = 1;
+  string retailer_id = 2;
+  double amount = 3;
+  string reference = 4;
+  string notes = 5;
+  string idempotency_key = 6;
+}
+
+// Agent to retailer transfer response
+message TransferAgentToRetailerResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double transferred_amount = 3;
+  double commission_charged = 4;
+  double total_deducted = 5;
+  double agent_new_balance = 6;
+  double retailer_new_balance = 7;
+  string message = 8;
+  google.protobuf.Timestamp timestamp = 9;
+}
+
+// Update agent commission request - Called by agent management service
+message UpdateAgentCommissionRequest {
+  string agent_id = 1;
+  double new_rate = 2; // Percentage as decimal (e.g., 0.30 for 30%)
+  string updated_by = 3; // System or admin user who triggered the update
+  string reason = 4; // Reason for the commission update
+}
+
+// Update agent commission response
+message UpdateAgentCommissionResponse {
+  bool success = 1;
+  string message = 2;
+  double previous_rate = 3;
+  double new_rate = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Reserve retailer wallet funds request (Phase 1 of 2PC)
+message ReserveRetailerWalletFundsRequest {
+  string retailer_id = 1;
+  WalletType wallet_type = 2; // RETAILER_WINNING for withdrawals
+  double amount = 3;
+  string reference = 4; // Transaction reference for idempotency
+  int32 ttl_seconds = 5; // Reservation time-to-live (e.g., 600 for 10 minutes)
+  string reason = 6; // e.g., "Pending withdrawal to mobile money"
+}
+
+// Reserve retailer wallet funds response
+message ReserveRetailerWalletFundsResponse {
+  bool success = 1;
+  string reservation_id = 2; // Unique reservation ID for commit/release
+  double reserved_amount = 3;
+  double available_balance = 4; // Balance after reservation
+  string message = 5;
+  google.protobuf.Timestamp reserved_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+}
+
+// Commit reserved debit request (Phase 2 of 2PC)
+message CommitReservedDebitRequest {
+  string retailer_id = 1;
+  string reservation_id = 2; // Reservation ID from Phase 1
+  string reference = 3; // Original transaction reference
+  string notes = 4; // e.g., "Withdrawal completed successfully"
+}
+
+// Commit reserved debit response
+message CommitReservedDebitResponse {
+  bool success = 1;
+  string transaction_id = 2; // Final wallet transaction ID
+  double debited_amount = 3;
+  double new_balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp committed_at = 6;
+}
+
+// Release reservation request (Compensation)
+message ReleaseReservationRequest {
+  string retailer_id = 1;
+  string reservation_id = 2; // Reservation ID to release
+  string reason = 3; // e.g., "External transfer failed"
+}
+
+// Release reservation response
+message ReleaseReservationResponse {
+  bool success = 1;
+  double released_amount = 2;
+  double new_available_balance = 3; // Balance after releasing reservation
+  string message = 4;
+  google.protobuf.Timestamp released_at = 5;
+}
+
+// Player wallet operations
+
+message CreatePlayerWalletRequest {
+  string player_id = 1;
+  string player_code = 2;  // Phone number or unique identifier
+}
+
+message CreatePlayerWalletResponse {
+  bool success = 1;
+  string wallet_id = 2;
+  string player_id = 3;
+  string message = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message CreditPlayerWalletRequest {
+  string player_id = 1;
+  double amount = 2;
+  string reference = 3;
+  string notes = 4;
+  string idempotency_key = 5;
+  CreditSource credit_source = 6; // Source of the credit (admin_direct, mobile_money, etc.)
+}
+
+message CreditPlayerWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double credited_amount = 3;
+  double new_balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+message DebitPlayerWalletRequest {
+  string player_id = 1;
+  double amount = 2;
+  string reference = 3;
+  string reason = 4;
+  string idempotency_key = 5;
+}
+
+message DebitPlayerWalletResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  double debited_amount = 3;
+  double new_balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+message ReservePlayerWalletFundsRequest {
+  string player_id = 1;
+  double amount = 2;
+  string reference = 3;
+  int32 ttl_seconds = 4;
+  string reason = 5;
+}
+
+message ReservePlayerWalletFundsResponse {
+  bool success = 1;
+  string reservation_id = 2;
+  double reserved_amount = 3;
+  double available_balance = 4;
+  string message = 5;
+  google.protobuf.Timestamp reserved_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+}
+
+message GetPlayerWalletBalanceRequest {
+  string player_id = 1;
+}
+
+message GetPlayerWalletBalanceResponse {
+  string player_id = 1;
+  double balance = 2;
+  double pending_balance = 3;
+  double available_balance = 4;
+  google.protobuf.Timestamp last_updated = 5;
+}
+
+// Reverse transaction request (Admin only)
+message ReverseTransactionRequest {
+  string transaction_id = 1;      // ID of original transaction to reverse
+  string reason = 2;              // Reason for reversal (min 20 chars)
+  string admin_id = 3;            // Admin user performing reversal
+  string admin_name = 4;          // Admin user name
+  string admin_email = 5;         // Admin user email
+}
+
+// Reverse transaction response
+message ReverseTransactionResponse {
+  bool success = 1;
+  string message = 2;
+  string reversal_transaction_id = 3;     // New debit transaction ID
+  double reversed_amount = 4;             // Amount reversed (pesewas)
+  double new_wallet_balance = 5;          // Updated wallet balance (pesewas) - can be negative
+  google.protobuf.Timestamp reversed_at = 6;
+  TransactionDetail original_transaction = 7;   // Original transaction details
+  TransactionDetail reversal_transaction = 8;   // New reversal transaction
+  bool balance_is_negative = 9;           // Indicates if wallet balance is now negative
+}
+
+// ======================== Daily Commission Metrics ========================
+
+// GetDailyCommissionsRequest requests daily commission metrics for dashboard
+message GetDailyCommissionsRequest {
+  // Date in YYYY-MM-DD format (defaults to today if empty)
+  string date = 1;
+
+  // Include comparison with previous day (default: true)
+  bool include_comparison = 2;
+}
+
+// CommissionMetric represents commission amount with change tracking
+message CommissionMetric {
+  // Total commission amount in pesewas
+  int64 amount = 1;
+
+  // Change percentage compared to previous day
+  double change_percentage = 2;
+
+  // Previous day amount in pesewas
+  int64 previous_amount = 3;
+}
+
+// GetDailyCommissionsResponse returns daily commission metrics
+message GetDailyCommissionsResponse {
+  // Date of the metrics (YYYY-MM-DD)
+  string date = 1;
+
+  // Commission metrics with comparison
+  CommissionMetric commissions = 2;
+}

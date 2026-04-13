@@ -1,0 +1,496 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/response"
+	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
+	terminalpb "github.com/randco/randco-microservices/services/service-terminal/proto"
+	"github.com/randco/randco-microservices/shared/common/logger"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// TerminalHandler defines terminal management operations
+type TerminalHandler interface {
+	RegisterTerminal(w http.ResponseWriter, r *http.Request) error
+	GetTerminal(w http.ResponseWriter, r *http.Request) error
+	ListTerminals(w http.ResponseWriter, r *http.Request) error
+	UpdateTerminal(w http.ResponseWriter, r *http.Request) error
+	DeleteTerminal(w http.ResponseWriter, r *http.Request) error
+	AssignTerminal(w http.ResponseWriter, r *http.Request) error
+	UnassignTerminal(w http.ResponseWriter, r *http.Request) error
+	GetTerminalHealth(w http.ResponseWriter, r *http.Request) error
+	UpdateTerminalStatus(w http.ResponseWriter, r *http.Request) error
+	GetTerminalConfig(w http.ResponseWriter, r *http.Request) error
+	UpdateTerminalConfig(w http.ResponseWriter, r *http.Request) error
+}
+
+type terminalHandlerImpl struct {
+	grpcManager *grpc.ClientManager
+	log         logger.Logger
+}
+
+// NewTerminalHandler creates a new terminal handler
+func NewTerminalHandler(grpcManager *grpc.ClientManager, log logger.Logger) TerminalHandler {
+	return &terminalHandlerImpl{
+		grpcManager: grpcManager,
+		log:         log,
+	}
+}
+
+// RegisterTerminal handles terminal registration
+func (h *terminalHandlerImpl) RegisterTerminal(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		DeviceID       string `json:"device_id"`
+		Name           string `json:"name"`
+		Model          string `json:"model"`
+		SerialNumber   string `json:"serial_number"`
+		IMEI           string `json:"imei"`
+		AndroidVersion string `json:"android_version"`
+		Vendor         string `json:"vendor"`
+		PurchaseDate   string `json:"purchase_date"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &terminalpb.RegisterTerminalRequest{
+		DeviceId:       req.DeviceID,
+		Name:           req.Name,
+		Model:          req.Model,
+		SerialNumber:   req.SerialNumber,
+		Imei:           req.IMEI,
+		AndroidVersion: req.AndroidVersion,
+		Vendor:         req.Vendor,
+		PurchaseDate:   req.PurchaseDate,
+	}
+
+	resp, err := client.RegisterTerminal(ctx, grpcReq)
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to register terminal")
+	}
+
+	return response.Success(w, http.StatusCreated, "Terminal registered successfully", h.convertTerminal(resp.Terminal))
+}
+
+// GetTerminal retrieves a terminal by ID
+func (h *terminalHandlerImpl) GetTerminal(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetTerminal(ctx, &terminalpb.GetTerminalRequest{
+		TerminalId: terminalID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get terminal")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal retrieved successfully", h.convertTerminal(resp.Terminal))
+}
+
+// ListTerminals retrieves all terminals with pagination
+func (h *terminalHandlerImpl) ListTerminals(w http.ResponseWriter, r *http.Request) error {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.ListTerminals(ctx, &terminalpb.ListTerminalsRequest{
+		Page:     int32(page),
+		PageSize: int32(perPage),
+		Status:   r.URL.Query().Get("status"),
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to list terminals")
+	}
+
+	terminals := make([]interface{}, 0, len(resp.Terminals))
+	for _, t := range resp.Terminals {
+		terminals = append(terminals, h.convertTerminal(t))
+	}
+
+	return response.SuccessWithPagination(w, "Terminals retrieved successfully", terminals, page, perPage, int(resp.Total))
+}
+
+// UpdateTerminal updates terminal information
+func (h *terminalHandlerImpl) UpdateTerminal(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	var req struct {
+		Name           string `json:"name"`
+		Model          string `json:"model"`
+		AndroidVersion string `json:"android_version"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	grpcReq := &terminalpb.UpdateTerminalRequest{
+		TerminalId:     terminalID,
+		Name:           &req.Name,
+		Model:          &req.Model,
+		AndroidVersion: &req.AndroidVersion,
+	}
+
+	resp, err := client.UpdateTerminal(ctx, grpcReq)
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update terminal")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal updated successfully", h.convertTerminal(resp.Terminal))
+}
+
+// DeleteTerminal deletes a terminal
+func (h *terminalHandlerImpl) DeleteTerminal(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.DeleteTerminal(ctx, &terminalpb.DeleteTerminalRequest{
+		TerminalId: terminalID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to delete terminal")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal deleted successfully", nil)
+}
+
+// AssignTerminal assigns a terminal to a retailer
+func (h *terminalHandlerImpl) AssignTerminal(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	var req struct {
+		RetailerID string `json:"retailer_id"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	if req.RetailerID == "" {
+		return response.ValidationError(w, "Retailer ID is required", nil)
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.AssignTerminal(ctx, &terminalpb.AssignTerminalRequest{
+		TerminalId: terminalID,
+		RetailerId: req.RetailerID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to assign terminal")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal assigned successfully", map[string]interface{}{
+		"terminal_id":     terminalID,
+		"retailer_id":     req.RetailerID,
+		"assignment_date": resp.AssignmentDate,
+	})
+}
+
+// UnassignTerminal unassigns a terminal from a retailer
+func (h *terminalHandlerImpl) UnassignTerminal(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.UnassignTerminal(ctx, &terminalpb.UnassignTerminalRequest{
+		TerminalId: terminalID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to unassign terminal")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal unassigned successfully", nil)
+}
+
+// GetTerminalHealth retrieves terminal health status
+func (h *terminalHandlerImpl) GetTerminalHealth(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetTerminalHealth(ctx, &terminalpb.GetTerminalHealthRequest{
+		TerminalId: terminalID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get terminal health")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal health retrieved successfully", map[string]interface{}{
+		"terminal_id":       terminalID,
+		"status":            resp.Status,
+		"battery_level":     resp.BatteryLevel,
+		"signal_strength":   resp.SignalStrength,
+		"last_sync":         resp.LastSync,
+		"app_version":       resp.AppVersion,
+		"available_storage": resp.AvailableStorage,
+		"is_online":         resp.IsOnline,
+	})
+}
+
+// UpdateTerminalStatus updates terminal status
+func (h *terminalHandlerImpl) UpdateTerminalStatus(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	var req struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.UpdateTerminalStatus(ctx, &terminalpb.UpdateTerminalStatusRequest{
+		TerminalId: terminalID,
+		Status:     req.Status,
+		Reason:     req.Reason,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update terminal status")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal status updated successfully", h.convertTerminal(resp.Terminal))
+}
+
+// GetTerminalConfig retrieves terminal configuration
+func (h *terminalHandlerImpl) GetTerminalConfig(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetTerminalConfig(ctx, &terminalpb.GetTerminalConfigRequest{
+		TerminalId: terminalID,
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to get terminal configuration")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal configuration retrieved successfully", map[string]interface{}{
+		"terminal_id":  terminalID,
+		"config":       resp.Config,
+		"version":      resp.Version,
+		"last_updated": resp.LastUpdated,
+	})
+}
+
+// UpdateTerminalConfig updates terminal configuration
+func (h *terminalHandlerImpl) UpdateTerminalConfig(w http.ResponseWriter, r *http.Request) error {
+	terminalID := router.GetParam(r, "id")
+	if terminalID == "" {
+		return response.ValidationError(w, "Terminal ID is required", nil)
+	}
+
+	var req map[string]interface{}
+	if err := router.ReadJSON(r, &req); err != nil {
+		return response.ValidationError(w, "Invalid request body", map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	client, err := h.getTerminalClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Terminal")
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	_, err = client.UpdateTerminalConfig(ctx, &terminalpb.UpdateTerminalConfigRequest{
+		TerminalId: terminalID,
+		Config:     convertMapToString(req),
+	})
+	if err != nil {
+		return h.handleGRPCError(w, err, "Failed to update terminal configuration")
+	}
+
+	return response.Success(w, http.StatusOK, "Terminal configuration updated successfully", nil)
+}
+
+// Helper methods
+
+func (h *terminalHandlerImpl) getTerminalClient() (terminalpb.TerminalServiceClient, error) {
+	conn, err := h.grpcManager.GetConnection("terminal")
+	if err != nil {
+		h.log.Error("Failed to get terminal service connection", "error", err)
+		return nil, err
+	}
+	return terminalpb.NewTerminalServiceClient(conn), nil
+}
+
+func (h *terminalHandlerImpl) convertTerminal(t *terminalpb.Terminal) map[string]interface{} {
+	if t == nil {
+		return nil
+	}
+
+	result := map[string]interface{}{
+		"id":              t.Id,
+		"device_id":       t.DeviceId,
+		"name":            t.Name,
+		"model":           t.Model,
+		"serial_number":   t.SerialNumber,
+		"imei":            t.Imei,
+		"android_version": t.AndroidVersion,
+		"vendor":          t.Vendor,
+		"status":          t.Status,
+		"created_at":      t.CreatedAt,
+		"updated_at":      t.UpdatedAt,
+	}
+
+	if t.RetailerId != "" {
+		result["retailer_id"] = t.RetailerId
+		result["assignment_date"] = t.AssignmentDate
+	}
+
+	return result
+}
+
+func (h *terminalHandlerImpl) handleGRPCError(w http.ResponseWriter, err error, defaultMsg string) error {
+	st, ok := status.FromError(err)
+	if !ok {
+		h.log.Error(defaultMsg, "error", err)
+		return response.InternalError(w, defaultMsg)
+	}
+
+	switch st.Code() {
+	case codes.NotFound:
+		return response.NotFoundError(w, "Terminal")
+	case codes.InvalidArgument:
+		return response.ValidationError(w, st.Message(), nil)
+	case codes.AlreadyExists:
+		return response.ConflictError(w, st.Message())
+	case codes.PermissionDenied:
+		return response.ForbiddenError(w, st.Message())
+	case codes.Unauthenticated:
+		return response.UnauthorizedError(w, st.Message())
+	case codes.Unavailable:
+		return response.ServiceUnavailableError(w, "Terminal")
+	default:
+		h.log.Error(defaultMsg, "error", err, "code", st.Code())
+		return response.InternalError(w, defaultMsg)
+	}
+}
+
+func convertMapToString(m map[string]interface{}) string {
+	// Convert map to JSON string for config storage
+	// In a real implementation, you might want to handle this differently
+	result := ""
+	for k, v := range m {
+		result += k + "=" + v.(string) + ";"
+	}
+	return result
+}
