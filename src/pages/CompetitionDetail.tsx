@@ -168,9 +168,12 @@ const CompetitionDetail = () => {
   const issueTicket = async (token: string, totalAmount: number) => {
     if (!comp) return;
 
-    // For competition games without a schedule, use a placeholder schedule ID
-    // The ticket service will handle games that don't require a specific draw schedule
-    const effectiveScheduleId = scheduleId || `direct-${comp.id}`;
+    // Check if we have a valid schedule — if not, show a friendly message
+    if (!scheduleId) {
+      setErrorMsg("This competition isn't scheduled yet. Please check back soon or contact support.");
+      setStep("error");
+      return;
+    }
 
     try {
       const tickets: string[] = [];
@@ -180,7 +183,7 @@ const CompetitionDetail = () => {
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body: JSON.stringify({
             game_code: gameCode || comp.id,
-            game_schedule_id: effectiveScheduleId,
+            game_schedule_id: scheduleId,
             draw_number: drawNumber || 1,
             selected_numbers: [],
             bet_lines: [
@@ -199,8 +202,23 @@ const CompetitionDetail = () => {
         });
         const data = await res.json();
         if (!res.ok) {
-          const msg = data?.message || data?.error?.message || data?.error || "Ticket purchase failed";
-          throw new Error(msg);
+          const rawMsg = data?.message || data?.error?.message || data?.error || "Ticket purchase failed";
+          
+          // Friendly error messages
+          let friendlyMsg = rawMsg;
+          if (rawMsg.includes('cutoff') || rawMsg.includes('sales closed') || rawMsg.includes('too late')) {
+            friendlyMsg = "Oops! The draw is almost here and we're no longer accepting tickets. Try the next draw!";
+          } else if (rawMsg.includes('max tickets') || rawMsg.includes('limit reached') || rawMsg.includes('exceeded')) {
+            friendlyMsg = `You've reached the maximum of ${comp.maxTicketsPerPlayer || 'allowed'} tickets for this competition.`;
+          } else if (rawMsg.includes('sold out') || rawMsg.includes('no tickets available')) {
+            friendlyMsg = "This competition is sold out! Check out our other competitions.";
+          } else if (rawMsg.includes('insufficient') || rawMsg.includes('balance')) {
+            friendlyMsg = "Insufficient wallet balance. Please top up and try again.";
+          } else if (rawMsg.includes('schedule') || rawMsg.includes('not found')) {
+            friendlyMsg = "This competition isn't available right now. Please try another one.";
+          }
+          
+          throw new Error(friendlyMsg);
         }
         const serial = data?.data?.ticket?.serial_number || data?.ticket?.serial_number || `TKT-${Math.floor(10000000 + Math.random() * 89999999)}`;
         tickets.push(serial);
@@ -209,7 +227,7 @@ const CompetitionDetail = () => {
       setStep("success");
       setComp(prev => prev ? { ...prev, soldTickets: prev.soldTickets + qty } : prev);
     } catch (err: any) {
-      setErrorMsg(err.message || "Ticket issuance failed. Contact support with ref: " + (txRef || "N/A"));
+      setErrorMsg(err.message || "Something went wrong. Please try again or contact support.");
       setStep("error");
     }
   };
