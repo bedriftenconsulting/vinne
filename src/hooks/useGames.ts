@@ -40,9 +40,11 @@ function gameToCompetition(g: Game): Competition {
   // Price: base_price is in GHS (not pesewas), ticket_price fallback in pesewas
   const priceGHS = g.base_price ?? (g.ticket_price ? g.ticket_price / 100 : 20);
 
-  // Normalise logo URL — in dev, MinIO is proxied via Vite at /vinne-game-assets
+  // Normalise logo URL — replace internal MinIO host or localhost:port with relative path
   const rawImage = g.image_url || g.logo_url || '';
-  const image = rawImage.replace(/^https?:\/\/localhost:\d+\//, '/');
+  const image = rawImage
+    .replace(/^https?:\/\/minio:\d+\//, '/')
+    .replace(/^https?:\/\/localhost:\d+\//, '/');
 
   return {
     id: g.id,
@@ -86,11 +88,14 @@ export function useGames(): UseGamesResult {
   const fetchGames = () => {
     apiClient.getActiveGames()
       .then((games) => {
-        if (!games || games.length === 0) {
+        const activeGames = (games || []).filter(
+          g => g.status?.toUpperCase() === 'ACTIVE'
+        );
+        if (activeGames.length === 0) {
           setResult(prev => ({ ...prev, competitions: [], featured: null, loading: false, error: null, isReal: true }));
           return;
         }
-        const mapped = games.map(gameToCompetition);
+        const mapped = activeGames.map(gameToCompetition);
         const featured = pickFeatured(mapped);
         featured.featured = true;
         setResult({ competitions: mapped, featured, loading: false, error: null, isReal: true });
