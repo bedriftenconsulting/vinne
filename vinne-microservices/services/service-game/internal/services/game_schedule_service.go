@@ -502,41 +502,64 @@ func (s *gameScheduleService) GenerateWeeklySchedule(ctx context.Context, weekSt
 	return allSchedules, nil
 }
 
-// generateGameSchedulesForWeek generates schedules for a specific game within a week
+// generateGameSchedulesForWeek generates ONE schedule per game for the 7-day window.
+// Regardless of draw_frequency, every active game gets exactly one draw per week.
 func (s *gameScheduleService) generateGameSchedulesForWeek(ctx context.Context, game *models.Game, weekStart time.Time) ([]*models.GameSchedule, error) {
-	var schedules []*models.GameSchedule
+	weekEnd := weekStart.AddDate(0, 0, 7)
 
-	// Normalize frequency to lowercase for comparison
-	normalizedFrequency := models.DrawFrequency("")
-	switch game.DrawFrequency {
-	case "DAILY", "daily":
-		normalizedFrequency = models.DrawFrequencyDaily
-	case "WEEKLY", "weekly":
-		normalizedFrequency = models.DrawFrequencyWeekly
-	case "BI_WEEKLY", "bi_weekly":
-		normalizedFrequency = models.DrawFrequencyBiWeekly
-	case "MONTHLY", "monthly":
-		normalizedFrequency = models.DrawFrequencyMonthly
-	case "SPECIAL", "special":
-		normalizedFrequency = models.DrawFrequencySpecial
-	default:
-		return nil, fmt.Errorf("unsupported frequency: %s", game.DrawFrequency)
+	// Determine draw time — use the game's configured draw time on the last day of the window
+	// Default to Friday 20:00 if no draw time is set
+	drawDay := weekEnd.AddDate(0, 0, -1) // Saturday (last full day of the week)
+
+	// If the game has specific draw days, use the first one that falls in the week
+	if len(game.DrawDays) > 0 {
+		dayMap := map[string]time.Weekday{
+			"Sunday": time.Sunday, "Monday": time.Monday, "Tuesday": time.Tuesday,
+			"Wednesday": time.Wednesday, "Thursday": time.Thursday,
+			"Friday": time.Friday, "Saturday": time.Saturday,
+		}
+		for i := 0; i < 7; i++ {
+			candidate := weekStart.AddDate(0, 0, i)
+			for _, d := range game.DrawDays {
+				if wd, ok := dayMap[d]; ok && candidate.Weekday() == wd {
+					drawDay = candidate
+					goto foundDay
+				}
+			}
+		}
+	foundDay:
 	}
 
-	switch normalizedFrequency {
-	case models.DrawFrequencyDaily:
-		schedules = s.generateDailySchedules(game, weekStart)
-	case models.DrawFrequencyWeekly:
-		schedules = s.generateWeeklySchedules(game, weekStart)
-	case models.DrawFrequencyBiWeekly:
-		schedules = s.generateBiWeeklySchedules(game, weekStart)
-	case models.DrawFrequencyMonthly, models.DrawFrequencySpecial:
-		schedules = s.generateMonthlyOrSpecialSchedule(ctx, game, weekStart)
-	default:
-		return nil, fmt.Errorf("unsupported frequency: %s", game.DrawFrequency)
+	// Apply draw time (HH:MM)
+	var drawTime time.Time
+	if game.DrawTime != nil {
+		drawTime = time.Date(drawDay.Year(), drawDay.Month(), drawDay.Day(),
+			game.DrawTime.Hour(), game.DrawTime.Minute(), 0, 0, drawDay.Location())
+	} else {
+		drawTime = time.Date(drawDay.Year(), drawDay.Month(), drawDay.Day(), 20, 0, 0, 0, drawDay.Location())
 	}
 
-	return schedules, nil
+	salesStart := weekStart
+	salesEnd := drawTime.Add(-time.Duration(game.SalesCutoffMinutes) * time.Minute)
+
+	fmt.Printf("[GameScheduleService] 7-day schedule: game=%s, draw=%s, sales_end=%s\n",
+		game.Code, drawTime.Format("2006-01-02 15:04"), salesEnd.Format("2006-01-02 15:04"))
+
+	schedule := &models.GameSchedule{
+		GameID:         game.ID,
+		GameName:       &game.Name,
+		ScheduledStart: salesStart,
+		ScheduledEnd:   salesEnd,
+		ScheduledDraw:  drawTime,
+		Frequency:      models.DrawFrequencyWeekly,
+		IsActive:       true,
+		Status:         models.ScheduleStatusScheduled,
+		Notes:          &[]string{fmt.Sprintf("Weekly draw for %s", game.Name)}[0],
+		LogoURL:        game.LogoURL,
+		BrandColor:     game.BrandColor,
+	}
+
+	return []*models.GameSchedule{schedule}, nil
 }
 
 // generateDailySchedules creates daily schedules for a game
