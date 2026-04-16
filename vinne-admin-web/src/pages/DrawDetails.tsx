@@ -1049,8 +1049,15 @@ const DrawDetails: React.FC = () => {
       </div>
 
       {/* Draw Execution Flow for Scheduled and In-Progress Draws */}
-      {(getStatusString(draw.status) === 'scheduled' ||
-        getStatusString(draw.status) === 'in_progress') && (
+      {(getStatusString(draw.status) === 'in_progress' ||
+        (getStatusString(draw.status) === 'scheduled' &&
+          isPast(
+            draw.scheduled_time
+              ? protoTimestampToDate(draw.scheduled_time)
+              : draw.draw_date
+                ? new Date(draw.draw_date)
+                : new Date()
+          ))) && (
         <Card>
           <CardHeader>
             <CardTitle>Draw Execution</CardTitle>
