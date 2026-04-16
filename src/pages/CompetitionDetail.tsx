@@ -38,6 +38,7 @@ const CompetitionDetail = () => {
   const [txId, setTxId] = useState("");
   const [ticketNumbers, setTicketNumbers] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [ticketLimitMsg, setTicketLimitMsg] = useState("");
 
   // Load competition + schedule
   useEffect(() => {
@@ -222,7 +223,7 @@ const CompetitionDetail = () => {
           let friendlyMsg = rawMsg;
           if (rawMsg.includes('cutoff') || rawMsg.includes('sales closed') || rawMsg.includes('too late')) {
             friendlyMsg = "Oops! The draw is almost here and we're no longer accepting tickets. Try the next draw!";
-          } else if (rawMsg.includes('max tickets') || rawMsg.includes('limit reached') || rawMsg.includes('exceeded')) {
+          } else if (rawMsg.includes('max tickets') || rawMsg.includes('limit reached') || rawMsg.includes('exceeded') || rawMsg.includes('maximum tickets per player') || rawMsg.includes('FailedPrecondition')) {
             friendlyMsg = `You've reached the maximum of ${comp.maxTicketsPerPlayer || 'allowed'} tickets for this competition.`;
           } else if (rawMsg.includes('sold out') || rawMsg.includes('no tickets available')) {
             friendlyMsg = "This competition is sold out! Check out our other competitions.";
@@ -437,13 +438,13 @@ const CompetitionDetail = () => {
                   </div>
 
                   <div className="flex items-center justify-center gap-4 mb-1">
-                    <button onClick={() => setQty(Math.max(1, qty - 1))}
+                    <button onClick={() => { setQty(Math.max(1, qty - 1)); setTicketLimitMsg(""); }}
                       className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center hover:bg-border transition">
                       <Minus size={18} className="text-foreground" />
                     </button>
                     <span className="font-heading text-3xl text-foreground w-16 text-center">{qty}</span>
                     <button
-                      onClick={() => setQty(prev => comp.maxTicketsPerPlayer ? Math.min(prev + 1, comp.maxTicketsPerPlayer) : prev + 1)}
+                      onClick={() => { setQty(prev => comp.maxTicketsPerPlayer ? Math.min(prev + 1, comp.maxTicketsPerPlayer) : prev + 1); setTicketLimitMsg(""); }}
                       disabled={!!comp.maxTicketsPerPlayer && qty >= comp.maxTicketsPerPlayer}
                       className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center hover:bg-border transition disabled:opacity-40 disabled:cursor-not-allowed">
                       <Plus size={18} className="text-foreground" />
@@ -459,8 +460,33 @@ const CompetitionDetail = () => {
                     Total: <span className="text-primary font-bold text-lg">{comp.currency} {total}</span>
                   </div>
 
+                  {ticketLimitMsg && (
+                    <p className="text-xs text-destructive bg-destructive/10 p-2 rounded mb-3 text-center">{ticketLimitMsg}</p>
+                  )}
+
                   <button
-                    onClick={() => { if (!isAuthenticated) { navigate("/signin"); return; } setStep("momo"); }}
+                    onClick={async () => {
+                      if (!isAuthenticated) { navigate("/signin"); return; }
+                      setTicketLimitMsg("");
+                      // Pre-check: how many tickets does this player already have for this competition?
+                      if (comp.maxTicketsPerPlayer && user) {
+                        try {
+                          const existing = await apiClient.getMyTickets(user.id, { game_id: comp.id });
+                          const alreadyOwned = existing.length;
+                          if (alreadyOwned + qty > comp.maxTicketsPerPlayer) {
+                            const remaining = comp.maxTicketsPerPlayer - alreadyOwned;
+                            if (remaining <= 0) {
+                              setTicketLimitMsg(`You've already bought the maximum of ${comp.maxTicketsPerPlayer} ticket${comp.maxTicketsPerPlayer > 1 ? 's' : ''} for this competition.`);
+                            } else {
+                              setTicketLimitMsg(`You can only buy ${remaining} more ticket${remaining > 1 ? 's' : ''} (max ${comp.maxTicketsPerPlayer} per player). Reduce your quantity.`);
+                              setQty(remaining);
+                            }
+                            return;
+                          }
+                        } catch { /* if check fails, allow purchase to proceed */ }
+                      }
+                      setStep("momo");
+                    }}
                     className="w-full bg-primary text-primary-foreground font-heading text-lg py-4 rounded-lg btn-glow hover:brightness-110 transition flex items-center justify-center gap-2">
                     {isAuthenticated ? "BUY WITH MOBILE MONEY" : "SIGN IN TO BUY"}
                   </button>
