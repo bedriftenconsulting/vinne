@@ -502,64 +502,104 @@ func (s *gameScheduleService) GenerateWeeklySchedule(ctx context.Context, weekSt
 	return allSchedules, nil
 }
 
-// generateGameSchedulesForWeek generates ONE schedule per game for the 7-day window.
-// Regardless of draw_frequency, every active game gets exactly one draw per week.
+// generateGameSchedulesForWeek generates schedules for a specific game within the current 7-day window.
+// All frequencies are scoped to the current week only — no monthly calendar math, no look-ahead.
+// - daily:              7 draws, one per day
+// - weekly/bi_weekly:   1 draw on the configured draw day(s) that fall in the week
+// - monthly/special:    1 draw — use the configured draw day or default to Saturday
 func (s *gameScheduleService) generateGameSchedulesForWeek(ctx context.Context, game *models.Game, weekStart time.Time) ([]*models.GameSchedule, error) {
 	weekEnd := weekStart.AddDate(0, 0, 7)
+	_ = weekEnd // used implicitly via day iteration
 
-	// Determine draw time — use the game's configured draw time on the last day of the window
-	// Default to Friday 20:00 if no draw time is set
-	drawDay := weekEnd.AddDate(0, 0, -1) // Saturday (last full day of the week)
+	dayMap := map[string]time.Weekday{
+		"Sunday": time.Sunday, "Monday": time.Monday, "Tuesday": time.Tuesday,
+		"Wednesday": time.Wednesday, "Thursday": time.Thursday,
+		"Friday": time.Friday, "Saturday": time.Saturday,
+	}
 
-	// If the game has specific draw days, use the first one that falls in the week
-	if len(game.DrawDays) > 0 {
-		dayMap := map[string]time.Weekday{
-			"Sunday": time.Sunday, "Monday": time.Monday, "Tuesday": time.Tuesday,
-			"Wednesday": time.Wednesday, "Thursday": time.Thursday,
-			"Friday": time.Friday, "Saturday": time.Saturday,
+	// Helper: build a schedule entry for a given day
+	makeSchedule := func(day time.Time, freq models.DrawFrequency) *models.GameSchedule {
+		var drawTime time.Time
+		if game.DrawTime != nil {
+			drawTime = time.Date(day.Year(), day.Month(), day.Day(),
+				game.DrawTime.Hour(), game.DrawTime.Minute(), 0, 0, day.Location())
+		} else {
+			drawTime = time.Date(day.Year(), day.Month(), day.Day(), 20, 0, 0, 0, day.Location())
 		}
+		salesEnd := drawTime.Add(-time.Duration(game.SalesCutoffMinutes) * time.Minute)
+		note := fmt.Sprintf("%s draw for %s", string(freq), game.Name)
+		return &models.GameSchedule{
+			GameID:         game.ID,
+			GameName:       &game.Name,
+			ScheduledStart: weekStart,
+			ScheduledEnd:   salesEnd,
+			ScheduledDraw:  drawTime,
+			Frequency:      freq,
+			IsActive:       true,
+			Status:         models.ScheduleStatusScheduled,
+			Notes:          &note,
+			LogoURL:        game.LogoURL,
+			BrandColor:     game.BrandColor,
+		}
+	}
+
+	freq := game.DrawFrequency
+
+	switch freq {
+	case "DAILY", "daily":
+		// One draw per day for all 7 days of the week
+		var schedules []*models.GameSchedule
 		for i := 0; i < 7; i++ {
-			candidate := weekStart.AddDate(0, 0, i)
-			for _, d := range game.DrawDays {
-				if wd, ok := dayMap[d]; ok && candidate.Weekday() == wd {
-					drawDay = candidate
-					goto foundDay
+			day := weekStart.AddDate(0, 0, i)
+			schedules = append(schedules, makeSchedule(day, models.DrawFrequencyDaily))
+		}
+		fmt.Printf("[GameScheduleService] daily: game=%s, 7 draws\n", game.Code)
+		return schedules, nil
+
+	case "WEEKLY", "weekly", "BI_WEEKLY", "bi_weekly":
+		// One draw per configured draw day that falls in this week
+		var schedules []*models.GameSchedule
+		if len(game.DrawDays) == 0 {
+			// No draw days configured — default to Friday
+			for i := 0; i < 7; i++ {
+				day := weekStart.AddDate(0, 0, i)
+				if day.Weekday() == time.Friday {
+					schedules = append(schedules, makeSchedule(day, models.DrawFrequencyWeekly))
+					break
+				}
+			}
+		} else {
+			for i := 0; i < 7; i++ {
+				day := weekStart.AddDate(0, 0, i)
+				for _, d := range game.DrawDays {
+					if wd, ok := dayMap[d]; ok && day.Weekday() == wd {
+						schedules = append(schedules, makeSchedule(day, models.DrawFrequencyWeekly))
+					}
 				}
 			}
 		}
-	foundDay:
+		fmt.Printf("[GameScheduleService] weekly/bi-weekly: game=%s, %d draws\n", game.Code, len(schedules))
+		return schedules, nil
+
+	default:
+		// monthly, special, or anything else — one draw this week
+		// Use configured draw day if available, otherwise Saturday
+		drawDay := weekStart.AddDate(0, 0, 6) // default Saturday
+		if len(game.DrawDays) > 0 {
+			for i := 0; i < 7; i++ {
+				candidate := weekStart.AddDate(0, 0, i)
+				for _, d := range game.DrawDays {
+					if wd, ok := dayMap[d]; ok && candidate.Weekday() == wd {
+						drawDay = candidate
+						goto foundDay
+					}
+				}
+			}
+		foundDay:
+		}
+		fmt.Printf("[GameScheduleService] %s: game=%s, 1 draw on %s\n", freq, game.Code, drawDay.Format("2006-01-02"))
+		return []*models.GameSchedule{makeSchedule(drawDay, models.DrawFrequencyWeekly)}, nil
 	}
-
-	// Apply draw time (HH:MM)
-	var drawTime time.Time
-	if game.DrawTime != nil {
-		drawTime = time.Date(drawDay.Year(), drawDay.Month(), drawDay.Day(),
-			game.DrawTime.Hour(), game.DrawTime.Minute(), 0, 0, drawDay.Location())
-	} else {
-		drawTime = time.Date(drawDay.Year(), drawDay.Month(), drawDay.Day(), 20, 0, 0, 0, drawDay.Location())
-	}
-
-	salesStart := weekStart
-	salesEnd := drawTime.Add(-time.Duration(game.SalesCutoffMinutes) * time.Minute)
-
-	fmt.Printf("[GameScheduleService] 7-day schedule: game=%s, draw=%s, sales_end=%s\n",
-		game.Code, drawTime.Format("2006-01-02 15:04"), salesEnd.Format("2006-01-02 15:04"))
-
-	schedule := &models.GameSchedule{
-		GameID:         game.ID,
-		GameName:       &game.Name,
-		ScheduledStart: salesStart,
-		ScheduledEnd:   salesEnd,
-		ScheduledDraw:  drawTime,
-		Frequency:      models.DrawFrequencyWeekly,
-		IsActive:       true,
-		Status:         models.ScheduleStatusScheduled,
-		Notes:          &[]string{fmt.Sprintf("Weekly draw for %s", game.Name)}[0],
-		LogoURL:        game.LogoURL,
-		BrandColor:     game.BrandColor,
-	}
-
-	return []*models.GameSchedule{schedule}, nil
 }
 
 // generateDailySchedules creates daily schedules for a game
