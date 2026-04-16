@@ -86,8 +86,14 @@ export function useGames(): UseGamesResult {
   const [result, setResult] = useState<UseGamesResult>(EMPTY);
 
   const fetchGames = () => {
-    apiClient.getActiveGames()
-      .then((games) => {
+    const API_BASE = import.meta.env.PROD
+      ? (import.meta.env.VITE_API_URL as string) || 'https://api.winbigafrica.com'
+      : '';
+    Promise.all([
+      apiClient.getActiveGames(),
+      fetch(`${API_BASE}/api/v1/players/games/schedules/weekly`).then(r => r.json()).catch(() => null),
+    ])
+      .then(([games, scheduleData]) => {
         const activeGames = (games || []).filter(
           g => g.status?.toUpperCase() === 'ACTIVE'
         );
@@ -95,7 +101,22 @@ export function useGames(): UseGamesResult {
           setResult(prev => ({ ...prev, competitions: [], featured: null, loading: false, error: null, isReal: true }));
           return;
         }
-        const mapped = activeGames.map(gameToCompetition);
+
+        // Build a map of game_id → sold_tickets from the schedule response
+        const soldMap: Record<string, number> = {};
+        const schedules: any[] = scheduleData?.data?.schedules || [];
+        for (const s of schedules) {
+          if (s.game_id && typeof s.sold_tickets === 'number') {
+            // Use max in case there are multiple schedules for the same game this week
+            soldMap[s.game_id] = Math.max(soldMap[s.game_id] ?? 0, s.sold_tickets);
+          }
+        }
+
+        const mapped = activeGames.map(g => {
+          const comp = gameToCompetition(g);
+          if (soldMap[g.id] !== undefined) comp.soldTickets = soldMap[g.id];
+          return comp;
+        });
         const featured = pickFeatured(mapped);
         featured.featured = true;
         setResult({ competitions: mapped, featured, loading: false, error: null, isReal: true });
