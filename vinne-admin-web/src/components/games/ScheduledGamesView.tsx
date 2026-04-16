@@ -12,8 +12,9 @@ import {
   format,
   parseISO,
 } from 'date-fns'
-import { gameService, type GameSchedule } from '@/services/games'
+import { gameService, type GameSchedule, type Game } from '@/services/games'
 import { GenerateScheduleDialog } from './GenerateScheduleDialog'
+import { getPublicUrl } from '@/lib/utils'
 
 // Parse proto timestamp or ISO string
 function parseTs(ts: string | { seconds: number; nanos?: number } | undefined): Date | null {
@@ -57,16 +58,31 @@ export function ScheduledGamesView({ onEditSchedule }: ScheduledGamesViewProps) 
     queryFn: () => gameService.getWeeklySchedule(format(weekStart, 'yyyy-MM-dd')),
   })
 
+  const { data: gamesData } = useQuery({
+    queryKey: ['games-list'],
+    queryFn: () => gameService.getGames(1, 1000),
+  })
+
+  const suspendedGameIds = useMemo(() => {
+    const games: Game[] = gamesData?.data || []
+    return new Set(
+      games
+        .filter(g => g.status?.toUpperCase() === 'SUSPENDED')
+        .map(g => g.id)
+    )
+  }, [gamesData])
+
   const filtered = useMemo(() => {
-    if (!searchTerm.trim()) return schedules
+    const nonSuspended = schedules.filter((s: GameSchedule) => !suspendedGameIds.has(s.game_id))
+    if (!searchTerm.trim()) return nonSuspended
     const lower = searchTerm.toLowerCase()
-    return schedules.filter((s: GameSchedule) =>
+    return nonSuspended.filter((s: GameSchedule) =>
       s.game_name?.toLowerCase().includes(lower) ||
       s.game_id?.toLowerCase().includes(lower) ||
       s.notes?.toLowerCase().includes(lower) ||
       s.game_code?.toLowerCase().includes(lower)
     )
-  }, [schedules, searchTerm])
+  }, [schedules, searchTerm, suspendedGameIds])
 
   // Sort by scheduled_draw ascending
   const sorted = useMemo(() =>
@@ -170,6 +186,19 @@ export function ScheduledGamesView({ onEditSchedule }: ScheduledGamesViewProps) 
                 {/* Top row: name + status + next draw + edit */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    {getPublicUrl(schedule.logo_url) ? (
+                      <img
+                        src={getPublicUrl(schedule.logo_url)}
+                        alt={schedule.game_name}
+                        className="h-7 w-7 rounded object-contain shrink-0 border border-border"
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                      />
+                    ) : schedule.brand_color ? (
+                      <div
+                        className="h-7 w-7 rounded shrink-0 border border-border"
+                        style={{ backgroundColor: schedule.brand_color }}
+                      />
+                    ) : null}
                     <span className="text-sm font-bold text-foreground truncate">
                       {schedule.game_name || schedule.game_code || schedule.game_id?.slice(0, 8)}
                     </span>

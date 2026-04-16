@@ -14,6 +14,7 @@ import { ColorPicker } from '@/components/ui/color-picker'
 import { gameService, type Game } from '@/services/games'
 import { useToast } from '@/hooks/use-toast'
 import { Upload, X, Loader2, Palette } from 'lucide-react'
+import { getPublicUrl } from '@/lib/utils'
 
 interface GameBrandingDialogProps {
   isOpen: boolean
@@ -34,7 +35,7 @@ export function GameBrandingDialog({ isOpen, onClose, game }: GameBrandingDialog
   useEffect(() => {
     if (game && isOpen) {
       setBrandColor(game.brand_color || '')
-      setLogoPreview(game.logo_url || null)
+      setLogoPreview(getPublicUrl(game.logo_url) || null)
       setLogoFile(null)
     }
   }, [game, isOpen])
@@ -130,7 +131,7 @@ export function GameBrandingDialog({ isOpen, onClose, game }: GameBrandingDialog
 
   const handleRemoveLogo = () => {
     setLogoFile(null)
-    setLogoPreview(game?.logo_url || null)
+    setLogoPreview(getPublicUrl(game?.logo_url) || null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }

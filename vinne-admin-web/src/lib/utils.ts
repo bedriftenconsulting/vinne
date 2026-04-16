@@ -45,6 +45,18 @@ export function getErrorMessage(error: unknown): string {
   return 'An unexpected error occurred'
 }
 
+/**
+ * Converts internal MinIO storage URLs to browser-accessible public URLs.
+ * In Docker dev, MinIO runs as 'minio' (internal hostname) but is accessible
+ * via localhost:9000 from the browser.
+ */
+export function getPublicUrl(url: string | undefined | null): string | undefined {
+  if (!url) return undefined
+  return url
+    .replace(/https?:\/\/minio:\d+/g, 'http://localhost:9000')
+    .replace(/https?:\/\/minio\//g, 'http://localhost:9000/')
+}
+
 export function formatCurrency(amount: number): string {
   // Convert from pesewas to GHS and format
   const ghs = amount / 100
