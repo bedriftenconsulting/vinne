@@ -135,11 +135,18 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
     return g.status?.toLowerCase() === 'active'
   })
 
-  // Build preview: each active game + its draws across the whole month
-  const preview = activeGames.map((game: Game) => ({
-    game,
-    draws: getDrawDatesForGame(game, selectedMonth),
-  })).filter(({ draws }) => draws.length > 0)
+  // Build preview: each active game + its draws for the CURRENT WEEK only
+  const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 0 })
+  const currentWeekEnd = addDays(currentWeekStart, 6)
+  
+  const preview = activeGames.map((game: Game) => {
+    const allDraws = getDrawDatesForGame(game, selectedMonth)
+    // Filter to only draws that fall in the current week
+    const currentWeekDraws = allDraws.filter(d => 
+      d.date >= currentWeekStart && d.date <= currentWeekEnd
+    )
+    return { game, draws: currentWeekDraws }
+  }).filter(({ draws }) => draws.length > 0)
 
   const generateMutation = useMutation({
     mutationFn: async () => {
@@ -167,9 +174,9 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Generate Schedule — {monthLabel}</DialogTitle>
+          <DialogTitle>Generate Schedule — Current Week</DialogTitle>
           <DialogDescription>
-            Schedules draws for all active competitions in {monthLabel} based on each competition's own settings.
+            Creates draw schedules for all active competitions for the current week (Sunday–Saturday).
           </DialogDescription>
         </DialogHeader>
 
