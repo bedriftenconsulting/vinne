@@ -35,7 +35,7 @@ This is a **lottery management platform** composed of three main parts:
 | **Admin Web Portal** | `vinne-admin-web/` | React 19, TypeScript, Vite, TanStack | Internal dashboard for admins |
 | **Player Website** | `/` (root) | React 18, TypeScript, Vite | Public-facing competition site |
 
-All three live in the same monorepo at `https://github.com/bedriftenconsulting/vinne.git`.
+All three live in the same monorepo at `https://github.com/winbigafrica/vinne.git`.
 
 ---
 
@@ -143,7 +143,7 @@ npm --version
 ## 5. Clone the Repository
 
 ```bash
-git clone https://github.com/bedriftenconsulting/vinne.git
+git clone https://github.com/winbigafrica/vinne.git
 cd vinne
 ```
 
