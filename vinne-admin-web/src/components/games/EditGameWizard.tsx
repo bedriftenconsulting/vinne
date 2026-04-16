@@ -54,7 +54,7 @@ const steps = [
 ]
 
 const fieldsPerStep: Record<number, (keyof EditFormData)[]> = {
-  1: ['name', 'status'],
+  1: ['name'],
   2: ['draw_frequency', 'base_price', 'total_tickets', 'max_tickets_per_player'],
   3: [],
   4: [],
@@ -202,20 +202,6 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
                   </FormItem>
                 )} />
 
-                <FormField control={form.control} name="status" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Status</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        <SelectItem value="Draft">Draft</SelectItem>
-                        <SelectItem value="Active">Active</SelectItem>
-                        <SelectItem value="Suspended">Suspended</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )} />
               </div>
             )}
 
@@ -369,7 +355,6 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
                 <div className="rounded-lg border divide-y text-sm">
                   {[
                     { label: 'Name',          value: form.watch('name') },
-                    { label: 'Status',        value: form.watch('status') },
                     { label: 'Frequency',     value: form.watch('draw_frequency')?.replace('_', '-') },
                     { label: 'Draw Time',     value: form.watch('draw_time') },
                     ...(showDrawDay ? [{ label: 'Draw Day', value: form.watch('draw_day') }] : []),

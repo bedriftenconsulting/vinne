@@ -1280,11 +1280,11 @@ func (h *gameHandler) GetScheduleByID(w http.ResponseWriter, r *http.Request) er
 func (h *gameHandler) GetActiveGames(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
 
-	// Only fetch active games for retailers
+	// Only fetch active games for players
 	req := &gamepb.ListGamesRequest{
 		Page:         1,
-		PerPage:      100, // Get all active games
-		StatusFilter: "Active",
+		PerPage:      100,
+		StatusFilter: "ACTIVE",
 	}
 
 	client, err := h.grpcManager.GameServiceClient()
