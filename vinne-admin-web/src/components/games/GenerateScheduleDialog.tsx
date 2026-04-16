@@ -195,7 +195,7 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
           ) : (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Schedule Preview — {monthLabel}
+                Schedule Preview — Current Week ({format(currentWeekStart, 'MMM d')}–{format(currentWeekEnd, 'MMM d')})
               </p>
               {preview.map(({ game, draws }) => (
                 <div key={game.id} className="space-y-1.5">
