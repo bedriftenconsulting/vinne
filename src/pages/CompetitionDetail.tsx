@@ -49,8 +49,15 @@ const CompetitionDetail = () => {
       .then(r => r.json())
       .then(data => {
         const schedules: any[] = data?.data?.schedules || [];
-        const next = schedules.find((s: any) => s.game_id === id && s.status === "SCHEDULED");
-        if (next) { setScheduleId(next.id); setGameCode(next.game_code || ""); setDrawNumber(next.draw_number || 1); }
+        // Find the next scheduled instance for this game
+        const next = schedules.find((s: any) =>
+          s.game_id === id && (s.status === "SCHEDULED" || s.status === "IN_PROGRESS")
+        );
+        if (next) {
+          setScheduleId(next.id);
+          setGameCode(next.game_code || "");
+          setDrawNumber(next.draw_number || 1);
+        }
       }).catch(() => {});
 
     if (!found && !gamesLoading) {
