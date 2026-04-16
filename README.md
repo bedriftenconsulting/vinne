@@ -18,7 +18,6 @@ This monorepo contains three main components:
 - **Draw Engine** — Automated draw execution with provably fair RNG
 - **Ticket System** — Secure ticket generation, validation, and tracking
 - **Payment Integration** — MTN MoMo, Telecel, AirtelTigo mobile money support
-- **Wallet System** — Agent/retailer wallet management with commission tracking
 - **Multi-channel Notifications** — SMS (Hubtel), Email (Mailgun), Push notifications
 - **Admin Portal** — Full-featured dashboard for game, draw, player, and agent management
 - **Player Portal** — Mobile-first competition browsing, ticket purchase, and results
