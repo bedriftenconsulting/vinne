@@ -170,7 +170,7 @@ func (s *authService) RefreshToken(ctx context.Context, refreshToken string) (*m
 
 func (s *authService) RevokeToken(ctx context.Context, refreshToken string) error {
 	session, err := s.sessionRepo.GetByRefreshToken(ctx, refreshToken)
-	if err != nil {
+	if err != nil || session == nil {
 		return fmt.Errorf("invalid refresh token")
 	}
 
