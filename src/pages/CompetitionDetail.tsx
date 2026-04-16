@@ -113,7 +113,21 @@ const CompetitionDetail = () => {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || data?.message || "Payment initiation failed");
+      if (!res.ok) {
+        const rawMsg = data?.error?.message || data?.message || "Payment initiation failed";
+        
+        // Friendly error messages
+        let friendlyMsg = rawMsg;
+        if (rawMsg.includes('insufficient') || rawMsg.includes('balance')) {
+          friendlyMsg = "Insufficient wallet balance. Please top up and try again.";
+        } else if (rawMsg.includes('invalid phone') || rawMsg.includes('phone number')) {
+          friendlyMsg = "Invalid phone number. Please check and try again.";
+        } else if (rawMsg.includes('network') || rawMsg.includes('provider')) {
+          friendlyMsg = "Mobile money service unavailable. Please try again in a moment.";
+        }
+        
+        throw new Error(friendlyMsg);
+      }
 
       setTxRef(data.reference || "");
       setTxId(data.transaction_id || "");

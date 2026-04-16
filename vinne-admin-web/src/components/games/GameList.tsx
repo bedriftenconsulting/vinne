@@ -405,7 +405,7 @@ export function GameList({
                             </Button>
                           </>
                         )}
-                        {game.status.toUpperCase() === 'APPROVED' && (
+                        {(game.status.toUpperCase() === 'DRAFT' || game.status.toUpperCase() === 'APPROVED') && (
                           <Button
                             variant="ghost"
                             size="icon"
