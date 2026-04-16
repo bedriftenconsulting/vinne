@@ -274,6 +274,8 @@ const CompetitionDetail = () => {
 
   const pct = comp.totalTickets > 0 ? Math.round((comp.soldTickets / comp.totalTickets) * 100) : 0;
   const total = (qty * comp.ticketPrice).toFixed(2);
+  const isSoldOut = pct >= 100;
+  const isAlmostClosed = hours === 0 && minutes < 30; // Less than 30 min left
 
   return (
     <div className="min-h-screen bg-background">
