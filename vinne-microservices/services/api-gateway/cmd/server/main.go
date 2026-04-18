@@ -561,6 +561,11 @@ func setupRoutes(r *router.Router, grpcManager *grpc.ClientManager, jwtService j
 	r.POST("/api/v1/webhooks/mtn", webhookHandler.HandleMTNWebhook)
 	r.POST("/api/v1/webhooks/telecel", webhookHandler.HandleTelecelWebhook)
 
+	// USSD callback - no JWT authentication (called by mNotify)
+	ussdHandler := handlers.NewUSSDHandler(grpcManager, log)
+	r.POST("/api/v1/ussd/callback", ussdHandler.HandleCallback)
+	r.POST("/ussd/callback", ussdHandler.HandleCallback) // also handle root path for USSD
+
 	// Retailer auth handler
 	retailerAuth := handlers.NewRetailerAuthHandler(grpcManager, log, jwtService, cfg)
 
