@@ -134,6 +134,13 @@ type Game struct {
 	// Branding
 	LogoUrl       string `protobuf:"bytes,29,opt,name=logo_url,json=logoUrl,proto3" json:"logo_url,omitempty"`          // URL to the game logo/image
 	BrandColor    string `protobuf:"bytes,30,opt,name=brand_color,json=brandColor,proto3" json:"brand_color,omitempty"` // Brand color in HEX format (e.g., #FF5733)
+	// Competition dates
+	StartDate     string `protobuf:"bytes,31,opt,name=start_date,json=startDate,proto3" json:"start_date,omitempty"` // Competition start date (YYYY-MM-DD)
+	EndDate       string `protobuf:"bytes,32,opt,name=end_date,json=endDate,proto3" json:"end_date,omitempty"`       // Competition end date / draw date (YYYY-MM-DD)
+	// Prize and rules
+	PrizeDetails  string `protobuf:"bytes,33,opt,name=prize_details,json=prizeDetails,proto3" json:"prize_details,omitempty"` // Prize description
+	Rules         string `protobuf:"bytes,34,opt,name=rules,proto3" json:"rules,omitempty"`                                   // Game rules
+	TotalTickets  int32  `protobuf:"varint,35,opt,name=total_tickets,json=totalTickets,proto3" json:"total_tickets,omitempty"` // Total tickets available
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -383,6 +390,41 @@ func (x *Game) GetBrandColor() string {
 		return x.BrandColor
 	}
 	return ""
+}
+
+func (x *Game) GetStartDate() string {
+	if x != nil {
+		return x.StartDate
+	}
+	return ""
+}
+
+func (x *Game) GetEndDate() string {
+	if x != nil {
+		return x.EndDate
+	}
+	return ""
+}
+
+func (x *Game) GetPrizeDetails() string {
+	if x != nil {
+		return x.PrizeDetails
+	}
+	return ""
+}
+
+func (x *Game) GetRules() string {
+	if x != nil {
+		return x.Rules
+	}
+	return ""
+}
+
+func (x *Game) GetTotalTickets() int32 {
+	if x != nil {
+		return x.TotalTickets
+	}
+	return 0
 }
 
 type GameRules struct {
