@@ -42,6 +42,8 @@ func convertGameToProto(game *models.Game) *pb.Game {
 		Version:             game.Version,
 		LogoUrl:             convertStringPtrToProto(game.LogoURL),
 		BrandColor:          convertStringPtrToProto(game.BrandColor),
+		StartDate:           convertStringPtrToProto(game.StartDate),
+		EndDate:             convertStringPtrToProto(game.EndDate),
 		CreatedAt:           timestamppb.New(game.CreatedAt),
 		UpdatedAt:           timestamppb.New(game.UpdatedAt),
 	}
