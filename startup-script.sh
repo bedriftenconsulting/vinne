@@ -60,6 +60,14 @@ docker run -d \
   -e SERVICES_NOTIFICATION_PORT=51063 \
   -e SERVICES_PLAYER_HOST=service-player \
   -e SERVICES_PLAYER_PORT=51064 \
+  -e STORAGE_PROVIDER=spaces \
+  -e STORAGE_ENDPOINT=http://minio:9000 \
+  -e STORAGE_REGION=us-east-1 \
+  -e STORAGE_BUCKET=vinne-game-assets \
+  -e STORAGE_ACCESS_KEY_ID=minioadmin \
+  -e STORAGE_SECRET_ACCESS_KEY=minioadmin \
+  -e STORAGE_CDN_ENDPOINT=http://34.121.254.209:9000/vinne-game-assets \
+  -e STORAGE_FORCE_PATH_STYLE=true \
   vinne-microservices_api-gateway:latest
 
 echo "Startup complete" >> /var/log/vinne-startup.log
