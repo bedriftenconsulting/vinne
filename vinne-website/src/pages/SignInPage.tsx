@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import PhoneInput from "@/components/PhoneInput";
 import { toast } from "@/hooks/use-toast";
 import { API_BASE } from "@/lib/config";
 
@@ -71,8 +72,12 @@ const SignInPage = () => {
           <form onSubmit={handleSubmit} className="bg-card rounded-2xl p-8 space-y-5 border border-border shadow-lg">
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-foreground">Phone Number</label>
-              <input type="tel" placeholder="e.g. 0244123456" value={form.phone}
-                onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} required className={inputCls} />
+              <PhoneInput
+                value={form.phone}
+                onChange={v => setForm(f => ({ ...f, phone: v }))}
+                required
+                placeholder="244 123 456"
+              />
             </div>
 
             <div className="space-y-1.5">

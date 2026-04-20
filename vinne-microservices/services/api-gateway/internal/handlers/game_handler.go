@@ -824,6 +824,9 @@ func (h *gameHandler) GetGameSchedule(w http.ResponseWriter, r *http.Request) er
 		schedules = []*gamepb.GameSchedule{}
 	}
 
+	// Get ticket client to fetch sold counts per schedule
+	ticketClient, ticketErr := h.grpcManager.TicketServiceClient()
+
 	// Transform protobuf schedules to proper JSON objects
 	transformedSchedules := make([]map[string]interface{}, 0, len(schedules))
 	for _, schedule := range schedules {
@@ -843,6 +846,20 @@ func (h *gameHandler) GetGameSchedule(w http.ResponseWriter, r *http.Request) er
 			"draw_result_id":  schedule.DrawResultId,
 			"logo_url":        schedule.LogoUrl,
 			"brand_color":     schedule.BrandColor,
+			"tickets_sold":    int64(0),
+		}
+
+		// Fetch tickets sold count for this schedule
+		if ticketErr == nil && schedule.Id != "" {
+			scheduleID := schedule.Id
+			ticketResp, err := ticketClient.ListTickets(ctx, &ticketpb.ListTicketsRequest{
+				Filter:   &ticketpb.TicketFilter{GameScheduleId: scheduleID},
+				Page:     1,
+				PageSize: 1,
+			})
+			if err == nil {
+				scheduleMap["tickets_sold"] = ticketResp.Total
+			}
 		}
 
 		// Handle timestamps properly

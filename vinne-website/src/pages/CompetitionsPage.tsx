@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Link } from "react-router-dom";
-import { Trophy, Clock, Loader2 } from "lucide-react";
+import { Trophy, Clock, Loader2, Users } from "lucide-react";
 import { fetchActiveGames, type ApiGame } from "@/lib/api";
 import { useCountdown } from "@/hooks/useCountdown";
+
+const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 
 const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
   const drawDate = game.draw_date
@@ -18,6 +20,19 @@ const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
         return next;
       })();
   const { days, hours, minutes, seconds } = useCountdown(drawDate);
+  const [ticketsSold, setTicketsSold] = useState<number>(0);
+
+  useEffect(() => {
+    fetch(`${BASE}/players/games/${game.id}/schedule`)
+      .then(r => r.json())
+      .then(d => {
+        const schedules = d?.data?.schedules ?? [];
+        const active = schedules.find((s: { status: string; is_active: boolean }) => s.status === "SCHEDULED" && s.is_active) ?? schedules[0];
+        if (active?.tickets_sold != null) setTicketsSold(active.tickets_sold);
+        else if (active?.total_tickets_sold != null) setTicketsSold(active.total_tickets_sold);
+      })
+      .catch(() => {});
+  }, [game.id]);
 
   const timeLabel = days > 0
     ? `${days}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`
@@ -28,6 +43,10 @@ const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
     const prizes = JSON.parse(game.prize_details || "[]");
     if (prizes[0]?.description) prizeLabel = prizes[0].description;
   } catch { /* ignore */ }
+
+  const totalTickets = game.total_tickets || 1000;
+  const pct = totalTickets > 0 ? Math.min(100, Math.round((ticketsSold / totalTickets) * 100)) : 0;
+  const isFilling = pct >= 75;
 
   return (
     <Link
@@ -56,7 +75,26 @@ const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
           <span className="w-8 h-8 rounded-full bg-[hsl(22_100%_52%)] flex items-center justify-center text-white font-bold text-lg shadow">+</span>
         </div>
 
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+        {/* Ticket progress bar */}
+        <div className="mt-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="flex items-center gap-1 text-xs text-gray-500">
+              <Users size={10} />
+              {ticketsSold.toLocaleString()} / {totalTickets.toLocaleString()} tickets
+            </span>
+            <span className={`text-xs font-bold ${isFilling ? "text-orange-500" : "text-gray-400"}`}>
+              {pct}% sold
+            </span>
+          </div>
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${isFilling ? "bg-orange-500" : "bg-[hsl(22_100%_52%)]"}`}
+              style={{ width: `${Math.max(pct, 3)}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <Clock size={11} />
           {game.draw_date
             ? `Draw: ${new Date(game.draw_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`

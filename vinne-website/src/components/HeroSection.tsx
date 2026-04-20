@@ -115,7 +115,7 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
                 <div className="inline-flex items-center gap-2 bg-primary/20 border border-primary/40 rounded-full px-4 py-1.5">
                   <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                   <span className="font-heading text-primary text-sm tracking-wide">
-                    {days} DAY{days !== 1 ? "S" : ""} LEFT — ENDING {days <= 3 ? "SOON!" : `${new Date(drawDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase()}`}
+                    {days} {days === 1 ? "DAY" : "DAYS"} LEFT — ENDING {days <= 3 ? "SOON!" : new Date(drawDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase()}
                   </span>
                 </div>
                 <div className="flex items-center justify-center md:justify-start gap-1">

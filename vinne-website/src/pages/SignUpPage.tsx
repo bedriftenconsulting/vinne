@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import PhoneInput from "@/components/PhoneInput";
 import { toast } from "@/hooks/use-toast";
 import { API_BASE } from "@/lib/config";
 
@@ -23,10 +24,14 @@ function friendlyError(raw: string): string {
 
 const SignUpPage = () => {
   const navigate = useNavigate();
-  const [form, setForm] = useState({ phone: "", password: "", confirm: "" });
-  const [showPwd, setShowPwd] = useState(false);
+  const [form, setForm] = useState({
+    full_name: "", email: "", phone: "", password: "", confirm: "",
+  });  const [showPwd, setShowPwd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm(f => ({ ...f, [k]: e.target.value }));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,10 +45,23 @@ const SignUpPage = () => {
     }
     setLoading(true);
     try {
+      // Split full name into first/last
+      const parts = form.full_name.trim().split(" ");
+      const first_name = parts[0] || "";
+      const last_name = parts.slice(1).join(" ") || "";
+
       const res = await fetch(`${API_BASE}/players/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone_number: form.phone, password: form.password, channel: "web", terms_accepted: true }),
+        body: JSON.stringify({
+          phone_number: form.phone,
+          password: form.password,
+          channel: "web",
+          terms_accepted: true,
+          first_name,
+          last_name,
+          email: form.email,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || data.message || "Registration failed");
@@ -51,10 +69,35 @@ const SignUpPage = () => {
         toast({ title: "Verify your number", description: "An OTP has been sent to your phone." });
         return;
       }
-      if (data.access_token) localStorage.setItem("player_token", data.access_token);
-      if (data.profile?.id) localStorage.setItem("player_id", data.profile.id);
-      toast({ title: "Account created! 🎉", description: "Welcome to WinBig Africa." });
-      navigate("/");
+
+      // If we got a token directly, store it and go home
+      if (data.access_token) {
+        localStorage.setItem("player_token", data.access_token);
+        if (data.profile?.id) localStorage.setItem("player_id", data.profile.id);
+        toast({ title: "Account created! 🎉", description: "Welcome to WinBig Africa." });
+        window.dispatchEvent(new Event("storage"));
+        navigate("/");
+        return;
+      }
+
+      // Otherwise auto-login with the credentials they just used
+      const loginRes = await fetch(`${API_BASE}/players/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone_number: form.phone, password: form.password, channel: "web" }),
+      });
+      const loginData = await loginRes.json();
+      if (loginData.access_token) {
+        localStorage.setItem("player_token", loginData.access_token);
+        if (loginData.profile?.id) localStorage.setItem("player_id", loginData.profile.id);
+        toast({ title: "Account created! 🎉", description: "Welcome to WinBig Africa." });
+        window.dispatchEvent(new Event("storage"));
+        navigate("/");
+      } else {
+        // Registration worked but auto-login failed — send to sign-in
+        toast({ title: "Account created!", description: "Please sign in to continue." });
+        navigate("/sign-in");
+      }
     } catch (err: unknown) {
       toast({ title: "Sign up failed", description: friendlyError((err as Error).message), variant: "destructive" });
     } finally {
@@ -73,23 +116,34 @@ const SignUpPage = () => {
           <p className="text-muted-foreground text-center mb-8 text-sm">Join WinBig Africa and start winning today</p>
 
           <form onSubmit={handleSubmit} className="bg-card rounded-2xl p-8 space-y-5 border border-border shadow-lg">
+
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-foreground">Full Name</label>
+              <input type="text" placeholder="e.g. Kwame Mensah" value={form.full_name}
+                onChange={set("full_name")} required className={inputCls} />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-foreground">Email Address</label>
+              <input type="email" placeholder="e.g. kwame@gmail.com" value={form.email}
+                onChange={set("email")} required className={inputCls} />
+            </div>
+
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-foreground">Phone Number</label>
-              <input type="tel" placeholder="e.g. 0244123456" value={form.phone}
-                onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} required className={inputCls} />
+              <PhoneInput
+                value={form.phone}
+                onChange={v => setForm(f => ({ ...f, phone: v }))}
+                required
+                placeholder="244 123 456"
+              />
             </div>
 
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-foreground">Password</label>
               <div className="relative">
-                <input
-                  type={showPwd ? "text" : "password"}
-                  placeholder="At least 6 characters"
-                  value={form.password}
-                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  required
-                  className={`${inputCls} pr-11`}
-                />
+                <input type={showPwd ? "text" : "password"} placeholder="At least 6 characters"
+                  value={form.password} onChange={set("password")} required className={`${inputCls} pr-11`} />
                 <button type="button" onClick={() => setShowPwd(v => !v)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition">
                   {showPwd ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -100,14 +154,8 @@ const SignUpPage = () => {
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-foreground">Confirm Password</label>
               <div className="relative">
-                <input
-                  type={showConfirm ? "text" : "password"}
-                  placeholder="Repeat your password"
-                  value={form.confirm}
-                  onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))}
-                  required
-                  className={`${inputCls} pr-11`}
-                />
+                <input type={showConfirm ? "text" : "password"} placeholder="Repeat your password"
+                  value={form.confirm} onChange={set("confirm")} required className={`${inputCls} pr-11`} />
                 <button type="button" onClick={() => setShowConfirm(v => !v)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition">
                   {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}

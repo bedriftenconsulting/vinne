@@ -2,6 +2,8 @@ import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+
+const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 import {
   Ticket, Trophy, Clock, CheckCircle, XCircle, AlertCircle,
   X, Calendar, Hash, Search, ArrowDownUp, CreditCard, RefreshCw,
@@ -281,7 +283,7 @@ const MyTicketsPage = () => {
 
   useEffect(() => {
     if (!token || !resolvedPlayerId) { navigate("/sign-in"); return; }
-    fetch(`/api/v1/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
+    fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.json())
@@ -297,7 +299,7 @@ const MyTicketsPage = () => {
     if (tab !== "transactions" || !token || !resolvedPlayerId) return;
     setTxLoading(true);
     // Use tickets as purchase evidence — payment service is unreliable in test mode
-    fetch(`/api/v1/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
+    fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.json())
