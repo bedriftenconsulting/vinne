@@ -12,7 +12,7 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://34.121.254.209:4000',
+        target: 'http://localhost:4000',
         changeOrigin: true,
         secure: false,
       },

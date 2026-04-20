@@ -67,9 +67,30 @@ const CompetitionDetail = () => {
 
     if (!found && !gamesLoading) {
       apiClient.getGame(id).then(g => {
-        const endsAt = g.end_date ? new Date(g.end_date)
-          : g.draw_date ? new Date(g.draw_date)
-          : new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const isSpecial = g.draw_frequency === 'special' || g.draw_frequency === 'SPECIAL';
+        let endsAt: Date;
+        if (isSpecial) {
+          if (g.end_date) {
+            const dateStr = g.end_date.split('T')[0];
+            const timeMatch = g.draw_time?.match(/(\d{1,2}):(\d{2})/);
+            if (timeMatch) {
+              const hh = timeMatch[1].padStart(2, '0');
+              const mm = timeMatch[2];
+              endsAt = new Date(`${dateStr}T${hh}:${mm}:00`);
+            } else {
+              const [y, mo, d] = dateStr.split('-').map(Number);
+              endsAt = new Date(y, mo - 1, d, 20, 0, 0);
+            }
+          } else if (g.draw_date) {
+            endsAt = new Date(g.draw_date);
+          } else {
+            endsAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+          }
+        } else {
+          endsAt = g.end_date ? new Date(g.end_date)
+            : g.draw_date ? new Date(g.draw_date)
+            : new Date(Date.now() + 24 * 60 * 60 * 1000);
+        }
         setComp({ id: g.id, title: g.name, image: (g.image_url || g.logo_url || '').replace(/^https?:\/\/localhost:\d+\//, '/'),
           ticketPrice: g.base_price ?? 20, currency: g.currency || "GHS",
           totalTickets: g.total_tickets ?? 1000, soldTickets: g.sold_tickets ?? 0,

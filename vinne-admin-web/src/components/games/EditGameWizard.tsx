@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
@@ -17,8 +17,8 @@ import {
 } from '@/components/ui/form'
 import { Progress } from '@/components/ui/progress'
 import { useToast } from '@/hooks/use-toast'
-import { ArrowLeft, ArrowRight, Check, Loader2, Info, Trophy, FileText, Calendar } from 'lucide-react'
-import { gameService, type Game } from '@/services/games'
+import { ArrowLeft, ArrowRight, Check, Loader2, Info, Trophy, FileText, Calendar, Plus, Trash2 } from 'lucide-react'
+import { gameService, type Game, type PrizeDetail } from '@/services/games'
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
@@ -29,8 +29,7 @@ const editSchema = z.object({
   status: z.enum(['Draft', 'Active', 'Suspended']),
 
   // Step 2
-  start_date: z.string().optional(),
-  end_date: z.string().optional(),
+  draw_date: z.string().optional(),
   draw_frequency: z.enum(['daily', 'weekly', 'bi_weekly', 'monthly', 'special']),
   draw_time: z.string().optional(),
   draw_day: z.string().optional(),
@@ -40,8 +39,16 @@ const editSchema = z.object({
   max_tickets_per_player: z.number().min(1),
 
   // Step 3
-  prize_details: z.string().optional(),
+  prize_details: z.array(z.object({
+    rank: z.number().min(1),
+    label: z.string().min(1, 'Prize label required'),
+    description: z.string().min(1, 'Description required'),
+  })).optional(),
   rules: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.draw_frequency === 'special' && !data.draw_date) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Draw date is required for special draws', path: ['draw_date'] })
+  }
 })
 
 type EditFormData = z.infer<typeof editSchema>
@@ -55,7 +62,7 @@ const steps = [
 
 const fieldsPerStep: Record<number, (keyof EditFormData)[]> = {
   1: ['name'],
-  2: ['draw_frequency', 'base_price', 'total_tickets', 'max_tickets_per_player'],
+  2: ['draw_frequency', 'base_price', 'total_tickets', 'max_tickets_per_player', 'draw_date'],
   3: [],
   4: [],
 }
@@ -71,46 +78,77 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
+  // Fields that are locked once a game is ACTIVE (to prevent disrupting live competitions)
+  const isActive = game?.status?.toUpperCase() === 'ACTIVE'
+  const locked = isActive // lock critical fields when active
+
   const form = useForm<EditFormData>({
     resolver: zodResolver(editSchema),
     defaultValues: {
       name: '', description: '', status: 'Draft',
-      start_date: '', end_date: '',
+      draw_date: '',
       draw_frequency: 'daily', draw_time: '20:00', draw_day: 'Friday',
       sales_cutoff_minutes: 30,
       base_price: 1, total_tickets: 1000, max_tickets_per_player: 10,
-      prize_details: '', rules: '',
+      prize_details: [{ rank: 1, label: '', description: '' }], rules: '',
     },
   })
 
+  // Fetch fresh game data by ID so dates/prizes always reflect the latest DB state.
+  // gcTime: 0 means React Query never keeps stale data for this query.
+  const { data: freshGame, refetch: refetchGame } = useQuery({
+    queryKey: ['game', game?.id],
+    queryFn: () => gameService.getGame(game!.id),
+    enabled: !!game?.id && isOpen,
+    staleTime: 0,
+    gcTime: 0,
+  })
+
+  // When the dialog opens, remove any stale cached entry so the query fetches
+  // fresh data from the network. We skip removal if the cache was just seeded by
+  // onSuccess (i.e., the data is less than 3 seconds old) to avoid a race condition.
   useEffect(() => {
-    if (game) {
-      const toDateInput = (val: string | undefined) => val ? val.split('T')[0] : ''
-      form.reset({
-        name: game.name || '',
-        description: game.description || '',
-        status: (game.status as 'Draft' | 'Active' | 'Suspended') || 'Draft',
-        start_date: toDateInput(game.start_date),
-        end_date: toDateInput(game.end_date),
-        draw_frequency: (game.draw_frequency as EditFormData['draw_frequency']) || 'daily',
-        draw_time: game.draw_time || '20:00',
-        draw_day: game.draw_days?.[0] || 'Friday',
-        sales_cutoff_minutes: game.sales_cutoff_minutes || 30,
-        base_price: game.base_price || 1,
-        total_tickets: game.total_tickets || 1000,
-        max_tickets_per_player: game.max_tickets_per_player || 10,
-        prize_details: game.prize_details || '',
-        rules: game.rules || '',
-      })
-      setCurrentStep(1)
+    if (!isOpen || !game?.id) return
+    const query = queryClient.getQueryState(['game', game.id])
+    const isRecentlySet = query?.dataUpdatedAt && (Date.now() - query.dataUpdatedAt) < 3000
+    if (!isRecentlySet) {
+      queryClient.removeQueries({ queryKey: ['game', game.id] })
     }
-  }, [game, form])
+  }, [isOpen, game?.id, queryClient])
+
+  const toDateInput = (val: string | undefined) => val ? val.split('T')[0] : ''
+
+  // Reset step to 1 whenever a new game is opened
+  useEffect(() => {
+    if (game) setCurrentStep(1)
+  }, [game])
+
+  // Populate form — prefer fresh API data over potentially-stale list data
+  useEffect(() => {
+    const g = freshGame ?? game
+    if (!g) return
+    form.reset({
+      name: g.name || '',
+      description: g.description || '',
+      status: (g.status as 'Draft' | 'Active' | 'Suspended') || 'Draft',
+      draw_date: toDateInput(g.draw_date || g.end_date),
+      draw_frequency: (g.draw_frequency as EditFormData['draw_frequency']) || 'daily',
+      draw_time: g.draw_time || '20:00',
+      draw_day: g.draw_days?.[0] || 'Friday',
+      sales_cutoff_minutes: g.sales_cutoff_minutes || 30,
+      base_price: g.base_price || 1,
+      total_tickets: g.total_tickets || 1000,
+      max_tickets_per_player: g.max_tickets_per_player || 10,
+      prize_details: (g.prize_details && g.prize_details.length > 0)
+        ? g.prize_details
+        : [{ rank: 1, label: '', description: '' }],
+      rules: g.rules || '',
+    })
+  }, [freshGame, game, form])
 
   const updateMutation = useMutation({
     mutationFn: async (data: EditFormData) => {
       if (!game?.id) throw new Error('No game ID')
-      // Daily and weekly don't use start/end dates — clear them on the backend
-      const needsDates = data.draw_frequency === 'special' || data.draw_frequency === 'monthly'
       return gameService.updateGame(game.id, {
         name: data.name,
         description: data.description,
@@ -121,15 +159,24 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
         draw_days: data.draw_day ? [data.draw_day] : [],
         draw_time: data.draw_time,
         sales_cutoff_minutes: data.sales_cutoff_minutes,
-        start_date: needsDates ? (data.start_date || undefined) : '',
-        end_date: needsDates ? (data.end_date || undefined) : '',
-        prize_details: data.prize_details,
+        draw_date: freq === 'special' ? (data.draw_date || '') : undefined,
+        prize_details: data.prize_details as PrizeDetail[] | undefined,
         rules: data.rules,
       })
     },
-    onSuccess: () => {
+    onSuccess: (updatedGame) => {
+      // Immediately seed the RQ cache with the response data so the
+      // form repopulates correctly next time the dialog opens — no extra round-trip
+      if (game?.id && updatedGame) {
+        queryClient.setQueryData(['game', game.id], updatedGame)
+      }
       queryClient.invalidateQueries({ queryKey: ['games'] })
       queryClient.invalidateQueries({ queryKey: ['games-list'] })
+      // Also remove the per-game entry so the next dialog open fetches from DB,
+      // bypassing any stale Redis cache that hasn't propagated yet
+      if (game?.id) {
+        queryClient.removeQueries({ queryKey: ['game', game.id] })
+      }
       toast({ title: 'Competition updated successfully' })
       onClose(); setCurrentStep(1)
     },
@@ -152,9 +199,6 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
   const progress = ((currentStep - 1) / (steps.length - 1)) * 100
   const freq = form.watch('draw_frequency')
   const showDrawDay = freq === 'weekly' || freq === 'bi_weekly'
-  // Daily and weekly don't need start/end dates — they run on a recurring schedule
-  // Special (once-off) needs exact dates
-  const showDateRange = freq === 'special' || freq === 'monthly'
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -214,30 +258,35 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
             {/* ── Step 2: Dates & Tickets ── */}
             {currentStep === 2 && (
               <div className="space-y-4">
-                {showDateRange && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField control={form.control} name="start_date" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Start Date</FormLabel>
-                        <FormControl><Input type="date" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                    <FormField control={form.control} name="end_date" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>End Date {freq === 'special' && <span className="text-destructive">*</span>}</FormLabel>
-                        <FormControl><Input type="date" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
+                {/* Lock banner for active games */}
+                {locked && (
+                  <div className="flex items-start gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5">
+                    <span className="text-yellow-500 mt-0.5">🔒</span>
+                    <div>
+                      <p className="text-sm font-medium text-yellow-500">Some fields are locked</p>
+                      <p className="text-xs text-muted-foreground">Draw frequency, price, draw date and ticket count cannot be changed while the game is Active to protect existing ticket holders.</p>
+                    </div>
                   </div>
+                )}
+
+                {/* Special games: one Draw Date only */}
+                {freq === 'special' && (
+                  <FormField control={form.control} name="draw_date" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Draw Date <span className="text-destructive">*</span></FormLabel>
+                      <FormControl><Input type="date" {...field} value={field.value ?? ''} disabled={locked} /></FormControl>
+                      {locked && <p className="text-xs text-yellow-500">🔒 Locked — game is active</p>}
+                      {!locked && <p className="text-xs text-muted-foreground">The date this one-time draw takes place.</p>}
+                      <FormMessage />
+                    </FormItem>
+                  )} />
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <FormField control={form.control} name="draw_frequency" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Draw Frequency</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <FormLabel>Draw Frequency {locked && <span className="text-yellow-500 text-xs">🔒</span>}</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value} disabled={locked}>
                         <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                         <SelectContent>
                           <SelectItem value="daily">Daily</SelectItem>
@@ -252,8 +301,8 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
                   )} />
                   <FormField control={form.control} name="draw_time" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Draw Time</FormLabel>
-                      <FormControl><Input type="time" {...field} value={field.value ?? ''} /></FormControl>
+                      <FormLabel>Draw Time {locked && <span className="text-yellow-500 text-xs">🔒</span>}</FormLabel>
+                      <FormControl><Input type="time" {...field} value={field.value ?? ''} disabled={locked} /></FormControl>
                       <FormDescription>Ghana time (GMT+0)</FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -299,20 +348,24 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
                 <div className="grid grid-cols-3 gap-4">
                   <FormField control={form.control} name="base_price" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Ticket Price (₵)</FormLabel>
+                      <FormLabel>Ticket Price (₵) {locked && <span className="text-yellow-500 text-xs">🔒</span>}</FormLabel>
                       <FormControl>
                         <Input type="number" step="0.50" min="0.50" {...field}
-                          onChange={e => field.onChange(parseFloat(e.target.value))} />
+                          value={field.value ?? ''}
+                          disabled={locked}
+                          onChange={e => { const v = parseFloat(e.target.value); field.onChange(isNaN(v) ? '' : v) }} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )} />
                   <FormField control={form.control} name="total_tickets" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Total Tickets</FormLabel>
+                      <FormLabel>Total Tickets {locked && <span className="text-yellow-500 text-xs">🔒</span>}</FormLabel>
                       <FormControl>
                         <Input type="number" min="1" {...field}
-                          onChange={e => field.onChange(parseInt(e.target.value))} />
+                          value={field.value ?? ''}
+                          disabled={locked}
+                          onChange={e => { const v = parseInt(e.target.value); field.onChange(isNaN(v) ? '' : v) }} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -322,7 +375,8 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
                       <FormLabel>Max per Player</FormLabel>
                       <FormControl>
                         <Input type="number" min="1" {...field}
-                          onChange={e => field.onChange(parseInt(e.target.value))} />
+                          value={field.value ?? ''}
+                          onChange={e => { const v = parseInt(e.target.value); field.onChange(isNaN(v) ? '' : v) }} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -334,16 +388,65 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
             {/* ── Step 3: Prize & Rules ── */}
             {currentStep === 3 && (
               <div className="space-y-4">
-                <FormField control={form.control} name="prize_details" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Prize Details</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="e.g., 1st Prize: BMW 3 Series&#10;2nd Prize: GHS 50,000 cash"
-                        className="resize-none" rows={5} {...field} value={field.value ?? ''} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )} />
+                {/* Structured prize list */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Prize Details</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const current = form.getValues('prize_details') || []
+                        form.setValue('prize_details', [
+                          ...current,
+                          { rank: current.length + 1, label: '', description: '' },
+                        ])
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />Add Prize
+                    </Button>
+                  </div>
+                  {(form.watch('prize_details') || []).map((_, idx) => (
+                    <div key={idx} className="grid grid-cols-[auto_1fr_2fr_auto] gap-2 items-start">
+                      <div className="w-10 pt-2 text-center text-sm font-semibold text-muted-foreground">
+                        #{idx + 1}
+                      </div>
+                      <Input
+                        placeholder="e.g. 1st Prize"
+                        value={form.watch(`prize_details.${idx}.label`) ?? ''}
+                        onChange={e => {
+                          const prizes = [...(form.getValues('prize_details') || [])]
+                          prizes[idx] = { ...prizes[idx], label: e.target.value }
+                          form.setValue('prize_details', prizes)
+                        }}
+                      />
+                      <Input
+                        placeholder="e.g. BMW 3 Series"
+                        value={form.watch(`prize_details.${idx}.description`) ?? ''}
+                        onChange={e => {
+                          const prizes = [...(form.getValues('prize_details') || [])]
+                          prizes[idx] = { ...prizes[idx], description: e.target.value }
+                          form.setValue('prize_details', prizes)
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive h-9 w-9"
+                        disabled={(form.watch('prize_details') || []).length <= 1}
+                        onClick={() => {
+                          const prizes = (form.getValues('prize_details') || []).filter((_, i) => i !== idx)
+                            .map((p, i) => ({ ...p, rank: i + 1 }))
+                          form.setValue('prize_details', prizes)
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
                 <FormField control={form.control} name="rules" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Rules</FormLabel>
@@ -366,9 +469,8 @@ export function EditGameWizard({ isOpen, onClose, game }: EditGameWizardProps) {
                     { label: 'Frequency',     value: form.watch('draw_frequency')?.replace('_', '-') },
                     { label: 'Draw Time',     value: form.watch('draw_time') },
                     ...(showDrawDay ? [{ label: 'Draw Day', value: form.watch('draw_day') }] : []),
-                    ...(showDateRange ? [
-                      { label: 'Start Date', value: form.watch('start_date') || '—' },
-                      { label: 'End Date',   value: form.watch('end_date') || '—' },
+                    ...(freq === 'special' ? [
+                      { label: 'Draw Date', value: form.watch('draw_date') || '—' },
                     ] : []),
                     { label: 'Ticket Price',  value: `₵${form.watch('base_price')}` },
                     { label: 'Total Tickets', value: form.watch('total_tickets')?.toLocaleString() },

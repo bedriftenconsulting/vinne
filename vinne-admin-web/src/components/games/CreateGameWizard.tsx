@@ -42,8 +42,10 @@ import {
   Calendar,
   FileText,
   Image,
+  Plus,
+  Trash2,
 } from 'lucide-react'
-import { gameService, type CreateGameRequest } from '@/services/games'
+import { gameService, type CreateGameRequest, type PrizeDetail } from '@/services/games'
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
@@ -63,18 +65,25 @@ const gameSchema = z.object({
   sales_cutoff_minutes: z.number().min(1, 'Cutoff must be at least 1 minute'),
 
   // Step 3 – Dates & Tickets
-  start_date: z.string().optional(),
-  end_date: z.string().optional(),
+  draw_date: z.string().optional(),
   base_price: z.number({ invalid_type_error: 'Enter a valid price' }).min(0.5, 'Minimum ticket price is ₵0.50'),
   total_tickets: z.number({ invalid_type_error: 'Enter a valid number' }).int().min(1, 'Total tickets must be at least 1'),
   max_tickets_per_player: z.number({ invalid_type_error: 'Enter a valid number' }).int().min(1, 'At least 1 ticket per player'),
 
   // Step 4 – Prize & Rules
-  prize_details: z.string().min(10, 'Please describe the prize in detail'),
+  prize_details: z.array(z.object({
+    rank: z.number().min(1),
+    label: z.string().min(1, 'Prize label required'),
+    description: z.string().min(1, 'Description required'),
+  })).min(1, 'Add at least one prize'),
   rules: z.string().min(10, 'Please provide the game rules'),
 
   // Step 5 – Logo
   logo_url: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.draw_frequency === 'special' && !data.draw_date) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Draw date is required for special draws', path: ['draw_date'] })
+  }
 })
 
 type GameFormData = z.infer<typeof gameSchema>
@@ -91,7 +100,7 @@ const steps = [
 
 const fieldsPerStep: Record<number, (keyof GameFormData)[]> = {
   1: ['name', 'code', 'description'],
-  2: ['draw_frequency', 'draw_time', 'sales_cutoff_minutes'],
+  2: ['draw_frequency', 'draw_time', 'sales_cutoff_minutes', 'draw_date'],
   3: ['base_price', 'total_tickets', 'max_tickets_per_player'],
   4: ['prize_details', 'rules'],
   5: [],
@@ -124,12 +133,11 @@ export function CreateGameWizard({ isOpen, onClose }: CreateGameWizardProps) {
       draw_time: '20:00',
       draw_days: ['Friday'],
       sales_cutoff_minutes: 30,
-      start_date: '',
-      end_date: '',
+      draw_date: '',
       base_price: 1,
       total_tickets: 1000,
       max_tickets_per_player: 10,
-      prize_details: '',
+      prize_details: [{ rank: 1, label: '', description: '' }],
       rules: '',
       logo_url: '',
     },
@@ -229,9 +237,8 @@ export function CreateGameWizard({ isOpen, onClose }: CreateGameWizardProps) {
       max_tickets_per_player: d.max_tickets_per_player,
       multi_draw_enabled: false,
       status: d.status as 'Draft' | 'Active',
-      start_date: d.start_date || undefined,
-      end_date: d.end_date || undefined,
-      prize_details: d.prize_details,
+      draw_date: d.draw_date || d.end_date || undefined,
+      prize_details: d.prize_details as PrizeDetail[],
       rules: d.rules,
       // Always competition — never lottery
       game_category: 'private',
@@ -242,6 +249,7 @@ export function CreateGameWizard({ isOpen, onClose }: CreateGameWizardProps) {
       number_range_max: 100,
       selection_count: 1,
     }
+    console.log('[CreateGame] Payload being sent:', JSON.stringify(payload, null, 2))
     createGameMutation.mutate(payload)
   }
 
@@ -437,30 +445,16 @@ export function CreateGameWizard({ isOpen, onClose }: CreateGameWizardProps) {
                 </div>
 
                 {/* Dates */}
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="start_date"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Start Date</FormLabel>
-                        <FormControl><Input type="date" {...field} /></FormControl>
-                        <FormDescription>When the game begins accepting ticket sales</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  {(frequency === 'special' || frequency === 'monthly') && (
+                <div className="space-y-3">
+                  {frequency === 'special' && (
                     <FormField
                       control={form.control}
-                      name="end_date"
+                      name="draw_date"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>{frequency === 'special' ? 'Draw Date' : 'End Date'}</FormLabel>
+                          <FormLabel>Draw Date <span className="text-destructive">*</span></FormLabel>
                           <FormControl><Input type="date" {...field} /></FormControl>
-                          <FormDescription>
-                            {frequency === 'special' ? 'The date of this one-time draw' : 'When the game ends'}
-                          </FormDescription>
+                          <FormDescription>The date of this one-time draw.</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -538,25 +532,74 @@ export function CreateGameWizard({ isOpen, onClose }: CreateGameWizardProps) {
             {/* ── Step 4: Prize & Rules ── */}
             {currentStep === 4 && (
               <div className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="prize_details"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Prize Details</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="e.g., 1st Prize: BMW 3 Series&#10;2nd Prize: GHS 50,000 cash&#10;3rd Prize: iPhone 15 Pro"
-                          className="resize-none"
-                          rows={5}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>Describe all prizes available in this game</FormDescription>
-                      <FormMessage />
-                    </FormItem>
+                {/* Structured prize list */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Prize Details</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const current = form.getValues('prize_details') || []
+                        form.setValue('prize_details', [
+                          ...current,
+                          { rank: current.length + 1, label: '', description: '' },
+                        ])
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />Add Prize
+                    </Button>
+                  </div>
+                  {(form.watch('prize_details') || []).map((_, idx) => (
+                    <div key={idx} className="grid grid-cols-[auto_1fr_2fr_auto] gap-2 items-start">
+                      {/* Rank */}
+                      <div className="w-10 pt-2 text-center text-sm font-semibold text-muted-foreground">
+                        #{idx + 1}
+                      </div>
+                      {/* Label */}
+                      <Input
+                        placeholder="e.g. 1st Prize"
+                        value={form.watch(`prize_details.${idx}.label`) ?? ''}
+                        onChange={e => {
+                          const prizes = [...(form.getValues('prize_details') || [])]
+                          prizes[idx] = { ...prizes[idx], label: e.target.value }
+                          form.setValue('prize_details', prizes)
+                        }}
+                      />
+                      {/* Description */}
+                      <Input
+                        placeholder="e.g. BMW 3 Series"
+                        value={form.watch(`prize_details.${idx}.description`) ?? ''}
+                        onChange={e => {
+                          const prizes = [...(form.getValues('prize_details') || [])]
+                          prizes[idx] = { ...prizes[idx], description: e.target.value }
+                          form.setValue('prize_details', prizes)
+                        }}
+                      />
+                      {/* Remove */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive h-9 w-9"
+                        disabled={(form.watch('prize_details') || []).length <= 1}
+                        onClick={() => {
+                          const prizes = (form.getValues('prize_details') || []).filter((_, i) => i !== idx)
+                            .map((p, i) => ({ ...p, rank: i + 1 }))
+                          form.setValue('prize_details', prizes)
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  {form.formState.errors.prize_details && (
+                    <p className="text-sm text-destructive">
+                      {form.formState.errors.prize_details.message ?? 'Fix prize details'}
+                    </p>
                   )}
-                />
+                </div>
                 <FormField
                   control={form.control}
                   name="rules"
@@ -619,13 +662,13 @@ export function CreateGameWizard({ isOpen, onClose }: CreateGameWizardProps) {
                       ? [{ label: 'Draw Days', value: (form.watch('draw_days') || []).join(', ') }]
                       : []),
                     { label: 'Sales Cutoff',  value: `${form.watch('sales_cutoff_minutes')} min before draw` },
-                    { label: 'Start Date',    value: form.watch('start_date') || '—' },
-                    ...(form.watch('draw_frequency') === 'special' || form.watch('draw_frequency') === 'monthly'
-                      ? [{ label: form.watch('draw_frequency') === 'special' ? 'Draw Date' : 'End Date', value: form.watch('end_date') || '—' }]
+                    ...(form.watch('draw_frequency') === 'special'
+                      ? [{ label: 'Draw Date', value: form.watch('draw_date') || '—' }]
                       : []),
                     { label: 'Ticket Price',  value: `₵${form.watch('base_price')}` },
                     { label: 'Total Tickets', value: form.watch('total_tickets')?.toLocaleString() },
                     { label: 'Max per Player',value: form.watch('max_tickets_per_player')?.toLocaleString() },
+                    { label: 'Prizes',        value: `${(form.watch('prize_details') || []).length} prize(s)` },
                   ].map(row => (
                     <div key={row.label} className="flex justify-between px-4 py-2.5">
                       <span className="text-muted-foreground">{row.label}</span>

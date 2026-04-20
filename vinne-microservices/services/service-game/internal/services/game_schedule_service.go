@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -511,8 +512,20 @@ func (s *gameScheduleService) generateGameSchedulesForWeek(ctx context.Context, 
 	weekEnd := weekStart.AddDate(0, 0, 7)
 	_ = weekEnd // used implicitly via day iteration
 
+	// For future weeks (not the current week), only generate special games
+	// Daily/weekly games should only be scheduled for the current week
+	now := time.Now().UTC()
+	currentWeekStart := now.AddDate(0, 0, -int(now.Weekday()))
+	currentWeekStart = time.Date(currentWeekStart.Year(), currentWeekStart.Month(), currentWeekStart.Day(), 0, 0, 0, 0, time.UTC)
+	isFutureWeek := weekStart.After(currentWeekStart.AddDate(0, 0, 6))
+
+	freq := strings.ToUpper(game.DrawFrequency)
+	if isFutureWeek && freq != "SPECIAL" && freq != "MONTHLY" {
+		fmt.Printf("[GameScheduleService] Skipping non-special game %s for future week %s\n", game.Code, weekStart.Format("2006-01-02"))
+		return nil, nil
+	}
+
 	dayMap := map[string]time.Weekday{
-		"Sunday": time.Sunday, "Monday": time.Monday, "Tuesday": time.Tuesday,
 		"Wednesday": time.Wednesday, "Thursday": time.Thursday,
 		"Friday": time.Friday, "Saturday": time.Saturday,
 	}
@@ -543,10 +556,9 @@ func (s *gameScheduleService) generateGameSchedulesForWeek(ctx context.Context, 
 		}
 	}
 
-	freq := game.DrawFrequency
-
-	switch freq {
-	case "DAILY", "daily":
+	// freq already declared above — reuse it (lowercase for switch)
+	switch strings.ToLower(freq) {
+	case "daily":
 		// One draw per day for all 7 days of the week
 		var schedules []*models.GameSchedule
 		for i := 0; i < 7; i++ {
@@ -556,7 +568,7 @@ func (s *gameScheduleService) generateGameSchedulesForWeek(ctx context.Context, 
 		fmt.Printf("[GameScheduleService] daily: game=%s, 7 draws\n", game.Code)
 		return schedules, nil
 
-	case "WEEKLY", "weekly", "BI_WEEKLY", "bi_weekly":
+	case "weekly", "bi_weekly":
 		// One draw per configured draw day that falls in this week
 		var schedules []*models.GameSchedule
 		if len(game.DrawDays) == 0 {
@@ -581,9 +593,60 @@ func (s *gameScheduleService) generateGameSchedulesForWeek(ctx context.Context, 
 		fmt.Printf("[GameScheduleService] weekly/bi-weekly: game=%s, %d draws\n", game.Code, len(schedules))
 		return schedules, nil
 
+	case "special":
+		// Special draws use the game's draw_date (stored as end_date in DB)
+		if game.EndDate == nil {
+			fmt.Printf("[GameScheduleService] SPECIAL game %s has no draw_date — skipping\n", game.Code)
+			return nil, nil
+		}
+
+		weekEnd := weekStart.AddDate(0, 0, 7)
+
+		// Determine draw time: use game.DrawTime on the EndDate day
+		var drawTime time.Time
+		if game.DrawTime != nil {
+			drawTime = time.Date(game.EndDate.Year(), game.EndDate.Month(), game.EndDate.Day(),
+				game.DrawTime.Hour(), game.DrawTime.Minute(), 0, 0, game.EndDate.Location())
+		} else {
+			drawTime = time.Date(game.EndDate.Year(), game.EndDate.Month(), game.EndDate.Day(),
+				20, 0, 0, 0, game.EndDate.Location())
+		}
+
+		// Only schedule if the draw falls within this week
+		if drawTime.Before(weekStart) || !drawTime.Before(weekEnd) {
+			fmt.Printf("[GameScheduleService] SPECIAL game %s draw on %s is outside week %s — skipping\n",
+				game.Code, drawTime.Format("2006-01-02"), weekStart.Format("2006-01-02"))
+			return nil, nil
+		}
+
+		startDay := game.EndDate
+		if game.StartDate != nil {
+			startDay = game.StartDate
+		}
+		salesStart := time.Date(startDay.Year(), startDay.Month(), startDay.Day(),
+			0, 0, 0, 0, startDay.Location())
+		salesEnd := drawTime.Add(-time.Duration(game.SalesCutoffMinutes) * time.Minute)
+
+		note := fmt.Sprintf("Special draw for %s", game.Name)
+		schedule := &models.GameSchedule{
+			GameID:         game.ID,
+			GameName:       &game.Name,
+			ScheduledStart: salesStart,
+			ScheduledEnd:   salesEnd,
+			ScheduledDraw:  drawTime,
+			Frequency:      models.DrawFrequencySpecial,
+			IsActive:       true,
+			Status:         models.ScheduleStatusScheduled,
+			Notes:          &note,
+			LogoURL:        game.LogoURL,
+			BrandColor:     game.BrandColor,
+		}
+		fmt.Printf("[GameScheduleService] SPECIAL game %s: sales %s → %s, draw %s\n",
+			game.Code, salesStart.Format("2006-01-02"), salesEnd.Format("2006-01-02 15:04"), drawTime.Format("2006-01-02 15:04"))
+		return []*models.GameSchedule{schedule}, nil
+
 	default:
-		// monthly, special, or anything else — one draw this week
-		// Use configured draw day if available, otherwise Saturday
+		// monthly — one draw this week using configured draw day or Saturday
 		drawDay := weekStart.AddDate(0, 0, 6) // default Saturday
 		if len(game.DrawDays) > 0 {
 			for i := 0; i < 7; i++ {

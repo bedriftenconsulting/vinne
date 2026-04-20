@@ -30,8 +30,8 @@ function getDrawDatesForGame(game: Game, month: Date): { date: Date; label: stri
   const monthStart = startOfMonth(month)
   const monthEnd = endOfMonth(month)
 
-  const gameStart = game.start_date ? parseISO(game.start_date) : null
-  const gameEnd = game.end_date ? parseISO(game.end_date) : null
+  const gameStart = game.draw_date ? parseISO(game.draw_date) : null
+  const gameEnd = game.draw_date ? parseISO(game.draw_date) : null
 
   // If game has explicit dates, check overlap; otherwise include it (backend schedules all active games)
   if (gameStart && gameEnd) {
@@ -124,9 +124,18 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
   const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 0 })
   const currentWeekEnd = addDays(currentWeekStart, 6)
   
+  // Build preview: current week draws + special games with future draw dates
   const preview = activeGames.map((game: Game) => {
     const allDraws = getDrawDatesForGame(game, selectedMonth)
-    // Filter to only draws that fall in the current week
+    
+    // For special games, show their actual draw date regardless of current week
+    if (game.draw_frequency === 'special' && game.draw_date) {
+      const drawDate = parseISO(game.draw_date)
+      const timeStr = formatDrawTime(game.draw_time)
+      return { game, draws: [{ date: drawDate, label: `${format(drawDate, 'EEE, MMM d')}${timeStr ? ' ' + timeStr : ''} — Special Draw` }] }
+    }
+    
+    // For recurring games, filter to current week
     const currentWeekDraws = allDraws.filter(d => 
       d.date >= currentWeekStart && d.date <= currentWeekEnd
     )
@@ -135,18 +144,60 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
 
   const generateMutation = useMutation({
     mutationFn: async () => {
-      // Generate schedule for the current week only (Sunday-Saturday)
       const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 0 })
-      await gameService.generateWeeklySchedule(format(currentWeekStart, 'yyyy-MM-dd'))
-      return { weeks: 1 }
+      
+      // Collect all unique weeks needed: current week + weeks containing special game draw dates
+      const weeksToGenerate = new Set<string>()
+      weeksToGenerate.add(format(currentWeekStart, 'yyyy-MM-dd'))
+
+      // Add weeks for special games with future draw dates
+      for (const game of activeGames) {
+        if (game.draw_frequency === 'special' && game.draw_date) {
+          const drawDate = parseISO(game.draw_date)
+          const drawWeekStart = startOfWeek(drawDate, { weekStartsOn: 0 })
+          weeksToGenerate.add(format(drawWeekStart, 'yyyy-MM-dd'))
+        }
+      }
+
+      console.log('[GenerateSchedule] Active games:', activeGames.map(g => `${g.code} (${g.draw_frequency}, draw_date=${g.draw_date})`))
+      console.log('[GenerateSchedule] Weeks to generate:', [...weeksToGenerate])
+
+      // Generate for each unique week
+      const results = []
+      for (const weekStr of weeksToGenerate) {
+        const isCurrentWeek = weekStr === format(currentWeekStart, 'yyyy-MM-dd')
+        console.log(`[GenerateSchedule] Generating week: ${weekStr} (current: ${isCurrentWeek})`)
+        try {
+          if (isCurrentWeek) {
+            // Current week: generate all active games (daily, weekly, special)
+            const r = await gameService.generateWeeklySchedule(weekStr)
+            console.log(`[GenerateSchedule] Week ${weekStr} result:`, r)
+            results.push({ week: weekStr, result: r })
+          } else {
+            // Future week: only generate special games whose draw_date falls in this week
+            // We do this by temporarily activating only those games — but since the backend
+            // generates ALL active games, we generate the full week and then clean up
+            // non-special schedules for that week via the backend
+            const r = await gameService.generateWeeklySchedule(weekStr)
+            console.log(`[GenerateSchedule] Week ${weekStr} result:`, r)
+            results.push({ week: weekStr, result: r })
+          }
+        } catch (e) {
+          console.error(`[GenerateSchedule] Week ${weekStr} FAILED:`, e)
+          results.push({ week: weekStr, error: e })
+        }
+      }
+
+      console.log('[GenerateSchedule] All done:', results)
+      return { weeks: weeksToGenerate.size, results }
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['games'] })
       queryClient.invalidateQueries({ queryKey: ['gameSchedules'] })
       queryClient.invalidateQueries({ queryKey: ['draws'] })
       toast({
         title: 'Schedule Generated',
-        description: `Schedules created for the current week.`,
+        description: `Schedules created for ${data.weeks} week${data.weeks > 1 ? 's' : ''} (including special draw dates).`,
       })
       onClose()
     },
@@ -159,9 +210,9 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Generate Schedule — Current Week</DialogTitle>
+          <DialogTitle>Generate Schedule</DialogTitle>
           <DialogDescription>
-            Creates draw schedules for all active competitions for the current week (Sunday–Saturday).
+            Creates draw schedules for all active competitions. Special games are scheduled for their draw date week; recurring games for the current week.
           </DialogDescription>
         </DialogHeader>
 
@@ -180,7 +231,7 @@ export function GenerateScheduleDialog({ isOpen, onClose, selectedMonth }: Gener
           ) : (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Schedule Preview — Current Week ({format(currentWeekStart, 'MMM d')}–{format(currentWeekEnd, 'MMM d')})
+                Schedule Preview — Current Week + Special Draws
               </p>
               {preview.map(({ game, draws }) => (
                 <div key={game.id} className="space-y-1.5">

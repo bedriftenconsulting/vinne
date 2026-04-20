@@ -1,8 +1,8 @@
 import { motion, useScroll, useTransform } from "framer-motion";
 import { Link } from "react-router-dom";
 import { useCountdown } from "@/hooks/useCountdown";
-import { competitions } from "@/lib/competitions";
-import { useRef } from "react";
+import { useRef, useEffect, useState, useMemo } from "react";
+import { fetchActiveGames, type ApiGame } from "@/lib/api";
 
 const SPARKLES = [
   { top: "10%", left: "6%",  size: 18, delay: 0   },
@@ -38,9 +38,33 @@ const item = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.65, ease: [0.22, 1, 0.36, 1] } },
 };
 
-const HeroSection = () => {
-  const featured = competitions.find((c) => c.featured)!;
-  const { hours, minutes, seconds } = useCountdown(featured.endsAt);
+// Get next draw date for a game
+const getNextDrawDate = (game: ApiGame): Date => {
+  if (game.draw_date) {
+    return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
+  }
+  const [h, m] = (game.draw_time || "20:00").split(":").map(Number);
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(h, m, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+};
+
+// Get prize label from prize_details JSON
+const getPrizeLabel = (game: ApiGame): string => {
+  try {
+    const prizes = JSON.parse(game.prize_details || "[]");
+    if (prizes[0]?.description) return prizes[0].description;
+  } catch { /* ignore */ }
+  return game.name;
+};
+
+// Inner component that uses the hook (must be called unconditionally)
+const HeroContent = ({ game }: { game: ApiGame }) => {
+  const drawDate = useMemo(() => getNextDrawDate(game), [game.id, game.draw_date, game.draw_time]);
+  const { days, hours, minutes, seconds } = useCountdown(drawDate);
+  const prizeLabel = getPrizeLabel(game);
   const ref = useRef<HTMLElement>(null);
 
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
@@ -53,96 +77,113 @@ const HeroSection = () => {
       ref={ref}
       className="relative min-h-screen flex items-center overflow-hidden bg-[hsl(0_0%_4%)] pt-16"
     >
-      {/* ── Full-section background video ── */}
       <motion.div style={{ y: bgY }} className="absolute inset-0 scale-110">
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="w-full h-full object-cover"
-          style={{ mixBlendMode: "screen" }}
-          poster={featured.image}
-        >
-          <source src="/large_2x.mp4" type="video/mp4" />
-        </video>
-
-        {/* Gradient: strong on left for text legibility, fades to almost transparent on right */}
+        {game.logo_url ? (
+          <img src={game.logo_url} alt={game.name} className="w-full h-full object-cover" />
+        ) : (
+          <video autoPlay muted loop playsInline className="w-full h-full object-cover" style={{ mixBlendMode: "screen" }}>
+            <source src="/large_2x.mp4" type="video/mp4" />
+          </video>
+        )}
         <div className="absolute inset-0 bg-gradient-to-r from-[hsl(0_0%_4%)] via-[hsl(0_0%_4%/0.72)] to-[hsl(0_0%_4%/0.15)]" />
-        {/* Bottom fade into next section */}
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(0_0%_4%)] via-transparent to-transparent" />
-        {/* Red tint to match brand */}
         <div className="absolute inset-0 bg-[hsl(0_80%_45%/0.08)]" />
       </motion.div>
 
-      {/* Sparkles sit above video */}
       {SPARKLES.map((s, i) => <Sparkle key={i} {...s} />)}
 
-      {/* ── Text content — left-aligned on desktop, centered stacked on mobile ── */}
-      <motion.div
-        style={{ y: textY, opacity: fadeOut }}
-        className="container relative z-20 py-16"
-      >
-        {/* Mobile: flex-col centered. Desktop: left block max-w-lg */}
+      <motion.div style={{ y: textY, opacity: fadeOut }} className="container relative z-20 py-16">
         <motion.div
           variants={containerVariants}
           initial="hidden"
           animate="visible"
           className="flex flex-col items-center text-center md:items-start md:text-left max-w-lg mx-auto md:mx-0"
         >
-
-          {/* 1. Headline */}
           <motion.h1 variants={item} className="font-heading leading-none mb-6">
-            <span className="block text-gold text-5xl md:text-6xl lg:text-7xl drop-shadow-[0_2px_16px_hsl(44_100%_50%/0.5)]">
-              WIN AN
+            <span className="block text-gold text-4xl md:text-5xl lg:text-6xl drop-shadow-[0_2px_16px_hsl(44_100%_50%/0.5)]">
+              WIN A
             </span>
-            <span className="block text-gold text-5xl md:text-6xl lg:text-7xl drop-shadow-[0_2px_16px_hsl(44_100%_50%/0.5)]">
-              {featured.title.toUpperCase()}
+            <span className="block text-gold text-4xl md:text-5xl lg:text-6xl drop-shadow-[0_2px_16px_hsl(44_100%_50%/0.5)]">
+              {prizeLabel.toUpperCase()}
             </span>
           </motion.h1>
 
-          {/* 2. Countdown */}
           <motion.div variants={item} className="mb-6 w-full">
-            <div className="flex items-center justify-center md:justify-start gap-1">
-              {[{ value: hours }, { value: minutes }, { value: seconds }].map((t, i) => (
-                <span key={i} className="flex items-center">
-                  <motion.span
-                    key={`${i}-${t.value}`}
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="font-heading text-gold text-5xl md:text-6xl lg:text-7xl tabular-nums drop-shadow-[0_0_20px_hsl(44_100%_50%/0.7)]"
-                  >
-                    {String(t.value).padStart(2, "0")}
-                  </motion.span>
-                  {i < 2 && (
-                    <motion.span
-                      animate={{ opacity: [1, 0.2, 1] }}
-                      transition={{ duration: 1, repeat: Infinity }}
-                      className="font-heading text-gold text-5xl md:text-6xl lg:text-7xl mx-1"
-                    >
-                      :
-                    </motion.span>
-                  )}
-                </span>
-              ))}
-            </div>
-
+            {days > 0 ? (
+              /* Multi-day: show "X days left" badge + HH:MM:SS */
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 bg-primary/20 border border-primary/40 rounded-full px-4 py-1.5">
+                  <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                  <span className="font-heading text-primary text-sm tracking-wide">
+                    {days} DAY{days !== 1 ? "S" : ""} LEFT — ENDING {days <= 3 ? "SOON!" : `${new Date(drawDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase()}`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-center md:justify-start gap-1">
+                  {[{ label: "HRS", value: hours }, { label: "MIN", value: minutes }, { label: "SEC", value: seconds }].map((t, i) => (
+                    <span key={i} className="flex items-center">
+                      <span className="flex flex-col items-center">
+                        <motion.span
+                          key={`${i}-${t.value}`}
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="font-heading text-gold text-4xl md:text-5xl tabular-nums drop-shadow-[0_0_20px_hsl(44_100%_50%/0.7)]"
+                        >
+                          {String(t.value).padStart(2, "0")}
+                        </motion.span>
+                        <span className="text-gold/50 text-[10px] font-heading tracking-widest">{t.label}</span>
+                      </span>
+                      {i < 2 && (
+                        <motion.span
+                          animate={{ opacity: [1, 0.2, 1] }}
+                          transition={{ duration: 1, repeat: Infinity }}
+                          className="font-heading text-gold text-4xl md:text-5xl mx-1 mb-4"
+                        >
+                          :
+                        </motion.span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              /* Same-day: big HH:MM:SS countdown */
+              <div className="space-y-1">
+                <p className="text-primary font-heading text-sm tracking-widest animate-pulse">⚡ DRAW TODAY</p>
+                <div className="flex items-center justify-center md:justify-start gap-1">
+                  {[{ value: hours }, { value: minutes }, { value: seconds }].map((t, i) => (
+                    <span key={i} className="flex items-center">
+                      <motion.span
+                        key={`${i}-${t.value}`}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="font-heading text-gold text-5xl md:text-6xl lg:text-7xl tabular-nums drop-shadow-[0_0_20px_hsl(44_100%_50%/0.7)]"
+                      >
+                        {String(t.value).padStart(2, "0")}
+                      </motion.span>
+                      {i < 2 && (
+                        <motion.span
+                          animate={{ opacity: [1, 0.2, 1] }}
+                          transition={{ duration: 1, repeat: Infinity }}
+                          className="font-heading text-gold text-5xl md:text-6xl lg:text-7xl mx-1"
+                        >
+                          :
+                        </motion.span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </motion.div>
 
-          {/* 3. Buttons — always side by side */}
           <motion.div variants={item} className="flex flex-row gap-3 mb-5">
             <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
               <Link
-                to={`/competitions/${featured.id}`}
+                to={`/competitions/${game.id}`}
                 className="inline-flex items-center gap-2 bg-primary text-white font-heading text-lg md:text-xl px-8 md:px-12 py-4 rounded-lg btn-glow animate-pulse-glow hover:brightness-110 transition tracking-wide"
               >
                 ENTER NOW
-                <motion.span
-                  animate={{ x: [0, 5, 0] }}
-                  transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-                >
-                  →
-                </motion.span>
+                <motion.span animate={{ x: [0, 5, 0] }} transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}>→</motion.span>
               </Link>
             </motion.div>
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
@@ -155,18 +196,42 @@ const HeroSection = () => {
             </motion.div>
           </motion.div>
 
-          {/* 4. Price note */}
           <motion.p variants={item} className="text-white/45 text-sm">
-            Tickets from{" "}
-            <span className="text-gold font-semibold">
-              {featured.currency} {featured.ticketPrice.toFixed(2)}
-            </span>
+            Tickets from <span className="text-gold font-semibold">GHS {game.base_price.toFixed(2)}</span>
           </motion.p>
-
         </motion.div>
       </motion.div>
     </section>
   );
+};
+
+// Empty hero when no games
+const HeroEmpty = () => (
+  <section className="relative min-h-[60vh] flex items-center justify-center bg-[hsl(0_0%_4%)] pt-16">
+    <div className="text-center">
+      <h1 className="font-heading text-4xl text-gold mb-4">WINBIG AFRICA</h1>
+      <p className="text-white/50 mb-6">New competitions coming soon</p>
+      <Link to="/competitions" className="bg-primary text-white font-heading px-8 py-3 rounded-lg btn-glow">
+        VIEW COMPETITIONS
+      </Link>
+    </div>
+  </section>
+);
+
+const HeroSection = () => {
+  const [games, setGames] = useState<ApiGame[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchActiveGames().then(setGames).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <section className="min-h-screen bg-[hsl(0_0%_4%)]" />;
+  if (games.length === 0) return <HeroEmpty />;
+
+  // Feature the first active game
+  const featured = games[0];
+  return <HeroContent game={featured} />;
 };
 
 export default HeroSection;

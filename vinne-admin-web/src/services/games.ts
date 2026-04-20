@@ -2,6 +2,13 @@ import api from '@/lib/api'
 
 // ── Core types ────────────────────────────────────────────────────────────────
 
+/** A single prize entry stored as a structured JSONB row in the DB */
+export interface PrizeDetail {
+  rank: number
+  label: string
+  description: string
+}
+
 export interface Game {
   id: string
   code: string
@@ -9,27 +16,27 @@ export interface Game {
   description?: string
   game_category?: string
   game_format?: string
-  game_type?: string          // legacy alias
-  type?: string               // legacy alias
-  base_price: number          // GHS — ticket price
-  ticket_price?: number       // legacy alias for base_price
-  total_tickets?: number
-  sold_tickets?: number
-  max_tickets_per_player: number
-  draw_frequency: 'daily' | 'weekly' | 'bi_weekly' | 'monthly' | 'special'
+  game_type?: string
+  type?: string
+  organizer?: string
+  draw_frequency?: string
   draw_days?: string[]
   draw_time?: string
   sales_cutoff_minutes: number
+  base_price: number
+  min_stake?: number
+  max_stake?: number
+  total_tickets?: number
+  sold_tickets?: number
+  max_tickets_per_player: number
   multi_draw_enabled: boolean
   max_draws_advance?: number
-  organizer?: string
+  status: string
   logo_url?: string
   brand_color?: string
-  prize_details?: string
+  prize_details?: PrizeDetail[]
   rules?: string
-  start_date?: string
-  end_date?: string
-  status: string
+  draw_date?: string   // YYYY-MM-DD — for special draws only
   version?: number
   created_at?: string
   updated_at?: string
@@ -43,17 +50,15 @@ export interface CreateGameRequest {
   draw_days?: string[]
   draw_time?: string
   sales_cutoff_minutes: number
-  base_price: number          // GHS
+  base_price: number
   total_tickets?: number
   max_tickets_per_player: number
   max_tickets_per_transaction?: number
   multi_draw_enabled: boolean
   status?: string
-  start_date?: string
-  end_date?: string
-  prize_details?: string
+  draw_date?: string       // YYYY-MM-DD — special draws only
+  prize_details?: PrizeDetail[]
   rules?: string
-  // Required by backend but not shown to user — always competition format
   game_category: 'private'
   format: 'competition'
   organizer: 'winbig_africa'
@@ -74,10 +79,9 @@ export interface UpdateGameRequest {
   total_tickets?: number
   max_tickets_per_player?: number
   multi_draw_enabled?: boolean
-  prize_details?: string
+  prize_details?: PrizeDetail[]
   rules?: string
-  start_date?: string | null
-  end_date?: string | null
+  draw_date?: string   // YYYY-MM-DD — special draws only, maps to end_date on backend
 }
 
 export interface GameSchedule {
@@ -116,21 +120,23 @@ export interface WeeklyScheduleResponse {
 
 class GameService {
   async createGame(data: CreateGameRequest): Promise<Game> {
+    // draw_date maps to both start_date and end_date on the backend
+    const { draw_date, ...rest } = data
     const payload = {
-      ...data,
-      // Always force competition format — never lottery
+      ...rest,
       game_category: 'private',
       format: 'competition',
       organizer: 'winbig_africa',
       bet_types: [],
       number_range_min: 1,
-      number_range_max: 100,  // must be > number_range_min
+      number_range_max: 100,
       selection_count: 1,
       max_tickets_per_transaction: data.max_tickets_per_player,
+      ...(draw_date ? { start_date: draw_date, end_date: draw_date } : {}),
     }
+    console.log('[gameService.createGame] Final API payload:', JSON.stringify(payload, null, 2))
     const response = await api.post('/admin/games', payload)
 
-    // Backend returns 200 even on validation failure — check inner success flag
     const inner = response.data.data
     if (inner && inner.success === false) {
       throw new Error(inner.message || 'Failed to create game')
@@ -146,17 +152,37 @@ class GameService {
   async getGames(page = 1, limit = 20): Promise<{ data: Game[]; total: number }> {
     const response = await api.get('/admin/games', { params: { page, limit } })
     const d = response.data.data || {}
-    return { data: d.games || [], total: d.total || 0 }
+    const games = (d.games || []).map((g: Record<string, unknown>) => this._normalizeGame(g))
+    return { data: games, total: d.total || 0 }
   }
 
   async getGame(id: string): Promise<Game> {
     const response = await api.get(`/admin/games/${id}`)
-    return response.data.data?.game || response.data.data
+    const g = response.data.data?.game || response.data.data
+    return this._normalizeGame(g)
   }
 
   async updateGame(id: string, data: UpdateGameRequest): Promise<Game> {
-    const response = await api.put(`/admin/games/${id}`, data)
+    // draw_date maps to both start_date and end_date on the backend
+    const { draw_date, ...rest } = data
+    const payload = {
+      ...rest,
+      ...(draw_date !== undefined
+        ? { start_date: draw_date, end_date: draw_date }
+        : {}),
+    }
+    const response = await api.put(`/admin/games/${id}`, payload)
     return response.data.data
+  }
+
+  private _normalizeGame(g: Record<string, unknown>): Game {
+    if (!g) return g as unknown as Game
+    // Backend may return draw_date (new proto field) or end_date (legacy)
+    const drawDate = (g.draw_date as string) || (g.end_date as string) || (g.start_date as string) || undefined
+    return {
+      ...(g as Game),
+      draw_date: drawDate && drawDate.length > 0 ? drawDate : undefined,
+    }
   }
 
   async deleteGame(id: string): Promise<void> {
@@ -236,7 +262,6 @@ class GameService {
     return response.data.data
   }
 
-  // Prize structure (kept for compatibility)
   async getPrizeStructure(gameId: string) {
     const response = await api.get(`/admin/games/${gameId}/prize-structure`)
     return response.data.data

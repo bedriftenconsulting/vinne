@@ -1,6 +1,10 @@
 package server
 
 import (
+	"encoding/json"
+	"log"
+	"time"
+
 	pb "github.com/randco/randco-microservices/proto/game/v1"
 	"github.com/randco/randco-microservices/services/service-game/internal/models"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -12,7 +16,9 @@ func convertGameToProto(game *models.Game) *pb.Game {
 		return nil
 	}
 
-	// Convert to the new proto format matching the frontend expectations
+	drawDateStr := convertTimePtrToDateString(game.EndDate)
+	log.Printf("[convertGameToProto] game=%s draw_date=%q (ptr=%v)", game.Code, drawDateStr, game.EndDate)
+
 	return &pb.Game{
 		Id:                  game.ID.String(),
 		Code:                game.Code,
@@ -42,8 +48,8 @@ func convertGameToProto(game *models.Game) *pb.Game {
 		Version:             game.Version,
 		LogoUrl:             convertStringPtrToProto(game.LogoURL),
 		BrandColor:          convertStringPtrToProto(game.BrandColor),
-		StartDate:           convertStringPtrToProto(game.StartDate),
-		EndDate:             convertStringPtrToProto(game.EndDate),
+		DrawDate:            drawDateStr,
+		PrizeDetails:        marshalPrizeDetailsToString(game.PrizeDetails),
 		CreatedAt:           timestamppb.New(game.CreatedAt),
 		UpdatedAt:           timestamppb.New(game.UpdatedAt),
 	}
@@ -170,4 +176,26 @@ func boolPtrToBool(b *bool) bool {
 		return false
 	}
 	return *b
+}
+
+// convertTimePtrToDateString formats a *time.Time to a YYYY-MM-DD string for the proto.
+// Returns "" if t is nil.
+func convertTimePtrToDateString(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+// marshalPrizeDetailsToString marshals []models.PrizeDetail to a JSON string for the proto.
+// Returns "" if prizes is nil/empty.
+func marshalPrizeDetailsToString(prizes []models.PrizeDetail) string {
+	if len(prizes) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(prizes)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

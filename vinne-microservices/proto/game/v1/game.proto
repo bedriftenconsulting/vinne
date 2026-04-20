@@ -108,6 +108,14 @@ message Game {
   // Branding
   string logo_url = 29; // URL to the game logo/image
   string brand_color = 30; // Brand color in HEX format (e.g., #FF5733)
+
+  // Competition draw date (special games only)
+  string draw_date = 31; // Draw date (YYYY-MM-DD)
+
+  // WinBig Competition fields
+  string prize_details = 33; // Prize description JSON
+  string rules = 34;         // Game rules
+  int32 total_tickets = 35;  // Total tickets available
 }
 
 message GameRules {
@@ -208,8 +216,7 @@ message CreateGameRequest {
   string prize_details = 24; // Prize descriptions
   string rules = 25; // Competition rules
   int32 total_tickets = 26; // Total tickets available
-  string start_date = 27; // Competition start date (YYYY-MM-DD)
-  string end_date = 28; // Competition end date (YYYY-MM-DD)
+  string draw_date = 27; // Draw date (YYYY-MM-DD) — special games only
   string status = 29; // Draft, Active, Suspended
 }
 
@@ -249,8 +256,7 @@ message UpdateGameRequest {
   string prize_details = 17; // Prize descriptions
   string rules = 18; // Competition rules
   int32 total_tickets = 19; // Total tickets available
-  string start_date = 20; // Competition start date (YYYY-MM-DD) — special/monthly only
-  string end_date = 21; // Competition end date (YYYY-MM-DD) — special/monthly only
+  string draw_date = 20; // Draw date (YYYY-MM-DD) — special games only
 }
 
 message UpdateGameResponse {

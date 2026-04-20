@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -88,6 +89,18 @@ func (r *gameRepository) CreateWithTx(ctx context.Context, tx *sql.Tx, game *mod
 		return fmt.Errorf("failed to marshal draw days: %w", err)
 	}
 
+	// Marshal PrizeDetails as JSON for the JSONB column (nil slice → SQL NULL)
+	var prizeDetailsJSON interface{}
+	if game.PrizeDetails != nil {
+		b, merr := json.Marshal(game.PrizeDetails)
+		if merr != nil {
+			span.RecordError(merr)
+			span.SetStatus(codes.Error, "failed to marshal prize details")
+			return fmt.Errorf("failed to marshal prize details: %w", merr)
+		}
+		prizeDetailsJSON = b
+	}
+
 	// Use transaction if provided, otherwise use the database connection
 	var row *sql.Row
 	if tx != nil {
@@ -99,7 +112,7 @@ func (r *gameRepository) CreateWithTx(ctx context.Context, tx *sql.Tx, game *mod
 			game.EndTime, game.Version, game.StartTimeStr, game.EndTimeStr, game.DrawTimeStr,
 			game.NumberRangeMin, game.NumberRangeMax, game.SelectionCount, game.SalesCutoffMinutes,
 			game.BasePrice, game.MultiDrawEnabled, game.MaxDrawsAdvance, game.LogoURL, game.BrandColor,
-			game.PrizeDetails, game.Rules, game.TotalTickets, game.StartDate, game.EndDate,
+			prizeDetailsJSON, game.Rules, game.TotalTickets, game.StartDate, game.EndDate,
 		)
 	} else {
 		row = r.db.QueryRowContext(ctx, query,
@@ -110,7 +123,7 @@ func (r *gameRepository) CreateWithTx(ctx context.Context, tx *sql.Tx, game *mod
 			game.EndTime, game.Version, game.StartTimeStr, game.EndTimeStr, game.DrawTimeStr,
 			game.NumberRangeMin, game.NumberRangeMax, game.SelectionCount, game.SalesCutoffMinutes,
 			game.BasePrice, game.MultiDrawEnabled, game.MaxDrawsAdvance, game.LogoURL, game.BrandColor,
-			game.PrizeDetails, game.Rules, game.TotalTickets, game.StartDate, game.EndDate,
+			prizeDetailsJSON, game.Rules, game.TotalTickets, game.StartDate, game.EndDate,
 		)
 	}
 
@@ -154,6 +167,7 @@ func (r *gameRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Gam
 
 	game := &models.Game{}
 	var drawDaysJSON []byte
+	var prizeDetailsJSON []byte
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&game.ID, &game.Code, &game.Name, &game.Type, &game.GameType, &game.GameFormat,
 		&game.GameCategory, &game.Organizer, &game.MinStakeAmount,
@@ -164,7 +178,7 @@ func (r *gameRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Gam
 		&game.NumberRangeMin, &game.NumberRangeMax, &game.SelectionCount,
 		&game.BasePrice, &game.MultiDrawEnabled, &game.MaxDrawsAdvance,
 		&game.LogoURL, &game.BrandColor,
-		&game.PrizeDetails, &game.Rules, &game.TotalTickets, &game.StartDate, &game.EndDate,
+		&prizeDetailsJSON, &game.Rules, &game.TotalTickets, &game.StartDate, &game.EndDate,
 		&game.CreatedAt, &game.UpdatedAt,
 	)
 
@@ -176,6 +190,14 @@ func (r *gameRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Gam
 				span.RecordError(err)
 				span.SetStatus(codes.Error, "failed to unmarshal draw days")
 				return nil, fmt.Errorf("failed to unmarshal draw days: %w", err)
+			}
+		}
+		// Unmarshal prize_details JSONB into []PrizeDetail
+		if len(prizeDetailsJSON) > 0 {
+			if uerr := json.Unmarshal(prizeDetailsJSON, &game.PrizeDetails); uerr != nil {
+				span.RecordError(uerr)
+				span.SetStatus(codes.Error, "failed to unmarshal prize details")
+				return nil, fmt.Errorf("failed to unmarshal prize details: %w", uerr)
 			}
 		}
 	}
@@ -234,6 +256,18 @@ func (r *gameRepository) Update(ctx context.Context, game *models.Game) error {
 		return fmt.Errorf("failed to marshal draw days: %w", err)
 	}
 
+	// Marshal PrizeDetails as JSON for the JSONB column (nil slice → SQL NULL)
+	var prizeDetailsJSON interface{}
+	if game.PrizeDetails != nil {
+		b, merr := json.Marshal(game.PrizeDetails)
+		if merr != nil {
+			span.RecordError(merr)
+			span.SetStatus(codes.Error, "failed to marshal prize details")
+			return fmt.Errorf("failed to marshal prize details: %w", merr)
+		}
+		prizeDetailsJSON = b
+	}
+
 	fmt.Printf("[GameRepository] Update: Saving sales_cutoff_minutes to database: game_id=%s, value=%d\n",
 		game.ID.String(), game.SalesCutoffMinutes)
 
@@ -247,7 +281,7 @@ func (r *gameRepository) Update(ctx context.Context, game *models.Game) error {
 		game.NumberRangeMin, game.NumberRangeMax, game.SelectionCount, game.SalesCutoffMinutes,
 		game.BasePrice, game.MultiDrawEnabled, game.MaxDrawsAdvance,
 		game.LogoURL, game.BrandColor,
-		game.PrizeDetails, game.Rules, game.TotalTickets,
+		prizeDetailsJSON, game.Rules, game.TotalTickets,
 		game.StartDate, game.EndDate,
 	).Scan(&game.UpdatedAt)
 
@@ -438,6 +472,7 @@ func (r *gameRepository) List(ctx context.Context, filter models.GameFilter, pag
 	for rows.Next() {
 		game := &models.Game{}
 		var drawDaysJSON []byte
+		var prizeDetailsJSON []byte
 		err := rows.Scan(
 			&game.ID, &game.Code, &game.Name, &game.Type, &game.GameType, &game.GameFormat,
 			&game.GameCategory, &game.Organizer, &game.MinStakeAmount,
@@ -448,7 +483,7 @@ func (r *gameRepository) List(ctx context.Context, filter models.GameFilter, pag
 			&game.NumberRangeMin, &game.NumberRangeMax, &game.SelectionCount,
 			&game.BasePrice, &game.MultiDrawEnabled, &game.MaxDrawsAdvance,
 			&game.LogoURL, &game.BrandColor,
-			&game.PrizeDetails, &game.Rules, &game.TotalTickets, &game.StartDate, &game.EndDate,
+			&prizeDetailsJSON, &game.Rules, &game.TotalTickets, &game.StartDate, &game.EndDate,
 			&game.CreatedAt, &game.UpdatedAt,
 		)
 		if err != nil {
@@ -463,6 +498,15 @@ func (r *gameRepository) List(ctx context.Context, filter models.GameFilter, pag
 				return nil, 0, fmt.Errorf("failed to unmarshal draw days: %w", err)
 			}
 		}
+		// Unmarshal prize_details JSONB
+		if len(prizeDetailsJSON) > 0 {
+			if err := json.Unmarshal(prizeDetailsJSON, &game.PrizeDetails); err != nil {
+				span.RecordError(err)
+				return nil, 0, fmt.Errorf("failed to unmarshal prize details: %w", err)
+			}
+		}
+
+		log.Printf("[List] game=%s start_date=%v end_date=%v", game.Code, game.StartDate, game.EndDate)
 
 		games = append(games, game)
 	}
@@ -502,6 +546,7 @@ func (r *gameRepository) GetByNameWithTx(ctx context.Context, tx *sql.Tx, name s
 			number_range_min, number_range_max, selection_count,
 			base_price, multi_draw_enabled, max_draws_advance,
 			logo_url, brand_color,
+			prize_details, rules, total_tickets, start_date, end_date,
 			created_at, updated_at
 		FROM games
 		WHERE name = $1
@@ -509,6 +554,7 @@ func (r *gameRepository) GetByNameWithTx(ctx context.Context, tx *sql.Tx, name s
 
 	game := &models.Game{}
 	var drawDaysJSON []byte
+	var prizeDetailsJSON []byte
 
 	// Use transaction if provided, otherwise use the database connection
 	var row *sql.Row
@@ -530,6 +576,7 @@ func (r *gameRepository) GetByNameWithTx(ctx context.Context, tx *sql.Tx, name s
 		&game.NumberRangeMin, &game.NumberRangeMax, &game.SelectionCount,
 		&game.BasePrice, &game.MultiDrawEnabled, &game.MaxDrawsAdvance,
 		&game.LogoURL, &game.BrandColor,
+		&prizeDetailsJSON, &game.Rules, &game.TotalTickets, &game.StartDate, &game.EndDate,
 		&game.CreatedAt, &game.UpdatedAt,
 	)
 
@@ -547,6 +594,14 @@ func (r *gameRepository) GetByNameWithTx(ctx context.Context, tx *sql.Tx, name s
 		if err := json.Unmarshal(drawDaysJSON, &game.DrawDays); err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("failed to unmarshal draw days: %w", err)
+		}
+	}
+
+	// Unmarshal PrizeDetails JSON
+	if prizeDetailsJSON != nil {
+		if err := json.Unmarshal(prizeDetailsJSON, &game.PrizeDetails); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("failed to unmarshal prize details: %w", err)
 		}
 	}
 
@@ -574,6 +629,7 @@ func (r *gameRepository) GetActiveGames(ctx context.Context) ([]*models.Game, er
 			number_range_min, number_range_max, selection_count,
 			base_price, multi_draw_enabled, max_draws_advance,
 			logo_url, brand_color,
+			prize_details, rules, total_tickets, start_date, end_date,
 			created_at, updated_at
 		FROM games
 		WHERE UPPER(status) = 'ACTIVE'
@@ -591,6 +647,7 @@ func (r *gameRepository) GetActiveGames(ctx context.Context) ([]*models.Game, er
 	for rows.Next() {
 		game := &models.Game{}
 		var drawDaysJSON []byte
+		var prizeDetailsJSON []byte
 		err := rows.Scan(
 			&game.ID, &game.Code, &game.Name, &game.Type, &game.GameType, &game.GameFormat,
 			&game.GameCategory, &game.Organizer, &game.MinStakeAmount,
@@ -601,18 +658,25 @@ func (r *gameRepository) GetActiveGames(ctx context.Context) ([]*models.Game, er
 			&game.NumberRangeMin, &game.NumberRangeMax, &game.SelectionCount,
 			&game.BasePrice, &game.MultiDrawEnabled, &game.MaxDrawsAdvance,
 			&game.LogoURL, &game.BrandColor,
+			&prizeDetailsJSON, &game.Rules, &game.TotalTickets, &game.StartDate, &game.EndDate,
 			&game.CreatedAt, &game.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan game: %w", err)
 		}
 
-		// Unmarshal DrawDays JSON
 		if drawDaysJSON != nil {
 			if err := json.Unmarshal(drawDaysJSON, &game.DrawDays); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal draw days: %w", err)
 			}
 		}
+		if len(prizeDetailsJSON) > 0 {
+			if err := json.Unmarshal(prizeDetailsJSON, &game.PrizeDetails); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal prize details: %w", err)
+			}
+		}
+
+		log.Printf("[GetActiveGames] game=%s start_date=%v end_date=%v", game.Code, game.StartDate, game.EndDate)
 
 		games = append(games, game)
 	}
@@ -664,3 +728,5 @@ func (r *gameRepository) GetEnabledBetTypesByGameIDs(ctx context.Context, gameID
 
 	return result, nil
 }
+
+

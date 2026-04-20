@@ -7,7 +7,7 @@ ARG GIT_COMMIT_COUNT=0
 ARG GIT_HASH=unknown
 ARG BUILD_TIME=unknown
 ARG VERSION=dev
-# Rebuild trigger: 2025-09-11T04:55:00Z
+# Rebuild trigger: 2026-04-19T13:30:00Z
 
 # Install build dependencies
 RUN apk add --no-cache git make

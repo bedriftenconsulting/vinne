@@ -26,6 +26,13 @@ type GameBetType struct {
 	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 }
 
+// PrizeDetail represents a single prize entry in a competition
+type PrizeDetail struct {
+	Rank        int32  `json:"rank"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
 // Game represents a lottery game
 type Game struct {
 	ID                  uuid.UUID  `json:"id" db:"id"`
@@ -56,11 +63,11 @@ type Game struct {
 	MaxDrawsAdvance     *int32     `json:"max_draws_advance,omitempty" db:"max_draws_advance"`
 	WeeklySchedule      *bool      `json:"weekly_schedule,omitempty" db:"weekly_schedule"`
 	Description         *string    `json:"description,omitempty" db:"description"`
-	PrizeDetails        *string    `json:"prize_details,omitempty" db:"prize_details"`
-	Rules               *string    `json:"rules,omitempty" db:"rules"`
-	TotalTickets        int32      `json:"total_tickets" db:"total_tickets"`
-	StartDate           *string    `json:"start_date,omitempty" db:"start_date"` // YYYY-MM-DD
-	EndDate             *string    `json:"end_date,omitempty" db:"end_date"`     // YYYY-MM-DD
+	PrizeDetails        []PrizeDetail `json:"prize_details,omitempty" db:"prize_details"` // structured JSONB array
+	Rules               *string       `json:"rules,omitempty" db:"rules"`
+	TotalTickets        int32         `json:"total_tickets" db:"total_tickets"`
+	StartDate           *time.Time    `json:"start_date,omitempty" db:"start_date"` // stored as DATE — maps to draw_date in API
+	EndDate             *time.Time    `json:"end_date,omitempty" db:"end_date"`     // stored as DATE — maps to draw_date in API
 	LogoURL             *string    `json:"logo_url,omitempty" db:"logo_url"`
 	BrandColor          *string    `json:"brand_color,omitempty" db:"brand_color" validate:"omitempty,hexcolor"`
 	Status              string     `json:"status" db:"status"`
@@ -299,12 +306,12 @@ type CreateGameRequest struct {
 	MaxDrawsAdvance     *int32    `json:"max_draws_advance,omitempty"`
 	WeeklySchedule      *bool     `json:"weekly_schedule,omitempty"`
 	Description         *string   `json:"description,omitempty"`
-	PrizeDetails        *string   `json:"prize_details,omitempty"`
-	Rules               *string   `json:"rules,omitempty"`
-	TotalTickets        int32     `json:"total_tickets,omitempty"`
-	StartDate           *string   `json:"start_date,omitempty"` // YYYY-MM-DD
-	EndDate             *string   `json:"end_date,omitempty"`   // YYYY-MM-DD
-	Status              string    `json:"status,omitempty"`
+	PrizeDetails        []PrizeDetail `json:"prize_details,omitempty"`
+	Rules               *string       `json:"rules,omitempty"`
+	TotalTickets        int32         `json:"total_tickets,omitempty"`
+	StartDate           *time.Time    `json:"start_date,omitempty"` // maps to draw_date in API
+	EndDate             *time.Time    `json:"end_date,omitempty"`   // maps to draw_date in API
+	Status              string        `json:"status,omitempty"`
 }
 
 type UpdateGameRequest struct {
@@ -324,11 +331,10 @@ type UpdateGameRequest struct {
 	MultiDrawEnabled    *bool      `json:"multi_draw_enabled,omitempty"`
 	MaxDrawsAdvance     *int32     `json:"max_draws_advance,omitempty"`
 	WeeklySchedule      *bool      `json:"weekly_schedule,omitempty"`
-	PrizeDetails        *string    `json:"prize_details,omitempty"`
-	Rules               *string    `json:"rules,omitempty"`
-	TotalTickets        *int32     `json:"total_tickets,omitempty"`
-	StartDate           *string    `json:"start_date,omitempty"` // YYYY-MM-DD — special/monthly only
-	EndDate             *string    `json:"end_date,omitempty"`   // YYYY-MM-DD — special/monthly only
+	PrizeDetails        []PrizeDetail `json:"prize_details,omitempty"`
+	Rules               *string       `json:"rules,omitempty"`
+	TotalTickets        *int32        `json:"total_tickets,omitempty"`
+	DrawDate            *time.Time    `json:"draw_date,omitempty"` // nil = don't touch; non-nil = set both start+end date
 }
 
 type CreateGameRulesRequest struct {
@@ -506,10 +512,10 @@ func (req *CreateGameRequest) ConvertToGame() (*Game, error) {
 		WeeklySchedule:      req.WeeklySchedule,
 		Status:              status,
 		Description:         req.Description,
-		PrizeDetails:        req.PrizeDetails,
+		PrizeDetails:        req.PrizeDetails, // []PrizeDetail
 		Rules:               req.Rules,
-		StartDate:           req.StartDate,
-		EndDate:             req.EndDate,
+		StartDate:           req.StartDate, // *time.Time — same as draw_date
+		EndDate:             req.EndDate,   // *time.Time — same as draw_date
 		StartTime:           req.StartTime,
 		StartTimeStr:        req.StartTime,
 		EndTime:             req.EndTime,

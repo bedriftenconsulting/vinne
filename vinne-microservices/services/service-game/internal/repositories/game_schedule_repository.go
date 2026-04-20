@@ -473,10 +473,12 @@ func (r *gameScheduleRepository) DeleteUnplayedSchedulesInTimeRange(ctx context.
 		attribute.String("filter.status", "SCHEDULED"),
 	)
 
-	// Only delete schedules with SCHEDULED status (not COMPLETED or IN_PROGRESS)
+	// Delete SCHEDULED entries for this week — use scheduled_draw range to catch special games too
 	query := `DELETE FROM game_schedules
-		WHERE scheduled_start >= $1
-		AND scheduled_start <= $2
+		WHERE (
+			(scheduled_start >= $1 AND scheduled_start <= $2)
+			OR (scheduled_draw >= $1 AND scheduled_draw <= $2)
+		)
 		AND (status = 'SCHEDULED' OR status IS NULL)`
 
 	result, err := r.db.ExecContext(ctx, query, start, end)

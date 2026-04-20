@@ -14,7 +14,6 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Info,
-  Settings,
   DollarSign,
   Calendar,
   Trophy,
@@ -24,6 +23,7 @@ import {
   Archive,
   AlertCircle,
   CheckCircle,
+  FileText,
 } from 'lucide-react'
 import { formatInGhanaTime } from '@/lib/date-utils'
 import { gameService, type Game } from '@/services/games'
@@ -43,78 +43,58 @@ export function GameDetails({
   onClose,
   onEdit,
   onManageSchedule,
-  onManagePrizes,
 }: GameDetailsProps) {
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Fetch additional game data
-  const { data: prizeStructure } = useQuery({
-    queryKey: ['prize-structure', game.id],
-    queryFn: () => gameService.getPrizeStructure(game.id),
+  // Fetch fresh game data so prize_details and dates are always up-to-date
+  const { data: freshGame, isLoading: gameLoading } = useQuery({
+    queryKey: ['game-detail', game.id],
+    queryFn: () => gameService.getGame(game.id),
     enabled: isOpen,
+    staleTime: 0,
   })
 
-  const { data: upcomingDraws } = useQuery({
-    queryKey: ['upcoming-draws', game.id],
-    queryFn: () => gameService.getUpcomingDraws(game.id),
+  // Fetch scheduled draws for this game (from this week onwards)
+  const todayStr = new Date().toISOString().split('T')[0]
+  const { data: schedules } = useQuery({
+    queryKey: ['weekly-schedule-detail', game.id, todayStr],
+    queryFn: () => gameService.getWeeklySchedule(todayStr),
     enabled: isOpen,
+    staleTime: 0,
   })
+
+  // Always use freshGame — avoids stale list data that may lack draw_date
+  const g = freshGame ?? game
+
+  // Draws belonging to this game
+  const gameSchedules = (schedules || []).filter(s => s.game_id === game.id)
 
   const getStatusBadge = (status: string) => {
-    const statusMap: {
-      [key: string]: {
-        variant: 'default' | 'secondary' | 'outline' | 'destructive'
-        icon: React.ComponentType<{ className?: string }>
-        label: string
-      }
-    } = {
-      active: { variant: 'default', icon: CheckCircle, label: 'Active' },
-      draft: { variant: 'secondary', icon: Edit, label: 'Draft' },
-      pending_approval: { variant: 'outline', icon: Clock, label: 'Pending Approval' },
-      suspended: { variant: 'destructive', icon: Pause, label: 'Suspended' },
-      archived: { variant: 'secondary', icon: Archive, label: 'Archived' },
+    const s = status.toUpperCase()
+    const map: Record<string, { variant: 'default' | 'secondary' | 'outline' | 'destructive'; icon: React.ComponentType<{ className?: string }>; label: string }> = {
+      ACTIVE:    { variant: 'default',     icon: CheckCircle, label: 'Active' },
+      DRAFT:     { variant: 'secondary',   icon: Edit,        label: 'Draft' },
+      SUSPENDED: { variant: 'destructive', icon: Pause,       label: 'Suspended' },
+      ARCHIVED:  { variant: 'secondary',   icon: Archive,     label: 'Archived' },
     }
-
-    const normalizedStatus = status
-      .toLowerCase()
-      .replace(/([A-Z])/g, '_$1')
-      .toLowerCase()
-    const config = statusMap[normalizedStatus] || {
-      variant: 'secondary',
-      icon: AlertCircle,
-      label: status,
-    }
-    const Icon = config.icon
-
+    const cfg = map[s] || { variant: 'secondary', icon: AlertCircle, label: status }
+    const Icon = cfg.icon
     return (
-      <Badge variant={config.variant} className="gap-1">
+      <Badge variant={cfg.variant} className="gap-1">
         <Icon className="h-3 w-3" />
-        {config.label}
+        {cfg.label}
       </Badge>
     )
   }
 
-  const getGameTypeLabel = (type: string) => {
-    const typeMap: { [key: string]: string } = {
-      national: 'National Game',
-      private: 'Private Game',
-      '5_by_90': '5/90 Game',
-      direct: 'Direct Game',
-      perm: 'Perm Game',
-      banker: 'Banker Game',
-      super_6: 'Super 6',
-      midweek: 'Midweek Special',
-      aseda: 'Aseda',
-      bonanza: 'Bonanza',
-      noon_rush: 'Noon Rush',
-      evening: 'Evening Draw',
-    }
-    return typeMap[type] || type
-  }
+  const freqLabel = (f: string) =>
+    f === 'bi_weekly' ? 'Bi-Weekly' : f.charAt(0).toUpperCase() + f.slice(1).replace('_', ' ')
 
-  const getDrawFrequencyLabel = (frequency: string) => {
-    return frequency.charAt(0).toUpperCase() + frequency.slice(1).replace('_', ' ')
-  }
+  const fmtDate = (d: string | undefined) =>
+    d ? formatInGhanaTime(d, 'PPP') : '—'
+
+  const needsDates = g.draw_frequency === 'special' || g.draw_frequency === 'monthly'
+  const drawDate = g.draw_date || g.end_date
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -122,13 +102,13 @@ export function GameDetails({
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div>
-              <DialogTitle className="text-2xl">{game.name}</DialogTitle>
+              <DialogTitle className="text-2xl">{g.name}</DialogTitle>
               <DialogDescription className="mt-2">
-                Game Code: {game.code} • Version: {game.version}
+                Game Code: {g.code} • Version: {g.version ?? 1}
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2">
-              {getStatusBadge(game.status)}
+              {getStatusBadge(g.status)}
               <Button variant="outline" size="sm" onClick={onEdit}>
                 <Edit className="mr-2 h-4 w-4" />
                 Edit
@@ -144,7 +124,7 @@ export function GameDetails({
               Overview
             </TabsTrigger>
             <TabsTrigger value="rules" className="gap-2">
-              <Settings className="h-4 w-4" />
+              <FileText className="h-4 w-4" />
               Rules
             </TabsTrigger>
             <TabsTrigger value="pricing" className="gap-2">
@@ -161,172 +141,159 @@ export function GameDetails({
             </TabsTrigger>
           </TabsList>
 
+          {/* ── Overview ── */}
           <TabsContent value="overview" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Game Information</CardTitle>
-                <CardDescription>Basic details about this lottery game</CardDescription>
+                <CardTitle>Competition Information</CardTitle>
+                <CardDescription>Basic details about this competition</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Game Type</p>
-                      <p className="font-medium">
-                        {getGameTypeLabel(game.game_type || game.type || 'unknown')}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Created Date</p>
-                      <p className="font-medium">
-                        {formatInGhanaTime(game.created_at, 'PPP')}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Last Updated</p>
-                      <p className="font-medium">
-                        {formatInGhanaTime(game.updated_at, 'PPP')}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Draw Frequency</p>
-                      <p className="font-medium">{getDrawFrequencyLabel(game.draw_frequency)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Sales Cutoff</p>
-                      <p className="font-medium">{game.sales_cutoff_minutes} minutes before draw</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Multi-Draw</p>
-                      <p className="font-medium">
-                        {game.multi_draw_enabled ? (
-                          <span className="text-green-600">
-                            Enabled (Max: {game.max_multi_draws || 'N/A'})
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">Disabled</span>
+                {gameLoading && !freshGame ? (
+                  <div className="text-sm text-muted-foreground py-4">Loading…</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Draw Frequency</p>
+                          <p className="font-medium">{freqLabel(g.draw_frequency)}</p>
+                        </div>
+                        {needsDates && (
+                          <>
+                            <div>
+                              <p className="text-sm text-muted-foreground">Draw Date</p>
+                              <p className="font-medium">{fmtDate(drawDate)}</p>
+                            </div>
+                          </>
                         )}
-                      </p>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Created</p>
+                          <p className="font-medium">{fmtDate(g.created_at)}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Sales Cutoff</p>
+                          <p className="font-medium">{g.sales_cutoff_minutes} minutes before draw</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Total Tickets</p>
+                          <p className="font-medium">{g.total_tickets?.toLocaleString() ?? '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Tickets Sold</p>
+                          <p className="font-medium">{g.sold_tickets?.toLocaleString() ?? '0'}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Last Updated</p>
+                          <p className="font-medium">{fmtDate(g.updated_at)}</p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                    {g.description && (
+                      <>
+                        <Separator className="my-4" />
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-1">Description</p>
+                          <p className="text-sm">{g.description}</p>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>Performance Metrics</CardTitle>
-                <CardDescription>Game statistics and performance indicators</CardDescription>
+                <CardTitle>Performance</CardTitle>
+                <CardDescription>Ticket sales metrics</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div className="text-center">
-                    <div className="text-2xl font-bold">0</div>
-                    <p className="text-xs text-muted-foreground">Total Tickets Sold</p>
+                    <div className="text-2xl font-bold">{g.sold_tickets ?? 0}</div>
+                    <p className="text-xs text-muted-foreground">Tickets Sold</p>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold">₵0</div>
-                    <p className="text-xs text-muted-foreground">Total Revenue</p>
+                    <div className="text-2xl font-bold">{g.total_tickets ?? '—'}</div>
+                    <p className="text-xs text-muted-foreground">Total Available</p>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold">0</div>
-                    <p className="text-xs text-muted-foreground">Total Draws</p>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold">₵0</div>
-                    <p className="text-xs text-muted-foreground">Total Payouts</p>
+                    <div className="text-2xl font-bold">
+                      ₵{((g.sold_tickets ?? 0) * (g.base_price ?? 0)).toFixed(2)}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Revenue</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* ── Rules ── */}
           <TabsContent value="rules" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Game Rules Configuration</CardTitle>
-                <CardDescription>Number selection rules</CardDescription>
+                <CardTitle>Competition Rules</CardTitle>
+                <CardDescription>Terms and conditions for participants</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Number Range</p>
-                    <p className="text-lg font-medium">
-                      {game.number_range_min} - {game.number_range_max}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Selection Count</p>
-                    <p className="text-lg font-medium">{game.selection_count} numbers</p>
-                  </div>
-                </div>
+              <CardContent>
+                {g.rules ? (
+                  <p className="text-sm whitespace-pre-wrap">{g.rules}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No rules configured for this competition.</p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* ── Pricing ── */}
           <TabsContent value="pricing" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle>Pricing & Limits</CardTitle>
                 <CardDescription>Ticket pricing and purchase limits</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
+              <CardContent>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-4">
                     <div>
-                      <p className="text-sm text-muted-foreground">Base Ticket Price</p>
+                      <p className="text-sm text-muted-foreground">Ticket Price</p>
                       <p className="text-2xl font-bold">
-                        ₵{(game.base_price || game.ticket_price || 0).toFixed(2)}
+                        ₵{(g.base_price ?? g.ticket_price ?? 0).toFixed(2)}
                       </p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Max Tickets per Player</p>
-                      <p className="text-lg font-medium">{game.max_tickets_per_player}</p>
+                      <p className="text-lg font-medium">{g.max_tickets_per_player}</p>
                     </div>
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
-                      <p className="text-sm text-muted-foreground">Price Range</p>
-                      <p className="text-lg font-medium">₵0.50 - ₵200.00</p>
+                      <p className="text-sm text-muted-foreground">Total Tickets Available</p>
+                      <p className="text-lg font-medium">{g.total_tickets?.toLocaleString() ?? '—'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Max Tickets per Transaction</p>
-                      <p className="text-lg font-medium">{game.max_tickets_per_player}</p>
+                      <p className="text-sm text-muted-foreground">Total Revenue Potential</p>
+                      <p className="text-lg font-medium">
+                        ₵{((g.total_tickets ?? 0) * (g.base_price ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
                     </div>
                   </div>
                 </div>
-
-                {game.multi_draw_enabled && (
-                  <>
-                    <Separator />
-                    <div className="rounded-lg bg-muted p-4">
-                      <p className="font-medium mb-2">Multi-Draw Settings</p>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Status</p>
-                          <p className="text-sm font-medium text-green-600">Enabled</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Maximum Advance Draws</p>
-                          <p className="text-sm font-medium">{game.max_multi_draws || 'Not set'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* ── Schedule ── */}
           <TabsContent value="schedule" className="space-y-4">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle>Draw Schedule</CardTitle>
-                    <CardDescription>Upcoming draws and timing configuration</CardDescription>
+                    <CardDescription>Timing configuration and upcoming draws</CardDescription>
                   </div>
                   <Button size="sm" onClick={onManageSchedule}>
                     <Calendar className="mr-2 h-4 w-4" />
@@ -334,123 +301,106 @@ export function GameDetails({
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Frequency</p>
+                    <p className="font-medium">{freqLabel(g.draw_frequency)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Draw Time</p>
+                    <p className="font-medium">{g.draw_time || 'Not set'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sales Cutoff</p>
+                    <p className="font-medium">{g.sales_cutoff_minutes} min before draw</p>
+                  </div>
+                </div>
+
+                {needsDates && (
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-sm text-muted-foreground">Frequency</p>
-                      <p className="font-medium">{getDrawFrequencyLabel(game.draw_frequency)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Draw Time</p>
-                      <p className="font-medium">{game.draw_time || 'Not set'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Sales Cutoff</p>
-                      <p className="font-medium">{game.sales_cutoff_minutes} min before draw</p>
+                      <p className="text-sm text-muted-foreground">Draw Date</p>
+                      <p className="font-medium">{fmtDate(drawDate)}</p>
                     </div>
                   </div>
+                )}
 
-                  {game.draw_days && game.draw_days.length > 0 && (
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-2">Draw Days</p>
-                      <div className="flex gap-2">
-                        {game.draw_days.map(day => (
-                          <Badge key={day} variant="secondary">
-                            {day.charAt(0).toUpperCase() + day.slice(1)}
-                          </Badge>
-                        ))}
-                      </div>
+                {g.draw_days && g.draw_days.length > 0 && (
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">Draw Days</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {g.draw_days.map(day => (
+                        <Badge key={day} variant="secondary">
+                          {day.charAt(0).toUpperCase() + day.slice(1)}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <Separator />
+
+                <div>
+                  <p className="font-medium mb-3">Scheduled Draws</p>
+                  {gameSchedules.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No draws scheduled yet. Use Manage Schedule to generate them.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {gameSchedules.slice(0, 5).map(s => {
+                        const drawTime = typeof s.scheduled_draw === 'string'
+                          ? s.scheduled_draw
+                          : new Date((s.scheduled_draw as { seconds: number }).seconds * 1000).toISOString()
+                        return (
+                          <div key={s.id} className="flex items-center justify-between p-3 rounded-lg border">
+                            <div>
+                              <p className="text-sm font-medium">{formatInGhanaTime(drawTime, 'PPP')}</p>
+                              <p className="text-xs text-muted-foreground">{formatInGhanaTime(drawTime, 'p')} Ghana time</p>
+                            </div>
+                            <Badge variant={s.is_active ? 'default' : 'secondary'}>
+                              {s.status || (s.is_active ? 'Scheduled' : 'Inactive')}
+                            </Badge>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
-
-                  <Separator />
-
-                  <div>
-                    <p className="font-medium mb-3">Upcoming Draws</p>
-                    {!upcomingDraws || upcomingDraws.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No upcoming draws scheduled</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {upcomingDraws.slice(0, 5).map(draw => (
-                          <div
-                            key={draw.id}
-                            className="flex items-center justify-between p-2 rounded-lg border"
-                          >
-                            <div>
-                              <p className="text-sm font-medium">
-                                {formatInGhanaTime(new Date(draw.draw_date), 'PPP')}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                Draw at {draw.draw_time} • Sales close at {draw.sales_cutoff_time}
-                              </p>
-                            </div>
-                            {draw.is_special && (
-                              <Badge variant="default">{draw.special_name || 'Special Draw'}</Badge>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* ── Prizes ── */}
           <TabsContent value="prizes" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Prize Structure</CardTitle>
-                    <CardDescription>
-                      Prize pool configuration and tier distribution
-                    </CardDescription>
-                  </div>
-                  <Button size="sm" onClick={onManagePrizes}>
-                    <Trophy className="mr-2 h-4 w-4" />
-                    Manage Prizes
-                  </Button>
-                </div>
+                <CardTitle>Prize Structure</CardTitle>
+                <CardDescription>Competition prizes by rank</CardDescription>
               </CardHeader>
               <CardContent>
-                {!prizeStructure ? (
+                {!g.prize_details || g.prize_details.length === 0 ? (
                   <div className="text-center py-8">
                     <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">No prize structure configured</p>
-                    <Button variant="outline" className="mt-4" onClick={onManagePrizes}>
-                      Configure Prize Structure
+                    <p className="text-muted-foreground">No prizes configured for this competition.</p>
+                    <Button variant="outline" className="mt-4" onClick={onEdit}>
+                      Edit Competition to Add Prizes
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Prize Pool</p>
-                        <p className="text-lg font-medium">50% of sales</p>
+                  <div className="space-y-3">
+                    {g.prize_details.map(prize => (
+                      <div key={prize.rank} className="flex items-start gap-4 p-3 rounded-lg border">
+                        <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary font-bold shrink-0">
+                          #{prize.rank}
+                        </div>
+                        <div>
+                          <p className="font-medium">{prize.label}</p>
+                          {prize.description && (
+                            <p className="text-sm text-muted-foreground">{prize.description}</p>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Rollover</p>
-                        <p className="text-lg font-medium">
-                          {prizeStructure ? 'Enabled' : 'Disabled'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-sm text-muted-foreground">Guaranteed Minimum Jackpot</p>
-                      <p className="text-lg font-medium">₵10,000</p>
-                    </div>
-
-                    <Separator />
-
-                    <div>
-                      <p className="font-medium mb-3">Prize Tiers</p>
-                      <p className="text-sm text-muted-foreground">
-                        Configure prize tiers in the prize management section
-                      </p>
-                    </div>
+                    ))}
                   </div>
                 )}
               </CardContent>

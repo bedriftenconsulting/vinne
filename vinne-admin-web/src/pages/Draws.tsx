@@ -348,7 +348,7 @@ export default function Draws() {
                       <p className="mt-1 text-sm text-gray-500">
                         {searchTerm || statusFilter !== 'all' || gameFilter !== 'all'
                           ? 'Try adjusting your filters'
-                          : 'Get started by creating a new draw'}
+                          : 'Draws appear here automatically when scheduled draw times are reached'}
                       </p>
                     </TableCell>
                   </TableRow>

@@ -16,6 +16,7 @@ import (
 	"github.com/randco/randco-microservices/services/api-gateway/internal/timeutil"
 	"github.com/randco/randco-microservices/shared/common/logger"
 	"github.com/randco/randco-microservices/shared/storage"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -70,12 +71,14 @@ type CreateGameRequest struct {
 	MaxDrawsAdvance     int32     `json:"max_draws_advance,omitempty"`
 	WeeklySchedule      bool      `json:"weekly_schedule,omitempty"`
 	Description         string    `json:"description,omitempty"`
-	PrizeDetails        string    `json:"prize_details,omitempty"`
-	Rules               string    `json:"rules,omitempty"`
-	TotalTickets        int32     `json:"total_tickets,omitempty"`
-	StartDate           string    `json:"start_date,omitempty"`
-	EndDate             string    `json:"end_date,omitempty"`
-	Status              string    `json:"status,omitempty"`
+	// prize_details is a JSON array: [{"rank":1,"label":"1st Prize","description":"BMW 3 Series"}]
+	PrizeDetails        json.RawMessage `json:"prize_details,omitempty"`
+	Rules               string          `json:"rules,omitempty"`
+	TotalTickets        int32           `json:"total_tickets,omitempty"`
+	DrawDate string `json:"draw_date,omitempty"`
+	StartDate string `json:"start_date,omitempty"` // legacy — maps to draw_date
+	EndDate   string `json:"end_date,omitempty"`   // legacy — maps to draw_date
+	Status              string          `json:"status,omitempty"`
 }
 
 // UpdateGameRequest represents the JSON request from frontend for updating a game
@@ -95,11 +98,11 @@ type UpdateGameRequest struct {
 	MultiDrawEnabled    *bool    `json:"multi_draw_enabled,omitempty"`
 	MaxDrawsAdvance     *int32   `json:"max_draws_advance,omitempty"`
 	WeeklySchedule      *bool    `json:"weekly_schedule,omitempty"`
-	PrizeDetails        *string  `json:"prize_details,omitempty"`
-	Rules               *string  `json:"rules,omitempty"`
-	TotalTickets        *int32   `json:"total_tickets,omitempty"`
-	StartDate           *string  `json:"start_date,omitempty"`
-	EndDate             *string  `json:"end_date,omitempty"`
+	// prize_details is a JSON array: [{"rank":1,"label":"1st Prize","description":"BMW 3 Series"}]
+	PrizeDetails        json.RawMessage `json:"prize_details,omitempty"`
+	Rules               *string         `json:"rules,omitempty"`
+	TotalTickets        *int32          `json:"total_tickets,omitempty"`
+	DrawDate *string `json:"draw_date,omitempty"`
 }
 
 // CreateGame creates a new game
@@ -110,6 +113,8 @@ func (h *gameHandler) CreateGame(w http.ResponseWriter, r *http.Request) error {
 	if err := json.NewDecoder(r.Body).Decode(&jsonReq); err != nil {
 		return response.Error(w, http.StatusBadRequest, "INVALID_JSON", "Invalid JSON payload", err)
 	}
+
+	h.log.Info("CreateGame decoded request", "code", jsonReq.Code, "name", jsonReq.Name, "draw_frequency", jsonReq.DrawFrequency, "draw_date", jsonReq.DrawDate)
 
 	// Log received bet types for debugging
 	h.log.Debug("Received bet_types from frontend",
@@ -156,11 +161,15 @@ func (h *gameHandler) CreateGame(w http.ResponseWriter, r *http.Request) error {
 		MaxDrawsAdvance:     jsonReq.MaxDrawsAdvance,
 		WeeklySchedule:      jsonReq.WeeklySchedule,
 		Description:         jsonReq.Description,
-		PrizeDetails:        jsonReq.PrizeDetails,
+		// prize_details: convert JSON array bytes to JSON string for the proto
+		PrizeDetails:        string(jsonReq.PrizeDetails),
 		Rules:               jsonReq.Rules,
 		TotalTickets:        jsonReq.TotalTickets,
-		StartDate:           jsonReq.StartDate,
-		EndDate:             jsonReq.EndDate,
+		DrawDate:            func() string {
+			if jsonReq.DrawDate != "" { return jsonReq.DrawDate }
+			if jsonReq.EndDate != "" { return jsonReq.EndDate }
+			return jsonReq.StartDate
+		}(),
 		Status:              jsonReq.Status,
 	}
 
@@ -182,7 +191,12 @@ func (h *gameHandler) CreateGame(w http.ResponseWriter, r *http.Request) error {
 		return response.Error(w, http.StatusInternalServerError, "CREATE_FAILED", errorMessage, nil)
 	}
 
-	return response.Success(w, http.StatusCreated, "Game created successfully", game)
+	// Wrap in a map so prize_details is returned as a JSON array, not a JSON string
+	return response.Success(w, http.StatusCreated, "Game created successfully", map[string]interface{}{
+		"game":    transformGameToMap(game.Game),
+		"success": game.Success,
+		"message": game.Message,
+	})
 }
 
 // GetGame retrieves a game by ID
@@ -207,7 +221,11 @@ func (h *gameHandler) GetGame(w http.ResponseWriter, r *http.Request) error {
 		return response.Error(w, http.StatusInternalServerError, "GET_FAILED", "Failed to get game", err)
 	}
 
-	return response.Success(w, http.StatusOK, "Game retrieved successfully", game)
+	return response.Success(w, http.StatusOK, "Game retrieved successfully", map[string]interface{}{
+		"game":    transformGameToMap(game.Game),
+		"success": game.Success,
+		"message": game.Message,
+	})
 }
 
 // ListGames retrieves all games with filtering
@@ -231,14 +249,14 @@ func (h *gameHandler) ListGames(w http.ResponseWriter, r *http.Request) error {
 		return response.Error(w, http.StatusInternalServerError, "LIST_FAILED", "Failed to list games", err)
 	}
 
-	// Format the response with games array
-	games := resp.Games
-	if games == nil {
-		games = []*gamepb.Game{} // Return empty array if nil
+	// Format the response — transform each game so prize_details is a JSON array
+	transformedGames := make([]interface{}, 0, len(resp.Games))
+	for _, g := range resp.Games {
+		transformedGames = append(transformedGames, transformGameToMap(g))
 	}
 
 	data := map[string]interface{}{
-		"games":    games,
+		"games":    transformedGames,
 		"total":    resp.Total,
 		"page":     resp.Page,
 		"per_page": resp.PerPage,
@@ -322,7 +340,8 @@ func (h *gameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) error {
 		protoReq.Description = *jsonReq.Description
 	}
 	if jsonReq.PrizeDetails != nil {
-		protoReq.PrizeDetails = *jsonReq.PrizeDetails
+		// Convert JSON array bytes to JSON string for the proto
+		protoReq.PrizeDetails = string(jsonReq.PrizeDetails)
 	}
 	if jsonReq.Rules != nil {
 		protoReq.Rules = *jsonReq.Rules
@@ -330,12 +349,10 @@ func (h *gameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) error {
 	if jsonReq.TotalTickets != nil {
 		protoReq.TotalTickets = *jsonReq.TotalTickets
 	}
-	// Always send start_date and end_date (empty string clears them on the backend)
-	if jsonReq.StartDate != nil {
-		protoReq.StartDate = *jsonReq.StartDate
-	}
-	if jsonReq.EndDate != nil {
-		protoReq.EndDate = *jsonReq.EndDate
+	// draw_date: maps to DrawDate on the proto
+	if jsonReq.DrawDate != nil {
+		h.log.Info("UpdateGame: setting draw_date on proto", "game_id", gameID, "draw_date", *jsonReq.DrawDate)
+		protoReq.DrawDate = *jsonReq.DrawDate
 	}
 
 	client, err := h.grpcManager.GameServiceClient()
@@ -350,7 +367,11 @@ func (h *gameHandler) UpdateGame(w http.ResponseWriter, r *http.Request) error {
 		return response.Error(w, http.StatusInternalServerError, "UPDATE_FAILED", "Failed to update game", err)
 	}
 
-	return response.Success(w, http.StatusOK, "Game updated successfully", game)
+	return response.Success(w, http.StatusOK, "Game updated successfully", map[string]interface{}{
+		"game":    transformGameToMap(game.Game),
+		"success": game.Success,
+		"message": game.Message,
+	})
 }
 
 // DeleteGame deletes a game
@@ -1358,11 +1379,11 @@ func (h *gameHandler) GetActiveGames(w http.ResponseWriter, r *http.Request) err
 			"description":            game.Description,
 			"logo_url":               game.LogoUrl,
 			"brand_color":            game.BrandColor,
-			"start_date":             game.StartDate,
-			"end_date":               game.EndDate,
+			"draw_date":              game.DrawDate,
 			"prize_details":          game.PrizeDetails,
 			"total_tickets":          game.TotalTickets,
 		}
+		h.log.Info("GetActiveGames: game dates", "code", game.Code, "draw_date", game.DrawDate)
 		publicGames = append(publicGames, publicGame)
 	}
 
@@ -1931,3 +1952,41 @@ func detectImageType(data []byte) string {
 
 	return "" // Unknown type
 }
+
+// transformGameToMap converts a proto Game to a plain map for JSON response.
+// Critically, it re-parses prize_details from a JSON-encoded string back into
+// a native JSON array so the frontend receives [{rank,label,description},...].
+// start_date and end_date remain YYYY-MM-DD strings.
+func transformGameToMap(game *gamepb.Game) map[string]interface{} {
+	if game == nil {
+		return nil
+	}
+
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames:   true,
+		EmitUnpopulated: true,
+	}
+	jsonBytes, err := marshaler.Marshal(game)
+	if err != nil {
+		return nil
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &m); err != nil {
+		return nil
+	}
+
+	// Re-parse prize_details from JSON string to a real JSON array
+	if pd, ok := m["prize_details"].(string); ok && pd != "" {
+		var prizes []interface{}
+		if json.Unmarshal([]byte(pd), &prizes) == nil {
+			m["prize_details"] = prizes
+		}
+	}
+
+	// draw_date is already in the map as "draw_date" (UseProtoNames=true)
+	// No remapping needed — it comes directly from the Game.draw_date proto field
+
+	return m
+}
+

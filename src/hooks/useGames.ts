@@ -6,29 +6,47 @@ import type { Competition } from '@/lib/competitions';
 
 // Build a draw end time from the game's draw_time ("HH:MM") for today/tomorrow
 function nextDrawTime(drawTime: string): Date {
-  const [hh, mm] = drawTime.split(':').map(Number);
+  // Extract HH:MM from various formats: "20:00", "0001-01-01 20:00:00 BC", etc.
+  const match = drawTime.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const [, hh, mm] = match;
   const now = new Date();
   const d = new Date(now);
-  d.setHours(hh, mm, 0, 0);
+  d.setHours(parseInt(hh), parseInt(mm), 0, 0);
   // If already past today's draw time, use tomorrow
   if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
   return d;
 }
 
 function gameToCompetition(g: Game): Competition {
-  // Resolve end time: prefer explicit end_date combined with draw_time, else compute from draw_time
+  const isSpecial = g.draw_frequency === 'special' || g.draw_frequency === 'SPECIAL';
+
+  // Resolve end time
   let endsAt: Date;
-  if (g.end_date) {
-    // Combine end_date with draw_time for accurate countdown
-    // e.g. end_date="2026-05-03" + draw_time="18:00" → "2026-05-03T18:00:00"
-    if (g.draw_time && g.draw_time.includes(':')) {
-      endsAt = new Date(`${g.end_date.split('T')[0]}T${g.draw_time}:00`);
+  if (isSpecial) {
+    // Special draws: always use the explicit end_date + draw_time — never the 24h rolling cycle
+    if (g.end_date) {
+      const dateStr = g.end_date.split('T')[0];
+      // Extract HH:MM from draw_time — handles "20:00", "0001-01-01 20:00:00 BC", etc.
+      const timeMatch = g.draw_time?.match(/(\d{1,2}):(\d{2})/);
+      if (timeMatch) {
+        const hh = timeMatch[1].padStart(2, '0');
+        const mm = timeMatch[2];
+        endsAt = new Date(`${dateStr}T${hh}:${mm}:00`);
+      } else {
+        // No draw_time — use end of day on end_date (local time)
+        const [y, mo, d] = dateStr.split('-').map(Number);
+        endsAt = new Date(y, mo - 1, d, 20, 0, 0);
+      }
+    } else if (g.draw_date) {
+      endsAt = new Date(g.draw_date);
     } else {
-      endsAt = new Date(g.end_date);
+      endsAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
     }
   } else if (g.draw_date) {
     endsAt = new Date(g.draw_date);
   } else if (g.draw_time) {
+    // All other frequencies: rolling 24h countdown to next draw time
     endsAt = nextDrawTime(g.draw_time);
   } else {
     endsAt = new Date(Date.now() + 24 * 60 * 60 * 1000);

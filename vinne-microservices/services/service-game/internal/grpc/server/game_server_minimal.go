@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +47,24 @@ func (s *GameServerMinimal) CreateGame(ctx context.Context, req *pb.CreateGameRe
 		attribute.String("game.code", req.Code),
 	)
 
+	// Parse draw_date from YYYY-MM-DD — sets both start_date and end_date in DB
+	var createDrawDate *time.Time
+	fmt.Printf("[GameServerMinimal] CreateGame: draw_date=%q, draw_frequency=%q\n", req.DrawDate, req.DrawFrequency)
+	if req.DrawDate != "" {
+		if t, err := time.Parse("2006-01-02", req.DrawDate); err == nil {
+			createDrawDate = &t
+		}
+	}
+
+	// Parse prize_details JSON string to []models.PrizeDetail
+	var createPrizes []models.PrizeDetail
+	if req.PrizeDetails != "" {
+		if err := json.Unmarshal([]byte(req.PrizeDetails), &createPrizes); err != nil {
+			log.Printf("[GameServerMinimal] CreateGame: failed to parse prize_details JSON: %v", err)
+			// Non-fatal — proceed with empty prize list
+		}
+	}
+
 	// Convert proto request to service request
 	serviceReq := models.CreateGameRequest{
 		Code:                req.Code,
@@ -63,14 +83,20 @@ func (s *GameServerMinimal) CreateGame(ctx context.Context, req *pb.CreateGameRe
 		DrawDays:            req.DrawDays,
 		DrawTime:            convertProtoTimeStringPtr(req.DrawTime),
 		SalesCutoffMinutes:  req.SalesCutoffMinutes,
-		MinStake:            req.MinStake,  // Keep as float64 in dollars
-		MaxStake:            req.MaxStake,  // Keep as float64 in dollars
-		BasePrice:           req.BasePrice, // Keep as float64 in dollars
+		MinStake:            req.MinStake,
+		MaxStake:            req.MaxStake,
+		BasePrice:           req.BasePrice,
 		MaxTicketsPerPlayer: req.MaxTicketsPerPlayer,
 		MultiDrawEnabled:    req.MultiDrawEnabled,
 		MaxDrawsAdvance:     convertProtoInt32Ptr(req.MaxDrawsAdvance),
 		WeeklySchedule:      convertProtoBoolPtr(req.WeeklySchedule),
 		Description:         convertProtoStringPtr(req.Description),
+		PrizeDetails:        createPrizes,
+		Rules:               convertProtoStringPtr(req.Rules),
+		TotalTickets:        req.TotalTickets,
+		StartDate:           createDrawDate,
+		EndDate:             createDrawDate,
+		Status:              strings.ToUpper(req.Status),
 	}
 
 	// Call service
@@ -228,7 +254,24 @@ func (s *GameServerMinimal) UpdateGame(ctx context.Context, req *pb.UpdateGameRe
 		}
 	}
 
-	// Convert protobuf request to service request
+	// Parse draw_date from start_date/end_date proto fields
+	var updateDrawDate *time.Time
+	if req.DrawDate != "" {
+		if parsed, perr := time.Parse("2006-01-02", req.DrawDate); perr == nil {
+			updateDrawDate = &parsed
+		}
+	}
+
+	// Parse prize_details JSON string to []models.PrizeDetail.
+	var updatePrizes []models.PrizeDetail
+	if req.PrizeDetails != "" {
+		if err := json.Unmarshal([]byte(req.PrizeDetails), &updatePrizes); err != nil {
+			log.Printf("[GameServerMinimal] UpdateGame: failed to parse prize_details JSON: %v", err)
+			updatePrizes = nil
+		}
+	}
+
+	fmt.Printf("[GameServerMinimal] UpdateGame: draw_date=%q prize_details=%q\n", req.DrawDate, req.PrizeDetails)
 	serviceReq := models.UpdateGameRequest{
 		ID:                  id,
 		Name:                convertProtoStringPtr(req.Name),
@@ -246,12 +289,10 @@ func (s *GameServerMinimal) UpdateGame(ctx context.Context, req *pb.UpdateGameRe
 		MultiDrawEnabled:    convertProtoBoolPtr(req.MultiDrawEnabled),
 		MaxDrawsAdvance:     convertProtoInt32Ptr(req.MaxDrawsAdvance),
 		WeeklySchedule:      convertProtoBoolPtr(req.WeeklySchedule),
-		PrizeDetails:        convertProtoStringPtr(req.PrizeDetails),
+		PrizeDetails:        updatePrizes,
 		Rules:               convertProtoStringPtr(req.Rules),
 		TotalTickets:        convertProtoInt32Ptr(req.TotalTickets),
-		// Pass start_date/end_date as pointers so empty string can clear the field
-		StartDate:           &req.StartDate,
-		EndDate:             &req.EndDate,
+		DrawDate:            updateDrawDate,
 	}
 
 	// Call service

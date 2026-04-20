@@ -9,6 +9,9 @@ import CompetitionDetail from "./pages/CompetitionDetail";
 import ResultsPage from "./pages/ResultsPage";
 import FAQPage from "./pages/FAQPage";
 import NotFound from "./pages/NotFound";
+import SignInPage from "./pages/SignInPage";
+import SignUpPage from "./pages/SignUpPage";
+import MyTicketsPage from "./pages/MyTicketsPage";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +27,9 @@ const App = () => (
           <Route path="/competitions/:id" element={<CompetitionDetail />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/faq" element={<FAQPage />} />
+          <Route path="/sign-in" element={<SignInPage />} />
+          <Route path="/sign-up" element={<SignUpPage />} />
+          <Route path="/my-tickets" element={<MyTicketsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
