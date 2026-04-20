@@ -1,6 +1,5 @@
 // Central API helper for the website
-
-const BASE = "/api/v1";
+const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 
 export const getToken = () => localStorage.getItem("player_token");
 export const getPlayerId = (): string | null => {
