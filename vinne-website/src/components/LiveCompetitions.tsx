@@ -40,7 +40,7 @@ const useTicketsSold = (gameId: string) => {
   return sold;
 };
 
-// ── Competition Card — exact BOTB style ───────────────────────────────────────
+// ── Competition Card — dark theme matching hero ───────────────────────────────
 const CompCard = ({ game }: { game: ApiGame }) => {
   const drawDate = getNextDrawDate(game);
   const { days } = useCountdown(drawDate);
@@ -52,73 +52,76 @@ const CompCard = ({ game }: { game: ApiGame }) => {
   const isUrgent = days <= 1;
 
   return (
-    <div className="bg-white rounded-2xl overflow-hidden shadow-lg flex flex-col">
-      {/* Image area */}
-      <div className="relative">
-        <div className="aspect-[4/3] overflow-hidden bg-gray-100">
-          {game.logo_url
-            ? <img src={`${game.logo_url}?t=${Math.floor(Date.now() / 3600000)}`} alt={game.name}
-                className="w-full h-full object-cover" />
-            : <div className="w-full h-full flex items-center justify-center bg-gray-200">
-                <Trophy size={64} className="text-gray-300" />
-              </div>
-          }
-        </div>
+    <div className="rounded-2xl overflow-hidden flex flex-col"
+      style={{ background: "hsl(0 0% 8%)", border: "1px solid hsl(0 0% 14%)" }}>
 
-        {/* ENDS badge — top left, gradient pill */}
+      {/* Image */}
+      <div className="relative aspect-[4/3] overflow-hidden bg-black">
+        {game.logo_url
+          ? <img src={`${game.logo_url}?t=${Math.floor(Date.now() / 3600000)}`} alt={game.name}
+              className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" />
+          : <div className="w-full h-full flex items-center justify-center"><Trophy size={64} className="text-white/10" /></div>
+        }
+        {/* ENDS badge */}
         <span className="absolute top-3 left-3 font-bold text-white px-3 py-1 rounded-lg shadow-lg"
-          style={{
-            background: "linear-gradient(90deg, #ff0080, #ff6000)",
-            fontFamily: "'Poppins', 'Nunito', sans-serif",
-            fontSize: "0.72rem",
-          }}>
+          style={{ background: "linear-gradient(90deg,#ff0080,#ff6000)", fontFamily: "'Poppins',sans-serif", fontSize: "0.72rem" }}>
           {endsLabel}
         </span>
-
-        {/* Prize name banner — bottom of image */}
+        {/* Red prize banner */}
         <div className="absolute bottom-0 left-0 right-0 py-2.5 px-4 text-center"
           style={{ background: isUrgent ? "#8B0000" : "#cc0000" }}>
           <p className="font-bold text-white text-sm tracking-wide uppercase"
-            style={{ fontFamily: "'Poppins', sans-serif" }}>
+            style={{ fontFamily: "'Poppins',sans-serif" }}>
             {prize ? `${prize}!` : game.name.toUpperCase()}
           </p>
         </div>
       </div>
 
-      {/* Card body */}
+      {/* Card body — dark */}
       <div className="p-5 flex flex-col flex-1">
         {/* Description */}
-        <p className="text-gray-700 text-sm text-center leading-snug mb-4 flex-1"
-          style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+        <p className="text-white/60 text-sm text-center leading-snug mb-4 flex-1"
+          style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 500 }}>
           {game.description || `Win a ${prize || game.name}!`}
         </p>
 
         {/* Ticket price */}
         <div className="text-center mb-4">
-          <p className="text-gray-400 text-xs font-semibold tracking-widest uppercase mb-0.5"
-            style={{ fontFamily: "'Poppins', sans-serif" }}>TICKET PRICE</p>
-          <p className="font-heading font-black text-gray-900 text-3xl">GHS {game.base_price.toFixed(2)}</p>
+          <p className="text-white/40 text-xs font-semibold tracking-widest uppercase mb-0.5"
+            style={{ fontFamily: "'Poppins',sans-serif" }}>TICKET PRICE</p>
+          <p className="font-heading font-black text-gold text-3xl">GHS {game.base_price.toFixed(2)}</p>
         </div>
 
         {/* Progress */}
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[hsl(22_100%_45%)] font-bold text-xs">Sold {pct}%</span>
-            <span className="text-gray-400 text-xs">{(total - sold).toLocaleString()} Left</span>
+            <span className="font-bold text-xs" style={{ color: "hsl(22 100% 52%)", fontFamily: "'Poppins',sans-serif" }}>
+              Sold {pct}%
+            </span>
+            <span className="text-white/30 text-xs" style={{ fontFamily: "'Poppins',sans-serif" }}>
+              {(total - sold).toLocaleString()} Left
+            </span>
           </div>
-          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "hsl(0 0% 18%)" }}>
             <div className="h-full rounded-full transition-all duration-700"
-              style={{ width: `${Math.max(pct, 2)}%`, background: "hsl(22 100% 45%)" }} />
+              style={{ width: `${Math.max(pct, 2)}%`, background: "hsl(22 100% 52%)" }} />
           </div>
         </div>
 
-        {/* Buttons */}
-        <div className="flex gap-2">
-          <Link to={`/competitions/${game.id}`}
-            className="w-full border-2 border-[hsl(22_100%_45%)] text-[hsl(22_100%_45%)] font-heading font-black text-base py-3 rounded-xl text-center hover:bg-orange-50 transition tracking-widest">
-            ENTER NOW
-          </Link>
-        </div>
+        {/* Button */}
+        <Link to={`/competitions/${game.id}`}
+          className="w-full font-heading font-black text-base py-3 rounded-xl text-center transition tracking-widest"
+          style={{
+            border: "1.5px solid hsl(44 100% 52% / 0.7)",
+            color: "white",
+            background: "transparent",
+            boxShadow: "0 0 12px hsl(44 100% 52% / 0.2)",
+          }}
+          onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 0 24px hsl(44 100% 52% / 0.5)")}
+          onMouseLeave={e => (e.currentTarget.style.boxShadow = "0 0 12px hsl(44 100% 52% / 0.2)")}
+        >
+          ENTER NOW »
+        </Link>
       </div>
     </div>
   );
@@ -134,9 +137,9 @@ const LiveCompetitions = () => {
   }, []);
 
   return (
-    <section className="py-12 section-light">
+    <section className="py-12 bg-[hsl(0_0%_4%)]">
       <div className="container">
-        <h2 className="font-heading font-black text-[hsl(0_0%_10%)] text-3xl md:text-4xl mb-8 tracking-wide">
+        <h2 className="font-heading font-black text-gold text-3xl md:text-4xl mb-8 tracking-wide">
           LIVE COMPETITIONS
         </h2>
 
@@ -155,7 +158,8 @@ const LiveCompetitions = () => {
         {games.length > 0 && (
           <div className="mt-8 text-center">
             <Link to="/competitions"
-              className="inline-flex items-center gap-2 border-2 border-[hsl(22_100%_45%)] text-[hsl(22_100%_45%)] font-heading font-black text-sm px-8 py-3 rounded-xl hover:bg-orange-50 transition tracking-wide">
+              className="inline-flex items-center gap-2 font-heading font-black text-sm px-8 py-3 rounded-xl transition tracking-wide text-white/60 hover:text-white"
+              style={{ border: "1px solid hsl(0 0% 20%)" }}>
               VIEW ALL COMPETITIONS →
             </Link>
           </div>
