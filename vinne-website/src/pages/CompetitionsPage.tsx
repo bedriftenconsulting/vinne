@@ -116,7 +116,7 @@ const CompetitionsPage = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <div className="container pt-24 pb-16">
+      <div className="container pt-36 pb-16">
         <h1 className="font-heading text-4xl md:text-5xl text-primary mb-10">ALL COMPETITIONS</h1>
 
         {loading ? (

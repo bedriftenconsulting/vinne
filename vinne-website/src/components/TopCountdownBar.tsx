@@ -37,7 +37,7 @@ const CountdownInner = ({ game }: { game: ApiGame }) => {
   const { days, hours, minutes, seconds } = useCountdown(drawDate);
 
   return (
-    <div className="bg-white border-b border-gray-200 py-2">
+    <div className="bg-white border-b border-gray-200 py-2 fixed top-0 left-0 right-0 z-50">
       <div className="container flex items-center justify-center gap-3">
         <span className="text-gray-500 text-sm font-medium mr-1"
           style={{ fontFamily: "'Poppins', sans-serif" }}>

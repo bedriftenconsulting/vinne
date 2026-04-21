@@ -55,7 +55,7 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
 
   return (
     <>
-      <section ref={ref} className="relative min-h-screen flex flex-col overflow-hidden bg-[hsl(0_0%_4%)] pt-16">
+      <section ref={ref} className="relative min-h-screen flex flex-col overflow-hidden bg-[hsl(0_0%_4%)] pt-28">
         {/* Video background */}
         <motion.div style={{ y: bgY }} className="absolute inset-0 scale-110">
           <video autoPlay muted loop playsInline className="w-full h-full object-cover opacity-70">

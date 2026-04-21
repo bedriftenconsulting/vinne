@@ -120,7 +120,7 @@ const CompetitionDetail = () => {
   if (!game) return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <div className="container pt-24 text-center">
+      <div className="container pt-36 text-center">
         <h1 className="font-heading text-3xl text-foreground mb-4">Competition Not Found</h1>
         <Link to="/competitions" className="text-primary hover:underline">← Back to Competitions</Link>
       </div>
@@ -142,7 +142,7 @@ const CompetitionDetail = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <div className="container pt-24 pb-16">
+      <div className="container pt-36 pb-16">
         <Link to="/competitions" className="inline-flex items-center gap-2 text-muted-foreground hover:text-primary mb-6 text-sm">
           <ArrowLeft size={16} /> Back to Competitions
         </Link>

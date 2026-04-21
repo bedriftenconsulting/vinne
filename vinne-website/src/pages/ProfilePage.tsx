@@ -101,7 +101,7 @@ const ProfilePage = () => {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
-      <main className="flex-1 container pt-24 pb-16 max-w-2xl mx-auto">
+      <main className="flex-1 container pt-36 pb-16 max-w-2xl mx-auto">
 
         {/* Avatar + name */}
         <div className="flex items-center gap-5 mb-8">
