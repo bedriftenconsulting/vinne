@@ -47,14 +47,19 @@ export function getErrorMessage(error: unknown): string {
 
 /**
  * Converts internal MinIO storage URLs to browser-accessible public URLs.
- * In Docker dev, MinIO runs as 'minio' (internal hostname) but is accessible
- * via localhost:9000 from the browser.
+ * On cloud, URLs are already https://api.winbig.bedriften.xyz/storage/...
+ * In local dev, MinIO runs as 'minio' (internal hostname).
  */
 export function getPublicUrl(url: string | undefined | null): string | undefined {
   if (!url) return undefined
+  // Local dev: replace internal minio hostname with localhost
+  if (url.includes('minio:')) {
+    return url
+      .replace(/https?:\/\/minio:\d+/g, 'http://localhost:9000')
+      .replace(/https?:\/\/minio\//g, 'http://localhost:9000/')
+  }
+  // Cloud: URL is already public, return as-is with cache buster
   return url
-    .replace(/https?:\/\/minio:\d+/g, 'http://localhost:9000')
-    .replace(/https?:\/\/minio\//g, 'http://localhost:9000/')
 }
 
 export function formatCurrency(amount: number): string {

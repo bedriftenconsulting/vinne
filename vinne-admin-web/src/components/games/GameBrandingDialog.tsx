@@ -35,7 +35,8 @@ export function GameBrandingDialog({ isOpen, onClose, game }: GameBrandingDialog
   useEffect(() => {
     if (game && isOpen) {
       setBrandColor(game.brand_color || '')
-      setLogoPreview(getPublicUrl(game.logo_url) || null)
+      const url = getPublicUrl(game.logo_url)
+      setLogoPreview(url ? url + '?t=' + Date.now() : null)
       setLogoFile(null)
     }
   }, [game, isOpen])
@@ -45,17 +46,19 @@ export function GameBrandingDialog({ isOpen, onClose, game }: GameBrandingDialog
       if (!game) throw new Error('No game selected')
 
       if (logoFile) {
-        // Upload logo with brand color
         return await gameService.uploadGameLogo(game.id, logoFile, brandColor || undefined)
       } else if (brandColor && brandColor !== game.brand_color) {
-        // Update only brand color using dedicated endpoint
         return await gameService.updateBrandColor(game.id, brandColor)
       }
 
       throw new Error('No changes to save')
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['games'] })
+      // Force refresh the preview with the new URL + cache buster
+      if (data?.logo_url) {
+        setLogoPreview(data.logo_url + '?t=' + Date.now())
+      }
       toast({
         title: 'Success',
         description: 'Game branding updated successfully',

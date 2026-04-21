@@ -1,16 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Trophy, Clock, Loader2, Users } from "lucide-react";
+import { Trophy, Loader2 } from "lucide-react";
 import { fetchActiveGames, type ApiGame } from "@/lib/api";
 import { useCountdown } from "@/hooks/useCountdown";
 
 const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 
-// Compute next draw date
 const getNextDrawDate = (game: ApiGame): Date => {
-  if (game.draw_date) {
-    return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
-  }
+  if (game.draw_date) return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
   const [h, m] = (game.draw_time || "20:00").split(":").map(Number);
   const now = new Date();
   const next = new Date(now);
@@ -19,93 +16,115 @@ const getNextDrawDate = (game: ApiGame): Date => {
   return next;
 };
 
-const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
-  const drawDate = getNextDrawDate(game);
-  const { days, hours, minutes, seconds } = useCountdown(drawDate);
-  const [ticketsSold, setTicketsSold] = useState<number>(0);
+const getPrize = (game: ApiGame) => {
+  try { const p = JSON.parse(game.prize_details || "[]"); return p[0]?.description || ""; } catch { return ""; }
+};
 
-  // Fetch tickets sold count for this game's active schedule
+const getEndsLabel = (days: number, drawDate: Date) => {
+  if (days === 0) return "ENDS TODAY";
+  if (days === 1) return "ENDS TOMORROW";
+  if (days <= 7) return `ENDS IN ${days} DAYS`;
+  return `ENDS ${new Date(drawDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).toUpperCase()}`;
+};
+
+const useTicketsSold = (gameId: string) => {
+  const [sold, setSold] = useState(0);
   useEffect(() => {
-    fetch(`${BASE}/players/games/${game.id}/schedule`)
+    fetch(`${BASE}/players/games/${gameId}/schedule`)
       .then(r => r.json())
       .then(d => {
-        const schedules = d?.data?.schedules ?? [];
-        const active = schedules.find((s: { status: string; is_active: boolean }) => s.status === "SCHEDULED" && s.is_active) ?? schedules[0];
-        if (active?.tickets_sold != null) setTicketsSold(active.tickets_sold);
-        else if (active?.total_tickets_sold != null) setTicketsSold(active.total_tickets_sold);
-      })
-      .catch(() => {});
-  }, [game.id]);
+        const s = (d?.data?.schedules ?? []).find((s: { status: string; is_active: boolean }) => s.status === "SCHEDULED" && s.is_active) ?? d?.data?.schedules?.[0];
+        if (s?.tickets_sold != null) setSold(s.tickets_sold);
+      }).catch(() => {});
+  }, [gameId]);
+  return sold;
+};
 
-  const timeLabel = days > 0
-    ? `${days}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`
-    : `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-
-  let prizeLabel = "";
-  try {
-    const prizes = JSON.parse(game.prize_details || "[]");
-    if (prizes[0]?.description) prizeLabel = prizes[0].description;
-  } catch { /* ignore */ }
-
-  const totalTickets = game.total_tickets || 1000;
-  const pct = totalTickets > 0 ? Math.min(100, Math.round((ticketsSold / totalTickets) * 100)) : 0;
-  const isFilling = pct >= 75;
+// ── Competition Card — exact BOTB style ───────────────────────────────────────
+const CompCard = ({ game }: { game: ApiGame }) => {
+  const drawDate = getNextDrawDate(game);
+  const { days } = useCountdown(drawDate);
+  const sold = useTicketsSold(game.id);
+  const total = game.total_tickets || 1000;
+  const pct = Math.min(100, Math.round((sold / total) * 100));
+  const prize = getPrize(game);
+  const endsLabel = getEndsLabel(days, drawDate);
+  const isUrgent = days <= 1;
 
   return (
-    <Link
-      to={`/competitions/${game.id}`}
-      className="group block card-light rounded-xl overflow-hidden shadow-md hover:shadow-xl transition-shadow border border-black/8"
-      style={{ animationDelay: `${index * 80}ms` }}
-    >
-      <div className="relative aspect-[4/3] overflow-hidden bg-black/80 flex items-center justify-center">
-        {game.logo_url ? (
-          <img src={game.logo_url} alt={game.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
-        ) : (
-          <Trophy className="h-16 w-16 text-white/20" />
-        )}
-        <span className="absolute top-3 left-3 bg-[hsl(22_100%_52%)] text-white px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse inline-block" />
-          CLOSES IN {timeLabel}
-        </span>
-      </div>
-      <div className="p-4">
-        <h3 className="font-heading text-base text-[hsl(0_0%_10%)] mb-0.5 leading-tight">{game.name}</h3>
-        {prizeLabel && <p className="text-xs text-muted-foreground mb-2 truncate">🏆 {prizeLabel}</p>}
-        <div className="flex items-center justify-between mt-2">
-          <span className="font-heading text-lg text-[hsl(0_0%_10%)]">GHS {game.base_price.toFixed(2)}</span>
-          <span className="w-8 h-8 rounded-full bg-[hsl(22_100%_52%)] flex items-center justify-center text-white font-bold text-lg shadow">+</span>
+    <div className="bg-white rounded-2xl overflow-hidden shadow-lg flex flex-col">
+      {/* Image area */}
+      <div className="relative">
+        <div className="aspect-[4/3] overflow-hidden bg-gray-100">
+          {game.logo_url
+            ? <img src={`${game.logo_url}?t=${Math.floor(Date.now() / 3600000)}`} alt={game.name}
+                className="w-full h-full object-cover" />
+            : <div className="w-full h-full flex items-center justify-center bg-gray-200">
+                <Trophy size={64} className="text-gray-300" />
+              </div>
+          }
         </div>
 
-        {/* Ticket progress bar */}
-        <div className="mt-3">
+        {/* ENDS badge — top left, gradient pill */}
+        <span className="absolute top-3 left-3 font-bold text-white px-3 py-1 rounded-lg shadow-lg"
+          style={{
+            background: "linear-gradient(90deg, #ff0080, #ff6000)",
+            fontFamily: "'Poppins', 'Nunito', sans-serif",
+            fontSize: "0.72rem",
+          }}>
+          {endsLabel}
+        </span>
+
+        {/* Prize name banner — bottom of image */}
+        <div className="absolute bottom-0 left-0 right-0 py-2.5 px-4 text-center"
+          style={{ background: isUrgent ? "#8B0000" : "#cc0000" }}>
+          <p className="font-bold text-white text-sm tracking-wide uppercase"
+            style={{ fontFamily: "'Poppins', sans-serif" }}>
+            {prize ? `${prize}!` : game.name.toUpperCase()}
+          </p>
+        </div>
+      </div>
+
+      {/* Card body */}
+      <div className="p-5 flex flex-col flex-1">
+        {/* Description */}
+        <p className="text-gray-700 text-sm text-center leading-snug mb-4 flex-1"
+          style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+          {game.description || `Win a ${prize || game.name}!`}
+        </p>
+
+        {/* Ticket price */}
+        <div className="text-center mb-4">
+          <p className="text-gray-400 text-xs font-semibold tracking-widest uppercase mb-0.5"
+            style={{ fontFamily: "'Poppins', sans-serif" }}>TICKET PRICE</p>
+          <p className="font-heading font-black text-gray-900 text-3xl">GHS {game.base_price.toFixed(2)}</p>
+        </div>
+
+        {/* Progress */}
+        <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="flex items-center gap-1 text-xs text-gray-500">
-              <Users size={10} />
-              {ticketsSold.toLocaleString()} / {totalTickets.toLocaleString()} tickets
-            </span>
-            <span className={`text-xs font-bold ${isFilling ? "text-orange-500" : "text-gray-400"}`}>
-              {pct}% sold
-            </span>
+            <span className="text-[hsl(22_100%_45%)] font-bold text-xs">Sold {pct}%</span>
+            <span className="text-gray-400 text-xs">{(total - sold).toLocaleString()} Left</span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-700 ${isFilling ? "bg-orange-500" : "bg-[hsl(22_100%_52%)]"}`}
-              style={{ width: `${Math.max(pct, 3)}%` }}
-            />
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${Math.max(pct, 2)}%`, background: "hsl(22 100% 45%)" }} />
           </div>
         </div>
 
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Clock size={11} />
-          {game.draw_date
-            ? `Draw: ${new Date(game.draw_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
-            : `Daily draw at ${game.draw_time || "20:00"}`}
+        {/* Buttons */}
+        <div className="flex gap-2">
+          <Link to={`/competitions/${game.id}`}
+            className="w-full border-2 border-[hsl(22_100%_45%)] text-[hsl(22_100%_45%)] font-heading font-black text-base py-3 rounded-xl text-center hover:bg-orange-50 transition tracking-widest">
+            ENTER NOW
+          </Link>
         </div>
       </div>
-    </Link>
+    </div>
   );
 };
 
+// ── Section ───────────────────────────────────────────────────────────────────
 const LiveCompetitions = () => {
   const [games, setGames] = useState<ApiGame[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,11 +134,12 @@ const LiveCompetitions = () => {
   }, []);
 
   return (
-    <section className="py-16 section-light">
+    <section className="py-12 section-light">
       <div className="container">
-        <h2 className="font-heading text-3xl md:text-4xl text-[hsl(0_0%_10%)] mb-8 tracking-wide">
+        <h2 className="font-heading font-black text-[hsl(0_0%_10%)] text-3xl md:text-4xl mb-8 tracking-wide">
           LIVE COMPETITIONS
         </h2>
+
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="animate-spin text-primary" size={32} />
@@ -128,7 +148,16 @@ const LiveCompetitions = () => {
           <p className="text-muted-foreground text-center py-8">No active competitions right now.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {games.map((g, i) => <GameCard key={g.id} game={g} index={i} />)}
+            {games.map(g => <CompCard key={g.id} game={g} />)}
+          </div>
+        )}
+
+        {games.length > 0 && (
+          <div className="mt-8 text-center">
+            <Link to="/competitions"
+              className="inline-flex items-center gap-2 border-2 border-[hsl(22_100%_45%)] text-[hsl(22_100%_45%)] font-heading font-black text-sm px-8 py-3 rounded-xl hover:bg-orange-50 transition tracking-wide">
+              VIEW ALL COMPETITIONS →
+            </Link>
           </div>
         )}
       </div>

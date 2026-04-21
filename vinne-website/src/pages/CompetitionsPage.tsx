@@ -56,13 +56,13 @@ const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-black/80 flex items-center justify-center">
         {game.logo_url ? (
-          <img src={game.logo_url} alt={game.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
+          <img src={`${game.logo_url}?t=${Math.floor(Date.now() / 3600000)}`} alt={game.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
         ) : (
           <Trophy className="h-16 w-16 text-white/20" />
         )}
-        <span className="absolute top-3 left-3 bg-[hsl(22_100%_52%)] text-white px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse inline-block" />
-          CLOSES IN {timeLabel}
+        <span className="absolute top-3 left-3 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-lg"
+          style={{ background: "linear-gradient(90deg,#ff0080,#ff6000)", fontFamily: "'Poppins', sans-serif", fontSize: "0.72rem" }}>
+          {days === 0 ? "ENDS TODAY" : days === 1 ? "ENDS TOMORROW" : days <= 7 ? `ENDS IN ${days} DAYS` : `ENDS ${new Date(drawDate).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}).toUpperCase()}`}
         </span>
       </div>
 
