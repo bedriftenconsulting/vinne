@@ -534,7 +534,22 @@ const PlayersModule: React.FC = () => {
                         {getStatusBadge(player.account_status)}
                       </TableCell>
                       <TableCell>
-                        {getVerificationBadge(player.verification_status)}
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1">
+                            <Phone className="h-3 w-3 text-muted-foreground" />
+                            {player.phone_verified
+                              ? <Badge variant="default" className="text-xs py-0 bg-green-600"><CheckCircle className="h-2.5 w-2.5 mr-0.5" />Phone</Badge>
+                              : <Badge variant="secondary" className="text-xs py-0"><AlertCircle className="h-2.5 w-2.5 mr-0.5" />Phone</Badge>
+                            }
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Mail className="h-3 w-3 text-muted-foreground" />
+                            {player.email_verified
+                              ? <Badge variant="default" className="text-xs py-0 bg-green-600"><CheckCircle className="h-2.5 w-2.5 mr-0.5" />Email</Badge>
+                              : <Badge variant="secondary" className="text-xs py-0"><AlertCircle className="h-2.5 w-2.5 mr-0.5" />Email</Badge>
+                            }
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell className="text-center font-semibold">
                         {player.total_tickets_purchased}
