@@ -99,25 +99,47 @@ const ProfilePage = () => {
     }
   };
 
-  const sendPhoneOtp = () => {
+  const OTP_BASE = "https://api.winbig.bedriften.xyz/api/v1/otp";
+
+  const sendPhoneOtp = async () => {
     if (isRateLimited('otp_phone')) {
       toast({ title: "Too many attempts", description: "Please wait 1 hour before requesting another code.", variant: "destructive" }); return;
     }
     bumpRateLimit('otp_phone')
-    setPhoneOtpSent(true)
-    toast({ title: "OTP sent", description: `A verification code was sent to ${profile?.phone_number}` })
-    // TODO: call backend OTP endpoint when mNotify is unblocked
+    try {
+      const res = await fetch(`${OTP_BASE}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_id: playerId, channel: "phone", contact: profile?.phone_number }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || "Failed to send OTP")
+      setPhoneOtpSent(true)
+      toast({ title: "OTP sent", description: `A verification code was sent to ${profile?.phone_number}` })
+    } catch (e: unknown) {
+      toast({ title: "Failed to send OTP", description: (e as Error).message, variant: "destructive" })
+    }
   }
 
-  const sendEmailOtp = () => {
+  const sendEmailOtp = async () => {
     if (!profile?.email) { toast({ title: "Add your email first", variant: "destructive" }); return; }
     if (isRateLimited('otp_email')) {
       toast({ title: "Too many attempts", description: "Please wait 1 hour before requesting another code.", variant: "destructive" }); return;
     }
     bumpRateLimit('otp_email')
-    setEmailOtpSent(true)
-    toast({ title: "Verification email sent", description: `Check ${profile.email} for your code` })
-    // TODO: call backend email OTP endpoint
+    try {
+      const res = await fetch(`${OTP_BASE}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_id: playerId, channel: "email", contact: profile.email }),
+      })
+      const d = await res.json()
+      if (!res.ok || d.error) throw new Error(d.error || "Failed to send")
+      setEmailOtpSent(true)
+      toast({ title: "Verification email sent", description: `Check ${profile.email} for your code` })
+    } catch (e: unknown) {
+      toast({ title: "Failed to send", description: (e as Error).message, variant: "destructive" })
+    }
   }
 
   const verifyPhoneOtp = () => {
