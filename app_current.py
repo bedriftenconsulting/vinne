@@ -70,6 +70,38 @@ PLAYER_DB = {
     "password": "player123",
 }
 
+# Redis for OTP storage
+import redis as _redis
+PLAYER_REDIS = _redis.Redis(host="localhost", port=6391, db=1, decode_responses=True)
+
+# Cache: phone -> player_id
+_player_id_cache = {}
+
+def get_player_id_for_phone(phone):
+    """Look up registered player UUID by phone. Returns None if not found."""
+    normalised = phone.strip()
+    if not normalised.startswith("+"):
+        normalised = "+" + normalised
+    if normalised in _player_id_cache:
+        return _player_id_cache[normalised]
+    try:
+        conn = psycopg2.connect(**PLAYER_DB, connect_timeout=2)
+        cur  = conn.cursor()
+        cur.execute("SELECT id FROM players WHERE phone_number = %s LIMIT 1", (normalised,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        player_id = str(row[0]) if row else None
+        _player_id_cache[normalised] = player_id
+        if player_id:
+            print(f"[PLAYER LINK] phone={normalised} -> player_id={player_id}")
+        else:
+            print(f"[PLAYER LINK] phone={normalised} -> no account found, using USSD")
+        return player_id
+    except Exception as e:
+        print(f"[PLAYER LOOKUP ERROR] {e}")
+        return None
+
 # In-memory session state: sequenceID -> list of user inputs
 sessions = {}
 
