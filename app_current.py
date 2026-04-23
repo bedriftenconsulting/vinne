@@ -762,6 +762,53 @@ def home():
     return jsonify({"status": "WinBig USSD API is running"})
 
 
+# ---------------------------------------------------------------------------
+# Featured game config — admin sets, website reads
+# ---------------------------------------------------------------------------
+
+import threading as _threading
+_config_lock = _threading.Lock()
+_config_file = os.path.join(os.path.dirname(__file__), "config.json")
+
+def _read_config():
+    try:
+        with open(_config_file, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _write_config(data):
+    with _config_lock:
+        with open(_config_file, "w") as f:
+            json.dump(data, f)
+
+@app.route("/config", methods=["GET", "OPTIONS"])
+def get_config():
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        return resp, 204
+    cfg = _read_config()
+    resp = jsonify(cfg)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+@app.route("/config", methods=["POST"])
+def set_config():
+    auth = request.headers.get("Authorization", "")
+    if auth != "Bearer winbig-admin-config-2026":
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    cfg = _read_config()
+    cfg.update(data)
+    _write_config(cfg)
+    resp = jsonify({"status": "ok", "config": cfg})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
 
 # ---------------------------------------------------------------------------
 # OTP — Phone & Email Verification
