@@ -62,6 +62,14 @@ TICKET_DB = {
     "password": "ticket123",
 }
 
+PLAYER_DB = {
+    "host":     os.environ.get("PLAYER_DB_HOST", "localhost"),
+    "port":     5444,
+    "dbname":   "player_service",
+    "user":     "player",
+    "password": "player123",
+}
+
 # In-memory session state: sequenceID -> list of user inputs
 sessions = {}
 
