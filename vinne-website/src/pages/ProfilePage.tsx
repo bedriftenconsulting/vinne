@@ -333,13 +333,18 @@ const ProfilePage = () => {
                 <p className="text-sm font-medium text-foreground">{profile?.phone_number || "—"}</p>
                 {!phoneVerified && profile?.phone_number && (
                   phoneOtpSent ? (
-                    <div className="flex gap-2 mt-2">
-                      <input value={phoneOtp} onChange={e => setPhoneOtp(e.target.value)} placeholder="Enter code"
-                        maxLength={6}
-                        className="w-28 bg-secondary text-foreground border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition" />
-                      <button onClick={verifyPhoneOtp} disabled={verifyingPhone}
-                        className="flex items-center gap-1 text-xs bg-primary text-white px-3 py-1.5 rounded-lg hover:brightness-110 transition disabled:opacity-60">
-                        {verifyingPhone ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Verify
+                    <div className="mt-2 space-y-1.5">
+                      <div className="flex gap-2">
+                        <input value={phoneOtp} onChange={e => setPhoneOtp(e.target.value)} placeholder="Enter code"
+                          maxLength={6}
+                          className="w-28 bg-secondary text-foreground border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition" />
+                        <button onClick={verifyPhoneOtp} disabled={verifyingPhone}
+                          className="flex items-center gap-1 text-xs bg-primary text-white px-3 py-1.5 rounded-lg hover:brightness-110 transition disabled:opacity-60">
+                          {verifyingPhone ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Verify
+                        </button>
+                      </div>
+                      <button onClick={sendPhoneOtp} className="text-xs text-muted-foreground hover:text-primary transition">
+                        Resend code
                       </button>
                     </div>
                   ) : (
