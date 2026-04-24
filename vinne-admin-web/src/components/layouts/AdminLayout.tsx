@@ -78,8 +78,10 @@ function AppSidebar() {
   // commerce_manager or manager role = Commerce only
   // everyone else (super_admin, admin, support, viewer) = sees everything
   const userRoles = user?.roles?.map(r => r.name.toLowerCase()) || []
+  console.log('[AdminLayout] user roles:', userRoles)
   const isCommerceOnly = userRoles.length > 0 &&
     userRoles.every(r => r === 'commerce_manager' || r === 'manager')
+  console.log('[AdminLayout] isCommerceOnly:', isCommerceOnly)
   const showOperations = !isCommerceOnly
   const showCommerce = true
   const showAdmin = !isCommerceOnly
