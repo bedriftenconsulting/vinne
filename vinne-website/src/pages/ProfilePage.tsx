@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { User, Phone, Mail, Calendar, Shield, Ticket, LogOut, Edit2, Check, X, Loader2, CheckCircle, AlertCircle, Send } from "lucide-react";
+import { User, Phone, Mail, Calendar, Shield, Ticket, LogOut, Edit2, Check, X, Loader2 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { toast } from "@/hooks/use-toast";
@@ -36,30 +36,6 @@ const ProfilePage = () => {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "" });
 
-  // Verification state
-  const [phoneOtpSent, setPhoneOtpSent] = useState(false);
-  const [emailOtpSent, setEmailOtpSent] = useState(false);
-  const [phoneOtp, setPhoneOtp] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [verifyingPhone, setVerifyingPhone] = useState(false);
-  const [verifyingEmail, setVerifyingEmail] = useState(false);
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [emailVerified, setEmailVerified] = useState(false);
-
-  // Rate limiting — max 3 OTP requests per hour, stored in localStorage
-  const getRateLimit = (key: string) => {
-    try {
-      const data = JSON.parse(localStorage.getItem(key) || '{"count":0,"reset":0}')
-      if (Date.now() > data.reset) return { count: 0, reset: Date.now() + 3600000 }
-      return data
-    } catch { return { count: 0, reset: Date.now() + 3600000 } }
-  }
-  const bumpRateLimit = (key: string) => {
-    const data = getRateLimit(key)
-    localStorage.setItem(key, JSON.stringify({ count: data.count + 1, reset: data.reset }))
-  }
-  const isRateLimited = (key: string) => getRateLimit(key).count >= 3
-
   useEffect(() => {
     if (!token || !playerId) { navigate("/sign-in"); return; }
     fetch(`${API_BASE}/players/${playerId}/profile`, {
@@ -70,17 +46,6 @@ const ProfilePage = () => {
         const p = d?.data?.profile ?? d?.data ?? d?.profile ?? d;
         setProfile(p);
         setForm({ first_name: p.first_name || "", last_name: p.last_name || "", email: p.email || "" });
-        // Check verification status from OTP service
-        fetch(`https://api.winbig.bedriften.xyz/api/v1/otp/status/${playerId}`)
-          .then(r => r.json())
-          .then(v => {
-            setPhoneVerified(!!v.phone_verified || !!p.phone_verified || p.kyc_status === "VERIFIED")
-            setEmailVerified(!!v.email_verified || !!p.email_verified)
-          })
-          .catch(() => {
-            setPhoneVerified(!!p.phone_verified || p.kyc_status === "VERIFIED")
-            setEmailVerified(!!p.email_verified)
-          })
       })
       .catch(() => toast({ title: "Failed to load profile", variant: "destructive" }))
       .finally(() => setLoading(false));
@@ -107,89 +72,6 @@ const ProfilePage = () => {
       setSaving(false);
     }
   };
-
-  const OTP_BASE = "https://api.winbig.bedriften.xyz/api/v1/otp";
-
-  const sendPhoneOtp = async () => {
-    if (isRateLimited('otp_phone')) {
-      toast({ title: "Too many attempts", description: "Please wait 1 hour before requesting another code.", variant: "destructive" }); return;
-    }
-    bumpRateLimit('otp_phone')
-    try {
-      const res = await fetch(`${OTP_BASE}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ player_id: playerId, channel: "phone", contact: profile?.phone_number }),
-      })
-      const d = await res.json()
-      if (!res.ok || d.error) throw new Error(d.error || "Failed to send OTP")
-      setPhoneOtpSent(true)
-      toast({ title: "OTP sent", description: `A verification code was sent to ${profile?.phone_number}` })
-    } catch (e: unknown) {
-      toast({ title: "Failed to send OTP", description: (e as Error).message, variant: "destructive" })
-    }
-  }
-
-  const sendEmailOtp = async () => {
-    if (!profile?.email) { toast({ title: "Add your email first", variant: "destructive" }); return; }
-    if (isRateLimited('otp_email')) {
-      toast({ title: "Too many attempts", description: "Please wait 1 hour before requesting another code.", variant: "destructive" }); return;
-    }
-    bumpRateLimit('otp_email')
-    try {
-      const res = await fetch(`${OTP_BASE}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ player_id: playerId, channel: "email", contact: profile.email }),
-      })
-      const d = await res.json()
-      if (!res.ok || d.error) throw new Error(d.error || "Failed to send")
-      setEmailOtpSent(true)
-      toast({ title: "Verification email sent", description: `Check ${profile.email} for your code` })
-    } catch (e: unknown) {
-      toast({ title: "Failed to send", description: (e as Error).message, variant: "destructive" })
-    }
-  }
-
-  const verifyPhoneOtp = async () => {
-    if (!phoneOtp || phoneOtp.length < 4) { toast({ title: "Enter the OTP code", variant: "destructive" }); return; }
-    setVerifyingPhone(true)
-    try {
-      const res = await fetch(`${OTP_BASE}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ player_id: playerId, channel: "phone", code: phoneOtp }),
-      })
-      const d = await res.json()
-      if (!res.ok || d.error) throw new Error(d.error || "Verification failed")
-      setPhoneVerified(true); setPhoneOtpSent(false); setPhoneOtp("")
-      toast({ title: "Phone verified ✓", description: "Your phone number is now verified." })
-    } catch (e: unknown) {
-      toast({ title: "Verification failed", description: (e as Error).message, variant: "destructive" })
-    } finally {
-      setVerifyingPhone(false)
-    }
-  }
-
-  const verifyEmailOtp = async () => {
-    if (!emailOtp || emailOtp.length < 4) { toast({ title: "Enter the OTP code", variant: "destructive" }); return; }
-    setVerifyingEmail(true)
-    try {
-      const res = await fetch(`${OTP_BASE}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ player_id: playerId, channel: "email", code: emailOtp }),
-      })
-      const d = await res.json()
-      if (!res.ok || d.error) throw new Error(d.error || "Verification failed")
-      setEmailVerified(true); setEmailOtpSent(false); setEmailOtp("")
-      toast({ title: "Email verified ✓", description: "Your email address is now verified." })
-    } catch (e: unknown) {
-      toast({ title: "Verification failed", description: (e as Error).message, variant: "destructive" })
-    } finally {
-      setVerifyingEmail(false)
-    }
-  }
 
   const signOut = () => {
     localStorage.removeItem("player_token");
@@ -219,7 +101,7 @@ const ProfilePage = () => {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
-      <main className="flex-1 container pt-36 pb-16 max-w-2xl mx-auto">
+      <main className="flex-1 container pt-24 pb-16 max-w-2xl mx-auto">
 
         {/* Avatar + name */}
         <div className="flex items-center gap-5 mb-8">
@@ -284,8 +166,8 @@ const ProfilePage = () => {
             </div>
 
             {/* Email */}
-            <div className="flex items-start gap-3 px-5 py-4">
-              <Mail size={15} className="text-muted-foreground shrink-0 mt-0.5" />
+            <div className="flex items-center gap-3 px-5 py-4">
+              <Mail size={15} className="text-muted-foreground shrink-0" />
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground mb-0.5">Email Address</p>
                 {editing ? (
@@ -295,70 +177,17 @@ const ProfilePage = () => {
                 ) : (
                   <p className="text-sm font-medium text-foreground">{profile?.email || <span className="text-muted-foreground italic">Not set</span>}</p>
                 )}
-                {!editing && !emailVerified && profile?.email && (
-                  emailOtpSent ? (
-                    <div className="mt-2 space-y-1.5">
-                      <div className="flex gap-2">
-                        <input value={emailOtp} onChange={e => setEmailOtp(e.target.value)} placeholder="Enter code"
-                          maxLength={6}
-                          className="w-28 bg-secondary text-foreground border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition" />
-                        <button onClick={verifyEmailOtp} disabled={verifyingEmail}
-                          className="flex items-center gap-1 text-xs bg-primary text-white px-3 py-1.5 rounded-lg hover:brightness-110 transition disabled:opacity-60">
-                          {verifyingEmail ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Verify
-                        </button>
-                      </div>
-                      <button onClick={sendEmailOtp} className="text-xs text-muted-foreground hover:text-primary transition">
-                        Resend code
-                      </button>
-                    </div>
-                  ) : (
-                    <button onClick={sendEmailOtp}
-                      className="mt-1.5 flex items-center gap-1 text-xs text-primary border border-primary/30 px-2.5 py-1 rounded-lg hover:bg-primary/10 transition">
-                      <Send size={10} /> Send verification email
-                    </button>
-                  )
-                )}
               </div>
-              {emailVerified
-                ? <span className="flex items-center gap-1 text-xs text-green-400 bg-green-400/10 border border-green-400/30 px-2 py-0.5 rounded-full shrink-0"><CheckCircle size={10} /> Verified</span>
-                : <span className="flex items-center gap-1 text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 px-2 py-0.5 rounded-full shrink-0"><AlertCircle size={10} /> Not Verified</span>
-              }
             </div>
 
             {/* Phone */}
-            <div className="flex items-start gap-3 px-5 py-4">
-              <Phone size={15} className="text-muted-foreground shrink-0 mt-0.5" />
+            <div className="flex items-center gap-3 px-5 py-4">
+              <Phone size={15} className="text-muted-foreground shrink-0" />
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground mb-0.5">Phone Number</p>
                 <p className="text-sm font-medium text-foreground">{profile?.phone_number || "—"}</p>
-                {!phoneVerified && profile?.phone_number && (
-                  phoneOtpSent ? (
-                    <div className="mt-2 space-y-1.5">
-                      <div className="flex gap-2">
-                        <input value={phoneOtp} onChange={e => setPhoneOtp(e.target.value)} placeholder="Enter code"
-                          maxLength={6}
-                          className="w-28 bg-secondary text-foreground border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition" />
-                        <button onClick={verifyPhoneOtp} disabled={verifyingPhone}
-                          className="flex items-center gap-1 text-xs bg-primary text-white px-3 py-1.5 rounded-lg hover:brightness-110 transition disabled:opacity-60">
-                          {verifyingPhone ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Verify
-                        </button>
-                      </div>
-                      <button onClick={sendPhoneOtp} className="text-xs text-muted-foreground hover:text-primary transition">
-                        Resend code
-                      </button>
-                    </div>
-                  ) : (
-                    <button onClick={sendPhoneOtp}
-                      className="mt-1.5 flex items-center gap-1 text-xs text-primary border border-primary/30 px-2.5 py-1 rounded-lg hover:bg-primary/10 transition">
-                      <Send size={10} /> Send OTP
-                    </button>
-                  )
-                )}
               </div>
-              {phoneVerified
-                ? <span className="flex items-center gap-1 text-xs text-green-400 bg-green-400/10 border border-green-400/30 px-2 py-0.5 rounded-full shrink-0"><CheckCircle size={10} /> Verified</span>
-                : <span className="flex items-center gap-1 text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 px-2 py-0.5 rounded-full shrink-0"><AlertCircle size={10} /> Not Verified</span>
-              }
+              <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">Verified</span>
             </div>
 
             {/* Member since */}

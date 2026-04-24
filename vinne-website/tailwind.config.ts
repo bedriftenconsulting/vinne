@@ -14,7 +14,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        heading: ["Barlow Condensed", "sans-serif"],
+        heading: ["Oswald", "sans-serif"],
         body: ["Inter", "sans-serif"],
       },
       colors: {

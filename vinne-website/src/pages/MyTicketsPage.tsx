@@ -2,7 +2,6 @@ import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 
 const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 import {
@@ -58,9 +57,6 @@ const parseDate = (d?: string | { seconds: number }): Date | null => {
 };
 const fmtDate = (d: Date | null) =>
   d ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
-
-const fmtDateTime = (d: Date | null) =>
-  d ? d.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
 const getPlayerIdFromToken = (t: string | null): string | null => {
   if (!t) return null;
@@ -148,8 +144,8 @@ const TicketModal = ({ ticket, onClose }: { ticket: PlayerTicket; onClose: () =>
             )}
             {createdAt && (
               <div className="flex items-center justify-between px-4 py-2.5">
-                <p className="text-xs text-muted-foreground flex items-center gap-1"><Clock size={10} /> Purchased</p>
-                <p className="text-xs text-foreground">{fmtDateTime(createdAt)}</p>
+                <p className="text-xs text-muted-foreground">Purchased</p>
+                <p className="text-xs text-foreground">{fmtDate(createdAt)}</p>
               </div>
             )}
             {ticket.payment_method && (
@@ -198,7 +194,6 @@ const TicketModal = ({ ticket, onClose }: { ticket: PlayerTicket; onClose: () =>
 const TicketCard = ({ ticket, onClick }: { ticket: PlayerTicket; onClick: () => void }) => {
   const s = STATUS_CFG[ticket.status?.toUpperCase()] ?? STATUS_CFG.ACTIVE;
   const drawDate = parseDate(ticket.draw_date);
-  const createdAt = parseDate(ticket.created_at);
   const isWinner = ticket.status?.toUpperCase() === "WON" || toNum(ticket.winning_amount) > 0;
 
   return (
@@ -214,9 +209,6 @@ const TicketCard = ({ ticket, onClick }: { ticket: PlayerTicket; onClick: () => 
         <p className="font-heading text-sm text-foreground leading-tight">{ticket.game_name || ticket.game_code || "—"}</p>
         {drawDate && (
           <p className="text-xs text-muted-foreground flex items-center gap-1"><Calendar size={10} /> Draw: {fmtDate(drawDate)}</p>
-        )}
-        {createdAt && (
-          <p className="text-xs text-muted-foreground flex items-center gap-1"><Clock size={10} /> Bought: {fmtDateTime(createdAt)}</p>
         )}
         <div className="flex items-center justify-between pt-1.5 border-t border-border">
           <div>
@@ -265,7 +257,7 @@ const TxRow = ({ tx }: { tx: Transaction }) => {
           {isCredit ? "+" : "-"}{tx.currency || "GHS"} {amountGHS}
         </p>
         <p className={`text-xs ${statusColor}`}>{tx.status?.replace("TRANSACTION_STATUS_", "") || "—"}</p>
-        <p className="text-xs text-muted-foreground">{isNaN(date.getTime()) ? "" : date.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+        <p className="text-xs text-muted-foreground">{isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</p>
       </div>
     </div>
   );
@@ -285,75 +277,46 @@ const MyTicketsPage = () => {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [ticketPage, setTicketPage] = useState(1);
-  const TICKETS_PER_PAGE = 20;
 
   const token = localStorage.getItem("player_token");
   const resolvedPlayerId = getPlayerIdFromToken(token) || localStorage.getItem("player_id");
 
   useEffect(() => {
-    if (!token || !resolvedPlayerId) { 
-      console.log('[Tickets] No token or playerId, redirecting. token:', !!token, 'playerId:', resolvedPlayerId)
-      navigate("/sign-in"); return; 
-    }
-    console.log('[Tickets] Fetching tickets for player:', resolvedPlayerId)
-    const fetchAllTickets = async () => {
-      let page = 1
-      let all: PlayerTicket[] = []
-      while (true) {
-        const r = await fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=50&page=${page}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        console.log(`[Tickets] Page ${page} status:`, r.status)
-        if (r.status === 401) { navigate("/sign-in"); return }
-        const d = await r.json()
-        const batch: PlayerTicket[] = d?.data?.tickets ?? d?.tickets ?? []
-        console.log(`[Tickets] Page ${page} count:`, batch.length)
-        all = [...all, ...batch]
-        if (batch.length < 10) break // backend returns max 10 per page
-        page++
-        if (page > 50) break // safety cap
-      }
-      console.log('[Tickets] Total fetched:', all.length)
-      setTickets(all)
-    }
-    fetchAllTickets()
-      .catch(e => { console.error('[Tickets] Fetch error:', e); setError(e.message) })
-      .finally(() => setLoading(false))
+    if (!token || !resolvedPlayerId) { navigate("/sign-in"); return; }
+    fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(d => {
+        const raw = d?.data?.tickets ?? d?.tickets ?? [];
+        setTickets(raw);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
   }, [navigate, token, resolvedPlayerId]);
 
   useEffect(() => {
     if (tab !== "transactions" || !token || !resolvedPlayerId) return;
     setTxLoading(true);
     // Use tickets as purchase evidence — payment service is unreliable in test mode
-    const fetchAllForTx = async () => {
-      let page = 1
-      let all: PlayerTicket[] = []
-      while (true) {
-        const r = await fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=50&page=${page}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (r.status === 401) { navigate("/sign-in"); return }
-        const d = await r.json()
-        const batch: PlayerTicket[] = d?.data?.tickets ?? d?.tickets ?? []
-        all = [...all, ...batch]
-        if (batch.length < 10) break // backend returns max 10 per page
-        page++
-        if (page > 50) break
-      }
-      setTransactions(all.map((t) => ({
-          id: t.id,
+    fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(d => {
+        const raw = d?.data?.tickets ?? d?.tickets ?? [];
+        setTransactions(raw.map((t: Record<string, unknown>) => ({
+          id: t.id as string,
           type: "TICKET_PURCHASE",
           amount: t.total_amount,
-          reference: t.serial_number || t.id?.slice(0, 12).toUpperCase(),
+          reference: (t.serial_number as string) || (t.id as string)?.slice(0, 12).toUpperCase(),
           status: "COMPLETED",
           created_at: t.created_at as string,
           narration: `Ticket — ${t.game_name || t.game_code}`,
-          provider_name: t.payment_method?.toUpperCase() || "MOMO",
+          provider_name: (t.payment_method as string)?.toUpperCase() || "MOMO",
           currency: "GHS",
-        })))
-    }
-    fetchAllForTx()
+        })));
+      })
       .catch(() => setTransactions([]))
       .finally(() => setTxLoading(false));
   }, [tab, token, resolvedPlayerId]);
@@ -373,27 +336,12 @@ const MyTicketsPage = () => {
     return true;
   }), [tickets, statusFilter, search, dateFrom, dateTo]);
 
-  const totalTicketPages = Math.max(1, Math.ceil(filtered.length / TICKETS_PER_PAGE));
-  const safeTicketPage = Math.min(ticketPage, totalTicketPages);
-  const paginatedTickets = filtered.slice((safeTicketPage - 1) * TICKETS_PER_PAGE, safeTicketPage * TICKETS_PER_PAGE);
-
-  const ticketPageNumbers = (() => {
-    const total = totalTicketPages;
-    const cur = safeTicketPage;
-    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-    if (cur <= 4) return [1, 2, 3, 4, 5, -1, total];
-    if (cur >= total - 3) return [1, -1, total - 4, total - 3, total - 2, total - 1, total];
-    return [1, -1, cur - 1, cur, cur + 1, -1, total];
-  })();
-
-  const resetTicketPage = () => setTicketPage(1);
-
   const statuses = ["ALL", "ACTIVE", "WON", "COMPLETED", "CANCELLED"];
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
-      <main className="flex-1 container pt-36 pb-16">
+      <main className="flex-1 container pt-24 pb-16">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/30 flex items-center justify-center">
             <Ticket size={20} className="text-primary" />
@@ -417,18 +365,18 @@ const MyTicketsPage = () => {
             <div className="flex flex-col sm:flex-row gap-3 mb-4">
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <input type="text" placeholder="Search by serial, game name..." value={search} onChange={e => { setSearch(e.target.value); resetTicketPage(); }}
+                <input type="text" placeholder="Search by serial, game name..." value={search} onChange={e => setSearch(e.target.value)}
                   className="w-full bg-secondary text-foreground placeholder:text-muted-foreground border border-border rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition" />
               </div>
               <div className="flex gap-2">
                 <div className="relative">
                   <Calendar size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                  <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); resetTicketPage(); }}
+                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
                     className="bg-secondary text-foreground border border-border rounded-lg pl-8 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition w-36" />
                 </div>
                 <div className="relative">
                   <Calendar size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                  <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); resetTicketPage(); }}
+                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
                     className="bg-secondary text-foreground border border-border rounded-lg pl-8 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition w-36" />
                 </div>
                 {(search || dateFrom || dateTo || statusFilter !== "ALL") && (
@@ -442,7 +390,7 @@ const MyTicketsPage = () => {
               {statuses.map(f => {
                 const count = f === "ALL" ? tickets.length : tickets.filter(t => t.status?.toUpperCase() === f).length;
                 return (
-                  <button key={f} onClick={() => { setStatusFilter(f); resetTicketPage(); }}
+                  <button key={f} onClick={() => setStatusFilter(f)}
                     className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition border ${statusFilter === f ? "bg-primary text-white border-primary" : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>
                     {f === "ALL" ? `All (${count})` : `${f.charAt(0) + f.slice(1).toLowerCase()} (${count})`}
                   </button>
@@ -468,54 +416,9 @@ const MyTicketsPage = () => {
                 {tickets.length === 0 && <Link to="/competitions" className="bg-primary text-white font-heading px-6 py-2.5 rounded-lg btn-glow hover:brightness-110 transition text-sm">BROWSE COMPETITIONS</Link>}
               </div>
             ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {paginatedTickets.map(t => <TicketCard key={t.id || t.ticket_id} ticket={t} onClick={() => setSelected(t)} />)}
-                </div>
-
-                {/* Pagination */}
-                {totalTicketPages > 1 && (
-                  <div className="flex items-center justify-center gap-1 mt-8">
-                    <button
-                      onClick={() => setTicketPage(p => Math.max(1, p - 1))}
-                      disabled={safeTicketPage === 1}
-                      className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-primary/50 hover:text-primary transition disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-
-                    {ticketPageNumbers.map((n, i) =>
-                      n === -1 ? (
-                        <span key={`e-${i}`} className="w-9 h-9 flex items-center justify-center text-muted-foreground text-sm">…</span>
-                      ) : (
-                        <button
-                          key={n}
-                          onClick={() => setTicketPage(n)}
-                          className={`w-9 h-9 flex items-center justify-center rounded-lg text-sm font-semibold transition border ${
-                            n === safeTicketPage
-                              ? "bg-primary text-white border-primary"
-                              : "border-border text-muted-foreground hover:border-primary/50 hover:text-primary"
-                          }`}
-                        >
-                          {n}
-                        </button>
-                      )
-                    )}
-
-                    <button
-                      onClick={() => setTicketPage(p => Math.min(totalTicketPages, p + 1))}
-                      disabled={safeTicketPage === totalTicketPages}
-                      className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-primary/50 hover:text-primary transition disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                )}
-
-                <p className="text-center text-xs text-muted-foreground mt-2">
-                  Page {safeTicketPage} of {totalTicketPages} · {filtered.length} ticket{filtered.length !== 1 ? "s" : ""}
-                </p>
-              </>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filtered.map(t => <TicketCard key={t.id || t.ticket_id} ticket={t} onClick={() => setSelected(t)} />)}
+              </div>
             )}
           </>
         )}

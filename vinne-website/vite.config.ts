@@ -12,9 +12,8 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'https://api.winbig.bedriften.xyz',
+        target: 'http://localhost:4000',
         changeOrigin: true,
-        secure: true,
       },
     },
   },

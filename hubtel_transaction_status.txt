@@ -1,0 +1,138 @@
+HUBTEL TRANSACTION STATUS CHECK — CarPark Ed. 7
+================================================
+Date: 2026-04-22
+Server IP: 34.121.254.209
+Merchant: 2038733 | API ID: BrAlO3J
+
+Endpoint:
+GET https://rmp.hubtel.com/merchantaccount/merchants/{POS_Sales_ID}/transactions/{TransactionId}
+
+Auth: Basic Auth (same credentials as payment initiation)
+Use case: Poll this endpoint if no webhook callback is received within 5 minutes.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. TRANSACTION SUCCESSFUL — ResponseCode "0000"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTTP Status: 200
+
+Response:
+{
+  "ResponseCode": "0000",
+  "Message": "Success",
+  "Data": {
+    "TransactionId": "17f68224e15947f0b789288cdcf88b8c",
+    "ClientReference": "a3f2c1d0e4b5f6a7b8c9d0e1f2a3b4c5",
+    "Amount": 1.00,
+    "Charges": 0.01,
+    "AmountCharged": 1.01,
+    "AmountAfterCharges": 1.00,
+    "DeliveryFee": 0.0,
+    "CustomerMsisdn": "233244000000",
+    "Channel": "mtn-gh",
+    "Description": "Car Park ticket",
+    "Status": "Success",
+    "CreatedAt": "2026-04-22T16:30:00Z",
+    "UpdatedAt": "2026-04-22T16:30:45Z",
+    "InvoiceNumber": null
+  }
+}
+
+Action: Mark tickets as completed, send confirmation SMS.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. TRANSACTION PENDING — ResponseCode "0001"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTTP Status: 200
+
+Response:
+{
+  "ResponseCode": "0001",
+  "Message": "Transaction pending. Expect callback request for final state.",
+  "Data": {
+    "TransactionId": "17f68224e15947f0b789288cdcf88b8c",
+    "ClientReference": "a3f2c1d0e4b5f6a7b8c9d0e1f2a3b4c5",
+    "Amount": 1.00,
+    "Charges": 0.01,
+    "AmountCharged": 1.01,
+    "AmountAfterCharges": 1.00,
+    "DeliveryFee": 0.0,
+    "CustomerMsisdn": "233244000000",
+    "Channel": "mtn-gh",
+    "Description": "Car Park ticket / WinBig draw entry",
+    "Status": "Pending",
+    "CreatedAt": "2026-04-22T16:30:00Z",
+    "UpdatedAt": "2026-04-22T16:30:00Z",
+    "InvoiceNumber": null
+  }
+}
+
+Action: Customer has not yet approved or rejected the MoMo prompt.
+        Poll again or wait for webhook callback.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. TRANSACTION FAILED / CANCELLED — ResponseCode "2001"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTTP Status: 200
+
+Response:
+{
+  "ResponseCode": "2001",
+  "Message": "Transaction failed.",
+  "Data": {
+    "TransactionId": "17f68224e15947f0b789288cdcf88b8c",
+    "ClientReference": "a3f2c1d0e4b5f6a7b8c9d0e1f2a3b4c5",
+    "Amount": 1.00,
+    "Charges": 0.00,
+    "AmountCharged": 0.00,
+    "AmountAfterCharges": 0.00,
+    "DeliveryFee": 0.0,
+    "CustomerMsisdn": "233244000000",
+    "Channel": "mtn-gh",
+    "Description": "Car Park ticket / WinBig draw entry",
+    "Status": "Failed",
+    "CreatedAt": "2026-04-22T16:30:00Z",
+    "UpdatedAt": "2026-04-22T16:32:10Z",
+    "InvoiceNumber": null
+  }
+}
+
+Action: Mark tickets as failed. Customer cancelled or had insufficient funds.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. TRANSACTION NOT FOUND — ResponseCode "4040"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTTP Status: 404
+
+Response:
+{
+  "ResponseCode": "4040",
+  "Message": "Transaction not found.",
+  "Data": ""
+}
+
+Action: TransactionId or ClientReference is wrong. Check the reference used.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESPONSE CODE SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+0000  →  Success           (payment confirmed)
+0001  →  Pending           (waiting for customer PIN)
+2001  →  Failed/Cancelled  (customer rejected or no funds)
+4040  →  Not Found         (wrong TransactionId/ClientReference)
+4101  →  Scope missing     (mobilemoney-receive-direct not enabled)
+403   →  IP not whitelisted
+401   →  Bad credentials
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- TransactionId is returned in the initiation response (ResponseCode 0001)
+- ClientReference is the UUID4 hex we generate per purchase (stored in tickets DB)
+- Poll status only as a fallback if webhook is not received within 5 minutes
+- These are sample/expected responses based on Hubtel API documentation

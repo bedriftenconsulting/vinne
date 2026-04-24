@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { 
   Users, 
@@ -16,9 +16,12 @@ import {
   Ticket,
   Download,
   UserPlus,
-  Plus
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Pagination, PaginationContent, PaginationEllipsis,
+  PaginationItem, PaginationLink, PaginationNext, PaginationPrevious,
+} from '@/components/ui/pagination'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -41,7 +44,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+
 import { toast } from '@/hooks/use-toast'
 import { formatInGhanaTime } from '@/lib/date-utils'
 import PageHeader from '@/components/ui/page-header'
@@ -208,7 +211,7 @@ const PlayersModule: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('')
   const [verificationFilter, setVerificationFilter] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
-  const [playerDetailsOpen, setPlayerDetailsOpen] = useState(false)
+  const [page, setPage] = useState(1)
 
   // Fetch players
   const { data: playersData, isLoading: playersLoading } = useQuery({
@@ -293,6 +296,21 @@ const PlayersModule: React.FC = () => {
     }
     return true
   }) || []
+
+  const PAGE_SIZE = 10
+  const totalPages = Math.max(1, Math.ceil(filteredPlayers.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const paginatedPlayers = useMemo(
+    () => filteredPlayers.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filteredPlayers, safePage]
+  )
+  function buildPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+    if (current <= 4) return [1, 2, 3, 4, 5, 'ellipsis', total]
+    if (current >= total - 3) return [1, 'ellipsis', total - 4, total - 3, total - 2, total - 1, total]
+    return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total]
+  }
+  const pageNums = buildPageNumbers(safePage, totalPages)
 
   if (playersLoading) {
     return (
@@ -412,7 +430,7 @@ const PlayersModule: React.FC = () => {
                 <Input
                   placeholder="Search by name, phone, email, or player ID..."
                   value={searchFilter}
-                  onChange={(e) => setSearchFilter(e.target.value)}
+                  onChange={(e) => { setSearchFilter(e.target.value); setPage(1) }}
                   className="pl-8"
                 />
               </div>
@@ -420,7 +438,7 @@ const PlayersModule: React.FC = () => {
             
             <div>
               <Label>Account Status</Label>
-              <Select value={statusFilter || "all"} onValueChange={(value) => setStatusFilter(value === "all" ? "" : value)}>
+              <Select value={statusFilter || "all"} onValueChange={(value) => { setStatusFilter(value === "all" ? "" : value); setPage(1) }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Statuses" />
                 </SelectTrigger>
@@ -436,7 +454,7 @@ const PlayersModule: React.FC = () => {
             
             <div>
               <Label>Verification Status</Label>
-              <Select value={verificationFilter || "all"} onValueChange={(value) => setVerificationFilter(value === "all" ? "" : value)}>
+              <Select value={verificationFilter || "all"} onValueChange={(value) => { setVerificationFilter(value === "all" ? "" : value); setPage(1) }}>
                 <SelectTrigger>
                   <SelectValue placeholder="All Verification" />
                 </SelectTrigger>
@@ -456,6 +474,7 @@ const PlayersModule: React.FC = () => {
                   setSearchFilter('')
                   setStatusFilter('')
                   setVerificationFilter('')
+                  setPage(1)
                 }}
                 className="w-full"
               >
@@ -469,11 +488,14 @@ const PlayersModule: React.FC = () => {
 
       {/* Players Table */}
       <Card>
-        <CardHeader>
-          <CardTitle>Players ({filteredPlayers.length})</CardTitle>
-          <CardDescription>
-            Manage player accounts and verification status
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Players ({filteredPlayers.length})</CardTitle>
+            <CardDescription>
+              Manage player accounts and verification status
+            </CardDescription>
+          </div>
+          <span className="text-sm text-muted-foreground">Page {safePage} of {totalPages}</span>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
@@ -499,7 +521,7 @@ const PlayersModule: React.FC = () => {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredPlayers.map((player) => (
+                  paginatedPlayers.map((player) => (
                     <TableRow key={player.player_id}>
                       <TableCell className="font-mono font-medium">
                         {player.player_id}
@@ -650,7 +672,7 @@ const PlayersModule: React.FC = () => {
                               )}
                               
                               <DialogFooter>
-                                <Button variant="outline" onClick={() => setPlayerDetailsOpen(false)}>
+                                <Button variant="outline">
                                   Close
                                 </Button>
                                 <Button>
@@ -690,6 +712,37 @@ const PlayersModule: React.FC = () => {
               </TableBody>
             </Table>
           </div>
+
+          {totalPages > 1 && (
+            <div className="mt-4">
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious href="#"
+                      onClick={e => { e.preventDefault(); setPage(p => Math.max(1, p - 1)) }}
+                      aria-disabled={safePage === 1}
+                      className={safePage === 1 ? 'pointer-events-none opacity-50' : ''} />
+                  </PaginationItem>
+                  {pageNums.map((n, i) =>
+                    n === 'ellipsis' ? (
+                      <PaginationItem key={`e${i}`}><PaginationEllipsis /></PaginationItem>
+                    ) : (
+                      <PaginationItem key={n}>
+                        <PaginationLink href="#" isActive={n === safePage}
+                          onClick={e => { e.preventDefault(); setPage(n) }}>{n}</PaginationLink>
+                      </PaginationItem>
+                    )
+                  )}
+                  <PaginationItem>
+                    <PaginationNext href="#"
+                      onClick={e => { e.preventDefault(); setPage(p => Math.min(totalPages, p + 1)) }}
+                      aria-disabled={safePage === totalPages}
+                      className={safePage === totalPages ? 'pointer-events-none opacity-50' : ''} />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

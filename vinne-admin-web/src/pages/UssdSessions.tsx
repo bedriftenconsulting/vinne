@@ -23,7 +23,7 @@ import { formatInGhanaTime } from '@/lib/date-utils'
 import { formatCurrency } from '@/lib/utils'
 import api from '@/lib/api'
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 10
 
 interface UssdTicket {
   id: string
@@ -50,24 +50,13 @@ async function fetchUssdTickets(): Promise<UssdTicket[]> {
     let page = 1
     let all: UssdTicket[] = []
     while (true) {
-      let batch: UssdTicket[] = []
-      try {
-        const res = await api.get('/admin/tickets', { params: { page: String(page) } })
-        batch = res.data?.data?.tickets || res.data?.tickets || []
-      } catch {
-        break // 500 or network error = no more pages
-      }
+      const res = await api.get('/ussd/tickets', { params: { page, limit: 200 } })
+      const batch: UssdTicket[] = res.data?.data || []
       all = [...all, ...batch]
-      if (batch.length < 10) break
+      if (batch.length < 200 || page >= (res.data?.pages ?? 1)) break
       page++
-      if (page > 30) break
     }
-    return all.filter(
-      t =>
-        t.issuer_type === 'USSD' ||
-        t.serial_number?.startsWith('WB-ACC-') ||
-        t.serial_number?.startsWith('WB-ENT-'),
-    )
+    return all
   } catch {
     return []
   }
@@ -82,7 +71,7 @@ const statusBadge = (status: string) => {
 }
 
 const typeBadge = (t: UssdTicket) => {
-  const isAccess = t.game_type === 'ACCESS_PASS' || t.serial_number?.startsWith('WB-ACC-')
+  const isAccess = t.game_type === 'ACCESS_PASS' || t.serial_number?.startsWith('CP-ACC-')
   if (isAccess)
     return <Badge variant="default"><Ticket className="h-3 w-3 mr-1" />Access Pass</Badge>
   return <Badge variant="secondary"><Hash className="h-3 w-3 mr-1" />Draw Entry</Badge>
@@ -98,7 +87,7 @@ function buildPageNumbers(current: number, total: number): (number | 'ellipsis')
 export default function UssdSessions() {
   const [search, setSearch] = useState('')
   const [gameTypeFilter, setGameTypeFilter] = useState('')
-  const [paymentStatusFilter, setPaymentStatusFilter] = useState('')
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState('completed')
   const [page, setPage] = useState(1)
 
   const { data: allTickets = [], isLoading, refetch, isFetching } = useQuery({
@@ -110,7 +99,7 @@ export default function UssdSessions() {
   // Apply filters
   const filtered = useMemo(() => {
     let result = allTickets
-    if (gameTypeFilter === 'ACCESS_PASS') result = result.filter(t => t.game_type === 'ACCESS_PASS' || t.serial_number?.startsWith('WB-ACC-'))
+    if (gameTypeFilter === 'ACCESS_PASS') result = result.filter(t => t.game_type === 'ACCESS_PASS' || t.serial_number?.startsWith('CP-ACC-'))
     if (gameTypeFilter === 'DRAW_ENTRY') result = result.filter(t => t.game_type === 'DRAW_ENTRY' || t.serial_number?.startsWith('WB-ENT-'))
     if (paymentStatusFilter) result = result.filter(t => t.payment_status === paymentStatusFilter)
     if (search) {
@@ -140,7 +129,7 @@ export default function UssdSessions() {
   // Stats (always from full unfiltered set)
   // game_type may not come from API — use serial prefix as fallback
   const isAccessPass = (t: UssdTicket) =>
-    t.game_type === 'ACCESS_PASS' || t.serial_number?.startsWith('WB-ACC-')
+    t.game_type === 'ACCESS_PASS' || t.serial_number?.startsWith('CP-ACC-')
   const isDrawEntry = (t: UssdTicket) =>
     t.game_type === 'DRAW_ENTRY' || t.serial_number?.startsWith('WB-ENT-')
 
@@ -149,7 +138,7 @@ export default function UssdSessions() {
   const drawEntries = allTickets.filter(isDrawEntry)
   const completed = allTickets.filter(t => t.payment_status === 'completed')
   // total_amount is in pesewas — divide by 100 for GHS
-  const totalRevenue = accessPasses.reduce((sum, t) => sum + Number(t.total_amount || 0), 0)
+  const totalRevenue = allTickets.filter(t => t.payment_status === 'completed').reduce((sum, t) => sum + Number(t.unit_price || 0), 0)
 
   return (
     <div className="space-y-6">
@@ -306,7 +295,7 @@ export default function UssdSessions() {
                         <TableCell>{typeBadge(ticket)}</TableCell>
                         <TableCell className="text-sm max-w-[160px] truncate">{ticket.game_name}</TableCell>
                         <TableCell className="font-semibold">
-                          {ticket.total_amount > 0 ? formatCurrency(Number(ticket.total_amount)) : '—'}
+                          {ticket.unit_price > 0 ? formatCurrency(Number(ticket.unit_price)) : '—'}
                         </TableCell>
                         <TableCell>{statusBadge(ticket.payment_status)}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground max-w-[140px] truncate">
@@ -331,7 +320,7 @@ export default function UssdSessions() {
                                 <div><Label>Payment Status</Label><div className="mt-1">{statusBadge(ticket.payment_status)}</div></div>
                                 <div><Label>Game</Label><p>{ticket.game_name}</p></div>
                                 <div><Label>Game Code</Label><p className="font-mono">{ticket.game_code}</p></div>
-                                <div><Label>Amount</Label><p className="font-bold text-base">{formatCurrency(Number(ticket.total_amount))}</p></div>
+                                <div><Label>Amount</Label><p className="font-bold text-base">{formatCurrency(Number(ticket.unit_price))}</p></div>
                                 <div><Label>Payment Method</Label><p className="capitalize">{ticket.payment_method?.replace('_', ' ')}</p></div>
                                 <div className="col-span-2"><Label>Payment Reference</Label><p className="font-mono text-xs break-all">{ticket.payment_ref}</p></div>
                                 <div><Label>Draw Date</Label><p>{ticket.draw_date}</p></div>

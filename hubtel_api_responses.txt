@@ -1,0 +1,147 @@
+HUBTEL API RESPONSES — CarPark Ed. 7
+=====================================
+Date: 2026-04-22
+Server IP: 34.121.254.209
+Merchant: 2038733 | API ID: BrAlO3J
+Endpoint: POST https://rmp.hubtel.com/merchantaccount/merchants/2038733/receive/mobilemoney
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESPONSES RECEIVED DURING SETUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. IP NOT WHITELISTED — 403 Forbidden
+--------------------------------------
+HTTP Status: 403
+
+Response:
+<html>
+<head><title>403 Forbidden</title></head>
+<body><center><h1>403 Forbidden</h1></center></body>
+</html>
+
+What it means:
+Server IP (34.121.254.209) was not whitelisted on Hubtel.
+Fix: Contacted Hubtel support to whitelist the IP.
+
+
+2. IP WHITELISTED, SCOPE NOT ENABLED — 401
+-------------------------------------------
+HTTP Status: 401
+
+Response:
+{
+  "Message": "supplied API keys does not have \"mobilemoney-receive-direct\" in scopes.",
+  "ResponseCode": "4101",
+  "Data": ""
+}
+
+What it means:
+IP whitelist confirmed. Credentials recognised but "mobilemoney-receive-direct"
+scope had not been enabled on the merchant account.
+Fix: Contacted Hubtel support to enable the scope.
+
+
+3. PAYMENT INITIATED SUCCESSFULLY — 200
+-----------------------------------------
+HTTP Status: 200
+
+Response:
+{
+  "Message": "Transaction pending. Expect callback request for final state.",
+  "ResponseCode": "0001",
+  "Data": {
+    "TransactionId": "17f68224e15947f0b789288cdcf88b8c",
+    "Description": "Test charge",
+    "ClientReference": "testref001",
+    "Amount": 1.01,
+    "Charges": 0.01,
+    "AmountAfterCharges": 1.00,
+    "AmountCharged": 1.01,
+    "DeliveryFee": 0.0,
+    "InvoiceNumber": null
+  }
+}
+
+What it means:
+All clear. Hubtel accepted the request and queued the MoMo prompt to the customer.
+ResponseCode "0001" = pending. Final result delivered via webhook callback.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WEBHOOK CALLBACKS (Hubtel → our server)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Callback URL: https://api.winbig.bedriften.xyz/payment/webhook
+
+Payment Successful (ResponseCode "0000"):
+{
+  "ResponseCode": "0000",
+  "Data": {
+    "ClientReference": "<uuid>",
+    "Amount": 1.00,
+    "CustomerMsisdn": "233XXXXXXXXX"
+  }
+}
+Action: Mark tickets as completed, send confirmation SMS.
+
+Payment Failed / Cancelled (ResponseCode "2001"):
+{
+  "ResponseCode": "2001",
+  "Data": {
+    "ClientReference": "<uuid>"
+  }
+}
+Action: Mark tickets as failed.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HUBTEL OFFICIAL RESPONSE CODE REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Source: Hubtel Sales API Documentation
+
+CODE   HTTP   DESCRIPTION                              REQUIRED ACTION
+----   ----   -----------                              ---------------
+0000   2xx    Transaction processed successfully.      None. Mark completed, send SMS.
+
+0001   2xx    Request accepted. Callback will be       None. Wait for webhook callback.
+              sent on final state.
+
+2001   2xx    MTN MoMo user reached counter/balance    Mark tickets as failed.
+              limits, insufficient funds, or missing   Customer may retry via *899*92.
+              permissions.
+              - Vodafone Cash failed.
+              - Wrong PIN entered.
+              - USSD session timeout.
+              - Strange characters (&*!%@) in
+                description field.
+              - Number does not match channel.
+              - Account Holder with FRI Not Found.
+
+4000   4xx    Validation errors. Something is not      Check all required payload fields
+              quite right with the request.            are present and correctly formatted.
+
+4070   4xx    Unable to complete payment at the        Ensure minimum amount is passed.
+              moment. Fees not set for given           Contact Hubtel relationship manager
+              conditions.                              to set up fees if error persists.
+
+4101   4xx    Business not fully set up to receive     Contact Hubtel Retail Systems
+              payments. API keys missing               Engineer to enable Receive Money
+              "mobilemoney-receive-direct" scope.      scope. Verify Basic Auth key and
+              Client request keys do not match         POS Sales ID in the endpoint.
+              API keys on business.
+
+4103   4xx    Permission denied. Account not allowed   Contact Hubtel Retail Systems
+              to transact on this channel.             Engineer.
+
+403    4xx    Server IP not whitelisted on Hubtel.     Request IP whitelist from Hubtel
+                                                       support.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- CHARGE_GHS_1 = True is active (all charges are GHS 1 during testing)
+- Set CHARGE_GHS_1 = False in app.py before going live
+- ClientReference is a UUID4 hex (32 chars) stored in the tickets DB
+- Successful 2xx codes from Hubtel include both 0000 and 0001
+- Failed 4xx/5xx codes indicate errors that need investigation

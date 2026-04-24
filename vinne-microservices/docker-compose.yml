@@ -180,7 +180,7 @@ services:
       REDIS_PORT: 6379
       SHARED_REDIS_HOST: redis-shared
       SHARED_REDIS_PORT: 6379
-      SECURITY_ALLOWED_ORIGINS: "http://localhost:8080,http://localhost:8081,http://localhost:5173,http://localhost:5174,http://localhost:3000,http://localhost:6176,http://localhost:6177,http://localhost:6178,http://localhost:9000,https://winbig.bedriften.xyz,https://admin.winbig.bedriften.xyz,https://api.winbig.bedriften.xyz"
+      SECURITY_ALLOWED_ORIGINS: "http://localhost:8080,http://localhost:8081,http://localhost:5173,http://localhost:5174,http://localhost:3000,http://localhost:6176,http://localhost:6177,http://localhost:6178,http://localhost:9000,https://winbig.bedriften.xyz,https://winbig.bedriften.xyz.,https://admin.winbig.bedriften.xyz,https://api.winbig.bedriften.xyz"
       JAEGER_ENDPOINT: http://jaeger:4318
       TRACING_JAEGER_ENDPOINT: http://jaeger:4318
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
@@ -191,7 +191,7 @@ services:
       STORAGE_BUCKET: vinne-game-assets
       STORAGE_ACCESS_KEY_ID: minioadmin
       STORAGE_SECRET_ACCESS_KEY: minioadmin
-      STORAGE_CDN_ENDPOINT: http://localhost:9000/vinne-game-assets
+      STORAGE_CDN_ENDPOINT: https://api.winbig.bedriften.xyz/storage/vinne-game-assets
       STORAGE_FORCE_PATH_STYLE: "true"
     networks:
       - randco-net

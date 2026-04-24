@@ -1,0 +1,61 @@
+HUBTEL TRANSACTION STATUS CHECK — Live Response
+================================================
+Date: 2026-04-22
+Server IP: 34.121.254.209
+Merchant: 2038733 | API ID: BrAlO3J
+TransactionId tested: 17f68224e15947f0b789288cdcf88b8c
+ClientReference tested: testref001
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ATTEMPT 1 — GET by TransactionId
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Endpoint:
+GET https://rmp.hubtel.com/merchantaccount/merchants/2038733/transactions/17f68224e15947f0b789288cdcf88b8c
+
+HTTP Status: 401
+
+Response:
+{
+  "Message": "No API keys has been setup on account",
+  "ResponseCode": "4101",
+  "Data": ""
+}
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ATTEMPT 2 — GET by ClientReference
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Endpoint:
+GET https://rmp.hubtel.com/merchantaccount/merchants/2038733/transactions/clientreference/testref001
+
+HTTP Status: 401
+
+Response:
+{
+  "Message": "No API keys has been setup on account",
+  "ResponseCode": "4101",
+  "Data": ""
+}
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- The payment initiation (POST) works — we got ResponseCode 0001 successfully.
+- The status check (GET) returns ResponseCode 4101 on both endpoint formats.
+- "No API keys has been setup on account" suggests the status check endpoint
+  requires a separate scope that has not been enabled on this account.
+- This is a different error from the earlier 4101 ("mobilemoney-receive-direct"
+  scope missing) — this one refers specifically to the status check scope.
+
+REQUIRED ACTION:
+Contact Hubtel Retail Systems Engineer and request:
+  "Please enable the transaction status check scope for API ID BrAlO3J,
+   merchant account 2038733."
+
+NOTE:
+The status check is only a fallback for missed webhooks. Since the webhook
+callback is already configured and working at:
+  https://api.winbig.bedriften.xyz/payment/webhook
+— the status check is not critical for the live flow.

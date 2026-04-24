@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Trophy, Loader2 } from "lucide-react";
+import { Trophy, Clock, Loader2, Users } from "lucide-react";
 import { fetchActiveGames, type ApiGame } from "@/lib/api";
 import { useCountdown } from "@/hooks/useCountdown";
 
 const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 
+// Compute next draw date
 const getNextDrawDate = (game: ApiGame): Date => {
-  if (game.draw_date) return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
+  if (game.draw_date) {
+    return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
+  }
   const [h, m] = (game.draw_time || "20:00").split(":").map(Number);
   const now = new Date();
   const next = new Date(now);
@@ -16,131 +19,93 @@ const getNextDrawDate = (game: ApiGame): Date => {
   return next;
 };
 
-const getPrize = (game: ApiGame) => {
-  try { const p = JSON.parse(game.prize_details || "[]"); return p[0]?.description || ""; } catch { return ""; }
-};
+const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
+  const drawDate = getNextDrawDate(game);
+  const { days, hours, minutes, seconds } = useCountdown(drawDate);
+  const [ticketsSold, setTicketsSold] = useState<number>(0);
 
-const getEndsLabel = (days: number, drawDate: Date) => {
-  if (days === 0) return "ENDS TODAY";
-  if (days === 1) return "ENDS TOMORROW";
-  if (days <= 7) return `ENDS IN ${days} DAYS`;
-  return `ENDS ${new Date(drawDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).toUpperCase()}`;
-};
-
-const useTicketsSold = (gameId: string) => {
-  const [sold, setSold] = useState(0);
+  // Fetch tickets sold count for this game's active schedule
   useEffect(() => {
-    fetch(`${BASE}/players/games/${gameId}/schedule`, { cache: "no-store" })
+    fetch(`${BASE}/players/games/${game.id}/schedule`)
       .then(r => r.json())
       .then(d => {
         const schedules = d?.data?.schedules ?? [];
-        const parseDate = (d: string | { seconds: number } | undefined): Date | null => {
-          if (!d) return null;
-          if (typeof d === "object" && "seconds" in d) return new Date(d.seconds * 1000);
-          return new Date(d as string);
-        };
-        const now = new Date();
-        const future = schedules
-          .filter((s: { status: string; scheduled_draw?: string | { seconds: number } }) =>
-            s.status === "SCHEDULED" && (parseDate(s.scheduled_draw)?.getTime() ?? 0) > now.getTime())
-          .sort((a: { scheduled_draw?: string | { seconds: number } }, b: { scheduled_draw?: string | { seconds: number } }) =>
-            (parseDate(a.scheduled_draw)?.getTime() ?? 0) - (parseDate(b.scheduled_draw)?.getTime() ?? 0));
-        const s = future[0] ?? schedules[0];
-        if (s?.tickets_sold != null) setSold(s.tickets_sold);
-        else if (s?.total_tickets_sold != null) setSold(s.total_tickets_sold);
-      }).catch(() => {});
-  }, [gameId]);
-  return sold;
-};
+        const active = schedules.find((s: { status: string; is_active: boolean }) => s.status === "SCHEDULED" && s.is_active) ?? schedules[0];
+        if (active?.tickets_sold != null) setTicketsSold(active.tickets_sold);
+        else if (active?.total_tickets_sold != null) setTicketsSold(active.total_tickets_sold);
+      })
+      .catch(() => {});
+  }, [game.id]);
 
-// ── Competition Card — dark theme matching hero ───────────────────────────────
-const CompCard = ({ game }: { game: ApiGame }) => {
-  const drawDate = getNextDrawDate(game);
-  const { days } = useCountdown(drawDate);
-  const sold = useTicketsSold(game.id);
-  const total = game.total_tickets || 1000;
-  const pct = Math.min(100, Math.round((sold / total) * 100));
-  const prize = getPrize(game);
-  const endsLabel = getEndsLabel(days, drawDate);
-  const isUrgent = days <= 1;
+  const timeLabel = days > 0
+    ? `${days}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`
+    : `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+
+  let prizeLabel = "";
+  try {
+    const prizes = JSON.parse(game.prize_details || "[]");
+    if (prizes[0]?.description) prizeLabel = prizes[0].description;
+  } catch { /* ignore */ }
+
+  const totalTickets = game.total_tickets || 1000;
+  const pct = totalTickets > 0 ? Math.min(100, Math.round((ticketsSold / totalTickets) * 100)) : 0;
+  const isFilling = pct >= 75;
 
   return (
-    <div className="rounded-2xl overflow-hidden flex flex-col"
-      style={{ background: "hsl(0 0% 8%)", border: "1px solid hsl(0 0% 14%)" }}>
-
-      {/* Image */}
-      <div className="relative aspect-[4/3] overflow-hidden bg-black">
-        {game.logo_url
-          ? <img src={`${game.logo_url}?t=${Math.floor(Date.now() / 3600000)}`} alt={game.name}
-              className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" />
-          : <div className="w-full h-full flex items-center justify-center"><Trophy size={64} className="text-white/10" /></div>
-        }
-        {/* ENDS badge */}
-        <span className="absolute top-3 left-3 font-bold text-white px-3 py-1 rounded-lg shadow-lg"
-          style={{ background: "linear-gradient(90deg,#ff0080,#ff6000)", fontFamily: "'Poppins',sans-serif", fontSize: "0.72rem" }}>
-          {endsLabel}
+    <Link
+      to={`/competitions/${game.id}`}
+      className="group block card-light rounded-xl overflow-hidden shadow-md hover:shadow-xl transition-shadow border border-black/8"
+      style={{ animationDelay: `${index * 80}ms` }}
+    >
+      <div className="relative aspect-[4/3] overflow-hidden bg-black/80 flex items-center justify-center">
+        {game.logo_url ? (
+          <img src={game.logo_url} alt={game.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
+        ) : (
+          <Trophy className="h-16 w-16 text-white/20" />
+        )}
+        <span className="absolute top-3 left-3 bg-[hsl(22_100%_52%)] text-white px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse inline-block" />
+          CLOSES IN {timeLabel}
         </span>
-        {/* Red prize banner */}
-        <div className="absolute bottom-0 left-0 right-0 py-2.5 px-4 text-center"
-          style={{ background: isUrgent ? "#8B0000" : "#cc0000" }}>
-          <p className="font-bold text-white text-sm tracking-wide uppercase"
-            style={{ fontFamily: "'Poppins',sans-serif" }}>
-            {prize ? `${prize}!` : game.name.toUpperCase()}
-          </p>
-        </div>
       </div>
-
-      {/* Card body — dark */}
-      <div className="p-5 flex flex-col flex-1">
-        {/* Description */}
-        <p className="text-white/60 text-sm text-center leading-snug mb-4 flex-1"
-          style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 500 }}>
-          {game.description || `Win a ${prize || game.name}!`}
-        </p>
-
-        {/* Ticket price */}
-        <div className="text-center mb-4">
-          <p className="text-white/40 text-xs font-semibold tracking-widest uppercase mb-0.5"
-            style={{ fontFamily: "'Poppins',sans-serif" }}>TICKET PRICE</p>
-          <p className="font-heading font-black text-gold text-3xl">GHS {game.base_price.toFixed(2)}</p>
+      <div className="p-4">
+        <h3 className="font-heading text-base text-[hsl(0_0%_10%)] mb-0.5 leading-tight">{game.name}</h3>
+        {prizeLabel && <p className="text-xs text-muted-foreground mb-2 truncate">🏆 {prizeLabel}</p>}
+        <div className="flex items-center justify-between mt-2">
+          <span className="font-heading text-lg text-[hsl(0_0%_10%)]">GHS {game.base_price.toFixed(2)}</span>
+          <span className="w-8 h-8 rounded-full bg-[hsl(22_100%_52%)] flex items-center justify-center text-white font-bold text-lg shadow">+</span>
         </div>
 
-        {/* Progress */}
-        <div className="mb-4">
+        {/* Ticket progress bar */}
+        <div className="mt-3">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="font-bold text-xs" style={{ color: "hsl(22 100% 52%)", fontFamily: "'Poppins',sans-serif" }}>
-              Sold {pct}%
+            <span className="flex items-center gap-1 text-xs text-gray-500">
+              <Users size={10} />
+              {ticketsSold.toLocaleString()} / {totalTickets.toLocaleString()} tickets
             </span>
-            <span className="text-white/30 text-xs" style={{ fontFamily: "'Poppins',sans-serif" }}>
-              {(total - sold).toLocaleString()} Left
+            <span className={`text-xs font-bold ${isFilling ? "text-orange-500" : "text-gray-400"}`}>
+              {pct}% sold
             </span>
           </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "hsl(0 0% 18%)" }}>
-            <div className="h-full rounded-full transition-all duration-700"
-              style={{ width: `${Math.max(pct, 2)}%`, background: "hsl(22 100% 52%)" }} />
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${isFilling ? "bg-orange-500" : "bg-[hsl(22_100%_52%)]"}`}
+              style={{ width: `${Math.max(pct, 3)}%` }}
+            />
           </div>
         </div>
 
-        {/* Button */}
-        <Link to={`/competitions/${game.id}`}
-          className="w-full font-heading font-black text-base py-3 rounded-xl text-center transition tracking-widest"
-          style={{
-            border: "1.5px solid hsl(44 100% 52% / 0.7)",
-            color: "white",
-            background: "transparent",
-            boxShadow: "0 0 12px hsl(44 100% 52% / 0.2)",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 0 24px hsl(44 100% 52% / 0.5)")}
-          onMouseLeave={e => (e.currentTarget.style.boxShadow = "0 0 12px hsl(44 100% 52% / 0.2)")}
-        >
-          ENTER NOW »
-        </Link>
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Clock size={11} />
+          {game.draw_date
+            ? `Draw: ${new Date(game.draw_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+            : `Daily draw at ${game.draw_time || "20:00"}`}
+        </div>
       </div>
-    </div>
+    </Link>
   );
 };
 
-// ── Section ───────────────────────────────────────────────────────────────────
 const LiveCompetitions = () => {
   const [games, setGames] = useState<ApiGame[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,12 +115,11 @@ const LiveCompetitions = () => {
   }, []);
 
   return (
-    <section className="py-12 bg-[hsl(0_0%_4%)]">
+    <section className="py-16 section-light">
       <div className="container">
-        <h2 className="font-heading font-black text-gold text-3xl md:text-4xl mb-8 tracking-wide">
+        <h2 className="font-heading text-3xl md:text-4xl text-[hsl(0_0%_10%)] mb-8 tracking-wide">
           LIVE COMPETITIONS
         </h2>
-
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="animate-spin text-primary" size={32} />
@@ -164,17 +128,7 @@ const LiveCompetitions = () => {
           <p className="text-muted-foreground text-center py-8">No active competitions right now.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {games.map(g => <CompCard key={g.id} game={g} />)}
-          </div>
-        )}
-
-        {games.length > 0 && (
-          <div className="mt-8 text-center">
-            <Link to="/competitions"
-              className="inline-flex items-center gap-2 font-heading font-black text-sm px-8 py-3 rounded-xl transition tracking-wide text-white/60 hover:text-white"
-              style={{ border: "1px solid hsl(0 0% 20%)" }}>
-              VIEW ALL COMPETITIONS →
-            </Link>
+            {games.map((g, i) => <GameCard key={g.id} game={g} index={i} />)}
           </div>
         )}
       </div>

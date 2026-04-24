@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CarPark Ed. 7 — Hubtel API Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #f0f4f8;
+    color: #1a202c;
+    padding: 40px 20px;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+    overflow: hidden;
+  }
+
+  /* HEADER */
+  .header {
+    background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+    color: #fff;
+    padding: 40px 48px 36px;
+  }
+  .header-tag {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #f6c90e;
+    margin-bottom: 12px;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: 8px;
+  }
+  .header p {
+    font-size: 14px;
+    color: #a0aec0;
+  }
+  .header-meta {
+    display: flex;
+    gap: 24px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+  }
+  .meta-item {
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: #e2e8f0;
+  }
+  .meta-item span { color: #f6c90e; font-weight: 600; }
+
+  /* SECTION */
+  .section { padding: 36px 48px; border-bottom: 1px solid #e2e8f0; }
+  .section:last-child { border-bottom: none; }
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #718096;
+    margin-bottom: 24px;
+  }
+
+  /* FLOW STEPS */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+  .flow-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+  .flow-left {
+    width: 120px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .actor-badge {
+    background: #edf2f7;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+    color: #4a5568;
+    border: 1.5px solid #e2e8f0;
+  }
+  .actor-badge.user     { background: #ebf8ff; border-color: #90cdf4; color: #2b6cb0; }
+  .actor-badge.ussd     { background: #f0fff4; border-color: #9ae6b4; color: #276749; }
+  .actor-badge.server   { background: #faf5ff; border-color: #d6bcfa; color: #553c9a; }
+  .actor-badge.hubtel   { background: #fff5f5; border-color: #feb2b2; color: #c53030; }
+  .actor-badge.momo     { background: #fffaf0; border-color: #fbd38d; color: #c05621; }
+  .actor-badge.db       { background: #f0fff4; border-color: #9ae6b4; color: #276749; }
+  .actor-badge.sms      { background: #fff5f5; border-color: #feb2b2; color: #c53030; }
+
+  .connector {
+    width: 2px;
+    background: #e2e8f0;
+    flex: 1;
+    min-height: 20px;
+    margin: 0 auto;
+  }
+  .flow-content {
+    flex: 1;
+    padding: 0 0 28px 24px;
+  }
+  .step-number {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #1a202c;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    line-height: 24px;
+    margin-bottom: 8px;
+  }
+  .step-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: #1a202c;
+  }
+  .step-desc {
+    font-size: 13px;
+    color: #718096;
+    line-height: 1.6;
+    margin-bottom: 8px;
+  }
+  .code-block {
+    background: #1a202c;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'Fira Code', monospace;
+    font-size: 11.5px;
+    color: #e2e8f0;
+    line-height: 1.7;
+    margin-top: 8px;
+    overflow-x: auto;
+  }
+  .code-block .key   { color: #90cdf4; }
+  .code-block .val   { color: #9ae6b4; }
+  .code-block .str   { color: #fbd38d; }
+  .code-block .cmt   { color: #718096; }
+  .code-block .http  { color: #f6c90e; font-weight: 600; }
+
+  /* STATUS BADGES */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .badge-green  { background: #c6f6d5; color: #276749; }
+  .badge-yellow { background: #fefcbf; color: #744210; }
+  .badge-red    { background: #fed7d7; color: #c53030; }
+  .badge-blue   { background: #bee3f8; color: #2a69ac; }
+
+  /* RESPONSE CODES TABLE */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 8px;
+  }
+  th {
+    background: #f7fafc;
+    font-weight: 700;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid #e2e8f0;
+    color: #4a5568;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0f4f8;
+    color: #4a5568;
+  }
+  tr:last-child td { border-bottom: none; }
+  .rc { font-family: 'Fira Code', monospace; font-weight: 600; }
+  .rc-0000 { color: #276749; }
+  .rc-0001 { color: #744210; }
+  .rc-2001 { color: #c53030; }
+  .rc-403  { color: #c53030; }
+  .rc-401  { color: #c05621; }
+
+  /* CREDENTIALS BOX */
+  .cred-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .cred-item {
+    background: #f7fafc;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+  .cred-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #718096;
+    margin-bottom: 4px;
+  }
+  .cred-value {
+    font-family: 'Fira Code', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: #1a202c;
+  }
+
+  /* NOTES */
+  .note {
+    background: #fffaf0;
+    border-left: 4px solid #f6c90e;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #744210;
+    margin-top: 12px;
+    line-height: 1.6;
+  }
+
+  /* FOOTER */
+  .footer {
+    background: #f7fafc;
+    padding: 20px 48px;
+    font-size: 12px;
+    color: #a0aec0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .page { box-shadow: none; border-radius: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-tag">API Integration Documentation</div>
+    <h1>CarPark Ed. 7 — Hubtel MoMo Flow</h1>
+    <p>How the USSD app interfaces with Hubtel Direct Receive Money API</p>
+    <div class="header-meta">
+      <div class="meta-item">Server IP <span>34.121.254.209</span></div>
+      <div class="meta-item">Merchant <span>2038733</span></div>
+      <div class="meta-item">API ID <span>BrAlO3J</span></div>
+      <div class="meta-item">USSD Code <span>*899*92</span></div>
+      <div class="meta-item">Date <span>2026-04-22</span></div>
+    </div>
+  </div>
+
+  <!-- FLOW -->
+  <div class="section">
+    <div class="section-title">End-to-End Payment Flow</div>
+    <div class="flow">
+
+      <!-- STEP 1 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge user">Customer</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">1</div>
+          <div class="step-title">Customer dials *899*92</div>
+          <div class="step-desc">
+            Customer dials the USSD short code on MTN Ghana. mNotify routes the session
+            to our server via POST to the callback URL.
+          </div>
+          <div class="code-block">
+            <span class="http">POST</span> https://api.winbig.bedriften.xyz/api/v1/ussd/callback<br/>
+            <span class="key">msisdn</span>=<span class="str">233244XXXXXX</span>  &nbsp;<span class="cmt">// customer phone</span><br/>
+            <span class="key">sequenceID</span>=<span class="str">abc123</span>   &nbsp;<span class="cmt">// session ID</span><br/>
+            <span class="key">network</span>=<span class="str">mtn</span>          &nbsp;<span class="cmt">// network carrier</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge ussd">USSD Menu</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">2</div>
+          <div class="step-title">Customer selects ticket type</div>
+          <div class="step-desc">
+            Customer navigates the menu: Buy Ticket → 1-Day Pass / 2-Day Pass / Extra WinBig Entry
+            → Confirm &amp; Pay.
+          </div>
+          <div class="code-block">
+            <span class="cmt">// Menu paths</span><br/>
+            1*1*1  → 1-Day Pass  (GHS 100, 1 draw entry)<br/>
+            1*2*1  → 2-Day Pass  (GHS 180, 2 draw entries)<br/>
+            1*3*N*1 → N Extra WinBig entries (GHS 20 each)
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge server">Our Server</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">3</div>
+          <div class="step-title">Tickets saved to database (status: pending)</div>
+          <div class="step-desc">
+            Before payment is triggered, tickets are written to PostgreSQL immediately.
+            Access pass (CP-ACC-XXXXXXXX) and draw entries (WB-ENT-XXXXXXXX) are pre-generated
+            and stored with <strong>payment_status = pending</strong>.
+          </div>
+          <div class="code-block">
+            <span class="cmt">// Ticket types saved</span><br/>
+            <span class="key">game_type</span>: <span class="str">ACCESS_PASS</span>  → CP-ACC-XXXXXXXX<br/>
+            <span class="key">game_type</span>: <span class="str">DRAW_ENTRY</span>   → WB-ENT-XXXXXXXX<br/>
+            <span class="key">payment_ref</span>: <span class="str">a3f2c1d0e4b5...</span>  <span class="cmt">// UUID4 hex, 32 chars</span><br/>
+            <span class="key">payment_status</span>: <span class="str">pending</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 4 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge server">Our Server</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">4</div>
+          <div class="step-title">USSD session closed — background thread fires</div>
+          <div class="step-desc">
+            The USSD session is closed immediately (continueFlag: 1) with a confirmation screen.
+            A background thread waits 3 seconds then calls Hubtel.
+          </div>
+          <div class="code-block">
+            <span class="cmt">// USSD response sent to customer</span><br/>
+            Processing payment...<br/>
+            Pass: CP-ACC-XXXXXXXX<br/>
+            Draw Entries: WB-ENT-XXXXXXXX<br/>
+            Enter MoMo PIN when prompted.<br/>
+            SMS sent on confirmation.<br/><br/>
+            <span class="key">continueFlag</span>: <span class="val">1</span>  <span class="cmt">// closes session</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 5 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge hubtel">Hubtel API</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">5</div>
+          <div class="step-title">POST to Hubtel — initiate MoMo charge
+            <span class="badge badge-yellow">ResponseCode 0001</span>
+          </div>
+          <div class="step-desc">
+            Our server POSTs to Hubtel's Direct Receive Money endpoint using Basic Auth.
+            Amount is in GHS float. ClientReference is the UUID stored in the DB.
+          </div>
+          <div class="code-block">
+            <span class="http">POST</span> https://rmp.hubtel.com/merchantaccount/merchants/<span class="str">2038733</span>/receive/mobilemoney<br/>
+            <span class="key">Authorization</span>: Basic <span class="str">Base64(BrAlO3J:&lt;API_KEY&gt;)</span><br/><br/>
+            {<br/>
+            &nbsp;&nbsp;<span class="key">"Amount"</span>: <span class="val">100.00</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"Title"</span>: <span class="str">"CarPark Ed. 7"</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"Description"</span>: <span class="str">"Car Park ticket / WinBig draw entry"</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"PrimaryCallbackUrl"</span>: <span class="str">"https://api.winbig.bedriften.xyz/payment/webhook"</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"ClientReference"</span>: <span class="str">"a3f2c1d0e4b5f6a7b8c9d0e1f2a3b4c5"</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"CustomerMsisdn"</span>: <span class="str">"233244XXXXXX"</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"Channel"</span>: <span class="str">"mtn-gh"</span><br/>
+            }<br/><br/>
+            <span class="cmt">// Hubtel response</span><br/>
+            { <span class="key">"ResponseCode"</span>: <span class="str">"0001"</span>, <span class="key">"Message"</span>: <span class="str">"Transaction pending..."</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"Data"</span>: { <span class="key">"TransactionId"</span>: <span class="str">"17f68224..."</span> } }
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 6 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge momo">MoMo Prompt</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">6</div>
+          <div class="step-title">Customer receives MoMo PIN prompt</div>
+          <div class="step-desc">
+            MTN Ghana sends a USSD push prompt to the customer's phone asking them to enter
+            their MoMo PIN to approve the payment.
+          </div>
+          <div class="code-block">
+            <span class="cmt">// MTN push to customer's handset</span><br/>
+            "Approve GHS 100.00 payment<br/>
+            &nbsp;to CarPark Ed. 7?<br/>
+            &nbsp;Enter PIN to confirm."
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 7A -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge hubtel">Hubtel</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">7</div>
+          <div class="step-title">Hubtel sends webhook callback to our server</div>
+          <div class="step-desc">
+            After the customer approves or rejects, Hubtel POSTs to our
+            <strong>PrimaryCallbackUrl</strong> with the final transaction result.
+          </div>
+          <div class="code-block">
+            <span class="http">POST</span> https://api.winbig.bedriften.xyz/payment/webhook<br/><br/>
+            <span class="cmt">// Payment approved (ResponseCode 0000)</span><br/>
+            {<br/>
+            &nbsp;&nbsp;<span class="key">"ResponseCode"</span>: <span class="str">"0000"</span>,<br/>
+            &nbsp;&nbsp;<span class="key">"Data"</span>: {<br/>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"ClientReference"</span>: <span class="str">"a3f2c1d0e4b5f6a7b8c9d0e1f2a3b4c5"</span>,<br/>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Amount"</span>: <span class="val">100.00</span>,<br/>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"CustomerMsisdn"</span>: <span class="str">"233244XXXXXX"</span><br/>
+            &nbsp;&nbsp;}<br/>
+            }<br/><br/>
+            <span class="cmt">// Payment rejected (ResponseCode 2001)</span><br/>
+            { <span class="key">"ResponseCode"</span>: <span class="str">"2001"</span>, <span class="key">"Data"</span>: { <span class="key">"ClientReference"</span>: <span class="str">"..."</span> } }
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 8 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge db">Database</div>
+          <div class="connector"></div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">8</div>
+          <div class="step-title">Ticket status updated in database</div>
+          <div class="step-desc">
+            Our webhook handler looks up tickets by <strong>ClientReference</strong>
+            and updates their payment status.
+          </div>
+          <div class="code-block">
+            <span class="cmt">// On ResponseCode 0000</span><br/>
+            UPDATE tickets SET <span class="key">payment_status</span>=<span class="str">'completed'</span><br/>
+            WHERE <span class="key">payment_ref</span>=<span class="str">'a3f2c1d0...'</span><br/><br/>
+            <span class="cmt">// On ResponseCode 2001</span><br/>
+            UPDATE tickets SET <span class="key">payment_status</span>=<span class="str">'failed'</span><br/>
+            WHERE <span class="key">payment_ref</span>=<span class="str">'a3f2c1d0...'</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 9 -->
+      <div class="flow-row">
+        <div class="flow-left">
+          <div class="actor-badge sms">mNotify</div>
+        </div>
+        <div class="flow-content">
+          <div class="step-number">9</div>
+          <div class="step-title">Confirmation SMS sent to customer
+            <span class="badge badge-green">Done</span>
+          </div>
+          <div class="step-desc">
+            On successful payment, an SMS is sent via mNotify confirming the ticket details.
+          </div>
+          <div class="code-block">
+            <span class="cmt">// Day Pass SMS</span><br/>
+            CarPark payment confirmed!<br/>
+            Pass: CP-ACC-XXXXXXXX<br/>
+            Valid: Day 1<br/>
+            Draw entries: 1<br/>
+            Draw: 03 May 2026<br/>
+            Good luck!
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /flow -->
+  </div>
+
+  <!-- RESPONSE CODES -->
+  <div class="section">
+    <div class="section-title">Hubtel Response Code Reference</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>HTTP</th>
+          <th>Description</th>
+          <th>Required Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="rc rc-0000">0000</span></td>
+          <td>2xx</td>
+          <td>Transaction processed successfully.</td>
+          <td>Mark completed, send confirmation SMS.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-0001">0001</span></td>
+          <td>2xx</td>
+          <td>Request accepted. Callback will be sent on final state.</td>
+          <td>Wait for webhook callback. No action needed.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-2001">2001</span></td>
+          <td>2xx</td>
+          <td>
+            MTN MoMo user reached counter/balance limits, insufficient funds, or missing permissions.<br/>
+            Vodafone Cash failed.<br/>
+            Wrong PIN entered.<br/>
+            USSD session timeout.<br/>
+            Strange characters (&amp;*!%@) in description.<br/>
+            Number does not match channel.<br/>
+            Account Holder with FRI Not Found.
+          </td>
+          <td>Mark tickets as failed. Customer may retry by dialling *899*92 again.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-401">4000</span></td>
+          <td>4xx</td>
+          <td>Validation errors. Something is not quite right with the request.</td>
+          <td>Check all required fields in the payload are present and correctly formatted.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-401">4070</span></td>
+          <td>4xx</td>
+          <td>Unable to complete payment. Fees not set for given conditions.</td>
+          <td>Ensure minimum amount is passed, or contact Hubtel relationship manager to set up fees.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-401">4101</span></td>
+          <td>4xx</td>
+          <td>
+            Business not fully set up to receive payments.<br/>
+            API keys missing "mobilemoney-receive-direct" scope.<br/>
+            Client request keys do not match API keys on business.
+          </td>
+          <td>Contact Hubtel Retail Systems Engineer to enable Receive Money scope. Verify Basic Auth key and POS Sales ID in endpoint.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-403">4103</span></td>
+          <td>4xx</td>
+          <td>Permission denied. Account not allowed to transact on this channel.</td>
+          <td>Contact Hubtel Retail Systems Engineer.</td>
+        </tr>
+        <tr>
+          <td><span class="rc rc-403">403</span></td>
+          <td>4xx</td>
+          <td>Server IP not whitelisted on Hubtel.</td>
+          <td>Request IP whitelist from Hubtel support.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- CREDENTIALS -->
+  <div class="section">
+    <div class="section-title">Credentials &amp; Configuration</div>
+    <div class="cred-grid">
+      <div class="cred-item">
+        <div class="cred-label">API ID (Username)</div>
+        <div class="cred-value">BrAlO3J</div>
+      </div>
+      <div class="cred-item">
+        <div class="cred-label">POS Sales ID</div>
+        <div class="cred-value">2038733</div>
+      </div>
+      <div class="cred-item">
+        <div class="cred-label">Callback URL</div>
+        <div class="cred-value">api.winbig.bedriften.xyz/payment/webhook</div>
+      </div>
+      <div class="cred-item">
+        <div class="cred-label">Channel (MTN Ghana)</div>
+        <div class="cred-value">mtn-gh</div>
+      </div>
+      <div class="cred-item">
+        <div class="cred-label">Auth Method</div>
+        <div class="cred-value">Basic Auth (Base64)</div>
+      </div>
+      <div class="cred-item">
+        <div class="cred-label">Amount Format</div>
+        <div class="cred-value">GHS float (e.g. 100.00)</div>
+      </div>
+    </div>
+    <div class="note">
+      ⚠ <strong>CHARGE_GHS_1 = True</strong> is currently active — all charges are sent as GHS 1.00 for testing.
+      Set <strong>CHARGE_GHS_1 = False</strong> in app.py before going live.
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <span>CarPark Ed. 7 — Bedriften / WinBig GH</span>
+    <span>Generated 2026-04-22 | Confidential</span>
+  </div>
+
+</div>
+</body>
+</html>

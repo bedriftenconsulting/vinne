@@ -64,7 +64,7 @@ const SignInPage = () => {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
-      <main className="flex-1 flex items-center justify-center pt-36 pb-16 px-4">
+      <main className="flex-1 flex items-center justify-center pt-24 pb-16 px-4">
         <div className="w-full max-w-md">
           <h1 className="font-heading text-3xl text-primary mb-1 text-center tracking-wide">SIGN IN</h1>
           <p className="text-muted-foreground text-center mb-8 text-sm">Welcome back — enter your details to continue</p>

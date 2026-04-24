@@ -56,13 +56,13 @@ export interface ApiSchedule {
 }
 
 export const fetchActiveGames = async (): Promise<ApiGame[]> => {
-  const r = await fetch(`${BASE}/players/games`, { cache: "no-store" });
+  const r = await fetch(`${BASE}/players/games`);
   const d = await r.json();
   return d?.data?.games ?? [];
 };
 
 export const fetchGameSchedule = async (gameId: string): Promise<ApiSchedule[]> => {
-  const r = await fetch(`${BASE}/players/games/${gameId}/schedule`, { cache: "no-store" });
+  const r = await fetch(`${BASE}/players/games/${gameId}/schedule`);
   const d = await r.json();
   return d?.data?.schedules ?? [];
 };

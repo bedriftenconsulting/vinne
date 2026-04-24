@@ -1,43 +1,20 @@
-import React, { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { 
-  CreditCard, 
-  ArrowUpRight, 
-  ArrowDownLeft, 
-  Search, 
-  Eye, 
-  Download,
-  CheckCircle,
-  Clock,
-  XCircle,
-  AlertCircle,
-  Ticket,
-  TrendingUp
+import {
+  CreditCard, Search, Eye, RefreshCw,
+  CheckCircle, TrendingUp, Users, Hash,
 } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Pagination, PaginationContent, PaginationEllipsis,
   PaginationItem, PaginationLink, PaginationNext, PaginationPrevious,
@@ -45,154 +22,53 @@ import {
 import { formatCurrency } from '@/lib/utils'
 import { formatInGhanaTime } from '@/lib/date-utils'
 import PageHeader from '@/components/ui/page-header'
-
-export interface Transaction {
-  transaction_id: string
-  gateway_transaction_id: string
-  type: 'ticket_purchase' | 'commission' | 'refund' | 'payout'
-  player_id?: string
-  player_name?: string
-  retailer_id?: string
-  retailer_name?: string
-  agent_id?: string
-  agent_name?: string
-  amount: number
-  currency: string
-  status: 'pending' | 'completed' | 'failed' | 'cancelled'
-  payment_method: 'momo' | 'card' | 'bank_transfer' | 'wallet' | 'cash'
-  gateway_provider: 'paystack' | 'flutterwave' | 'mtn_momo' | 'vodafone_cash' | 'airteltigo_money'
-  reference_id?: string // Ticket ID, Draw ID, etc.
-  description: string
-  created_at: string
-  updated_at: string
-  processed_at?: string
-  failed_reason?: string
-  metadata?: Record<string, unknown>
-}
-
-export interface TransactionStatistics {
-  total_transactions: number
-  total_volume: number
-  pending_transactions: number
-  pending_volume: number
-  completed_transactions: number
-  completed_volume: number
-  failed_transactions: number
-  failed_volume: number
-  by_type: {
-    ticket_purchases: { count: number; volume: number }
-    commissions: { count: number; volume: number }
-    refunds: { count: number; volume: number }
-    payouts: { count: number; volume: number }
-  }
-  by_gateway: Record<string, { count: number; volume: number }>
-}
-
 import api from '@/lib/api'
 
-const transactionsService = {
-  async getTransactions(params?: {
-    type?: string
-    status?: string
-    gateway?: string
-    player_id?: string
-    from_date?: string
-    to_date?: string
-    search?: string
-    page?: number
-    limit?: number
-  }): Promise<{
-    transactions: Transaction[]
-    total_count: number
-    page: number
-    limit: number
-  }> {
-    try {
-      // Fetch player tickets as "ticket_purchase" transactions
-      const q: Record<string, string> = {
-        page: String(params?.page || 1),
-      }
-      if (params?.status) q.status = params.status
-      if (params?.player_id) q.issuer_id = params.player_id
-
-      const res = await api.get('/admin/tickets', { params: q })
-      const raw: any[] = res.data?.data?.tickets || res.data?.tickets || []
-      const total = res.data?.data?.total || res.data?.total || raw.length
-
-      const transactions: Transaction[] = raw.map((t: any) => ({
-        transaction_id: t.id || t.ticket_id,
-        gateway_transaction_id: t.payment_ref || t.serial_number,
-        type: 'ticket_purchase' as const,
-        player_id: t.issuer_id,
-        player_name: t.customer_name || t.issuer_id,
-        amount: Number(t.total_amount || 0),
-        currency: 'GHS',
-        status: t.status === 'issued' || t.status === 'validated' || t.status === 'won'
-          ? 'completed'
-          : t.status === 'cancelled' || t.status === 'void'
-          ? 'failed'
-          : 'completed',
-        payment_method: (t.payment_method || 'momo') as Transaction['payment_method'],
-        gateway_provider: 'mtn_momo' as const,
-        reference_id: t.game_schedule_id,
-        description: `Ticket purchase — ${t.game_name || t.game_code} (${t.serial_number})`,
-        created_at: t.created_at || t.issued_at,
-        updated_at: t.updated_at || t.created_at || t.issued_at,
-      }))
-
-      // Apply search filter client-side
-      const filtered = params?.search
-        ? transactions.filter(tx =>
-            tx.transaction_id?.includes(params.search!) ||
-            tx.player_name?.toLowerCase().includes(params.search!.toLowerCase()) ||
-            tx.description?.toLowerCase().includes(params.search!.toLowerCase())
-          )
-        : transactions
-
-      return { transactions: filtered, total_count: total, page: params?.page || 1, limit: params?.limit || 50 }
-    } catch {
-      return { transactions: [], total_count: 0, page: 1, limit: 20 }
-    }
-  },
-
-  async getTransactionStatistics(): Promise<TransactionStatistics> {
-    try {
-      const { transactions } = await this.getTransactions({ limit: 500 })
-      const completed = transactions.filter(t => t.status === 'completed')
-      const failed = transactions.filter(t => t.status === 'failed')
-      const pending = transactions.filter(t => t.status === 'pending')
-      const sum = (arr: Transaction[]) => arr.reduce((s, t) => s + t.amount, 0)
-      return {
-        total_transactions: transactions.length,
-        total_volume: sum(transactions),
-        pending_transactions: pending.length,
-        pending_volume: sum(pending),
-        completed_transactions: completed.length,
-        completed_volume: sum(completed),
-        failed_transactions: failed.length,
-        failed_volume: sum(failed),
-        by_type: {
-          ticket_purchases: { count: transactions.length, volume: sum(transactions) },
-          commissions: { count: 0, volume: 0 },
-          refunds: { count: 0, volume: 0 },
-          payouts: { count: 0, volume: 0 },
-        },
-        by_gateway: {},
-      }
-    } catch {
-      return {
-        total_transactions: 0, total_volume: 0,
-        pending_transactions: 0, pending_volume: 0,
-        completed_transactions: 0, completed_volume: 0,
-        failed_transactions: 0, failed_volume: 0,
-        by_type: { ticket_purchases: { count: 0, volume: 0 }, commissions: { count: 0, volume: 0 }, refunds: { count: 0, volume: 0 }, payouts: { count: 0, volume: 0 } },
-        by_gateway: {},
-      }
-    }
-  }
+// ── Types ──────────────────────────────────────────────────────────────────────
+interface UssdTicket {
+  serial_number: string
+  game_type: 'ACCESS_PASS' | 'DRAW_ENTRY'
+  game_name: string
+  customer_phone: string
+  unit_price: number
+  total_amount: number
+  payment_status: string
+  payment_ref: string
+  payment_reference: string   // Hubtel MoMo TX ID
+  payment_method: string
+  created_at: string
+  paid_at: string | null
 }
 
-const PAGE_SIZE = 20
+interface Transaction {
+  payment_ref: string
+  momo_tx_id: string          // Hubtel payment_reference
+  type: string                // "1-Day Pass" | "2-Day Pass" | "Extra WinBig (N)"
+  phone: string               // MSISDN
+  amount: number              // pesewas — SUM(unit_price)
+  gateway: string             // "MTN MoMo" | "Telecel Cash" | "AirtelTigo Money"
+  date: string
+  tickets: UssdTicket[]
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function detectGateway(phone: string): string {
+  const p = phone.replace(/^\+233/, '0').replace(/^233/, '0')
+  const prefix = p.slice(0, 3)
+  if (['024', '054', '055', '059', '025'].includes(prefix)) return 'MTN MoMo'
+  if (['020', '050'].includes(prefix))                           return 'Telecel Cash'
+  if (['026', '056', '027', '057', '028', '058'].includes(prefix)) return 'AirtelTigo Money'
+  return 'Hubtel MoMo'
+}
+
+function deriveType(tickets: UssdTicket[]): string {
+  const accessCount = tickets.filter(t => t.game_type === 'ACCESS_PASS').length
+  const entryCount  = tickets.filter(t => t.game_type === 'DRAW_ENTRY').length
+  if (accessCount === 1) return '1-Day Pass'
+  if (accessCount === 2) return '2-Day Pass'
+  if (entryCount > 0)   return `Extra WinBig (${entryCount})`
+  return 'Ticket Purchase'
+}
 
 function buildPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
@@ -201,519 +77,334 @@ function buildPageNumbers(current: number, total: number): (number | 'ellipsis')
   return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total]
 }
 
-const TransactionsModule: React.FC = () => {
-  
-  // Filter states
-  const [selectedTab, setSelectedTab] = useState('all')
+// ── Data fetching ──────────────────────────────────────────────────────────────
+async function fetchCompletedTransactions(): Promise<Transaction[]> {
+  try {
+    let page = 1
+    let all: UssdTicket[] = []
+    while (true) {
+      const res = await api.get('/ussd/tickets', {
+        params: { page, limit: 200, payment_status: 'completed' },
+      })
+      const batch: UssdTicket[] = res.data?.data || []
+      all = [...all, ...batch]
+      if (batch.length < 200 || page >= (res.data?.pages ?? 1)) break
+      page++
+    }
+
+    // Group by payment_ref
+    const byRef = new Map<string, UssdTicket[]>()
+    for (const t of all) {
+      const ref = t.payment_ref
+      if (!byRef.has(ref)) byRef.set(ref, [])
+      byRef.get(ref)!.push(t)
+    }
+
+    // Build one Transaction per payment_ref
+    const txns: Transaction[] = []
+    for (const [ref, tickets] of byRef) {
+      const rep = tickets[0]
+      txns.push({
+        payment_ref:  ref,
+        momo_tx_id:   rep.payment_reference || '',
+        type:         deriveType(tickets),
+        phone:        rep.customer_phone,
+        amount:       tickets.reduce((s, t) => s + Number(t.unit_price || 0), 0),
+        gateway:      detectGateway(rep.customer_phone),
+        date:         rep.paid_at || rep.created_at,
+        tickets,
+      })
+    }
+
+    // Sort newest first
+    return txns.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  } catch {
+    return []
+  }
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
+function GatewayBadge({ gateway }: { gateway: string }) {
+  const colours: Record<string, string> = {
+    'MTN MoMo':         'bg-yellow-100 text-yellow-800 border-yellow-200',
+    'Telecel Cash':     'bg-red-100 text-red-800 border-red-200',
+    'AirtelTigo Money': 'bg-blue-100 text-blue-800 border-blue-200',
+    'Hubtel MoMo':      'bg-purple-100 text-purple-800 border-purple-200',
+  }
+  return (
+    <Badge className={colours[gateway] ?? 'bg-gray-100 text-gray-800'}>
+      {gateway}
+    </Badge>
+  )
+}
+
+function TypeBadge({ type }: { type: string }) {
+  if (type.startsWith('1-Day'))   return <Badge variant="default">{type}</Badge>
+  if (type.startsWith('2-Day'))   return <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200">{type}</Badge>
+  if (type.startsWith('Extra'))   return <Badge variant="secondary">{type}</Badge>
+  return <Badge variant="outline">{type}</Badge>
+}
+
+const PAGE_SIZE = 10
+
+// ── Main component ─────────────────────────────────────────────────────────────
+export default function TransactionsModule() {
+  const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [gatewayFilter, setGatewayFilter] = useState('')
-  const [searchFilter, setSearchFilter] = useState('')
-  const [dateFromFilter, setDateFromFilter] = useState('')
-  const [dateToFilter, setDateToFilter] = useState('')
   const [page, setPage] = useState(1)
 
-  // Fetch transactions
-  const { data: transactionsData, isLoading: transactionsLoading } = useQuery({
-    queryKey: ['transactions', typeFilter, statusFilter, gatewayFilter, searchFilter, dateFromFilter, dateToFilter],
-    queryFn: () => transactionsService.getTransactions({
-      type: typeFilter || undefined,
-      status: statusFilter || undefined,
-      gateway: gatewayFilter || undefined,
-      search: searchFilter || undefined,
-      from_date: dateFromFilter || undefined,
-      to_date: dateToFilter || undefined,
-    }),
+  const { data: allTxns = [], isLoading, refetch, isFetching } = useQuery({
+    queryKey: ['ussd-transactions'],
+    queryFn: fetchCompletedTransactions,
+    refetchInterval: 30_000,
   })
 
-  // Fetch statistics
-  const { data: statistics } = useQuery({
-    queryKey: ['transaction-statistics'],
-    queryFn: () => transactionsService.getTransactionStatistics(),
-  })
-
-  const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      pending: { variant: 'secondary' as const, label: 'Pending', icon: Clock },
-      completed: { variant: 'default' as const, label: 'Completed', icon: CheckCircle },
-      failed: { variant: 'destructive' as const, label: 'Failed', icon: XCircle },
-      cancelled: { variant: 'outline' as const, label: 'Cancelled', icon: AlertCircle }
+  const filtered = useMemo(() => {
+    let r = allTxns
+    if (typeFilter === '1-day')  r = r.filter(t => t.type.startsWith('1-Day'))
+    if (typeFilter === '2-day')  r = r.filter(t => t.type.startsWith('2-Day'))
+    if (typeFilter === 'extra')  r = r.filter(t => t.type.startsWith('Extra'))
+    if (search) {
+      const s = search.toLowerCase()
+      r = r.filter(t =>
+        t.payment_ref.toLowerCase().includes(s) ||
+        t.momo_tx_id.toLowerCase().includes(s) ||
+        t.phone.includes(s)
+      )
     }
-    
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending
-    const Icon = config.icon
-    
-    return (
-      <Badge variant={config.variant} className="flex items-center gap-1">
-        <Icon className="h-3 w-3" />
-        {config.label}
-      </Badge>
-    )
-  }
+    return r
+  }, [allTxns, typeFilter, search])
 
-  const getTypeBadge = (type: string) => {
-    const typeConfig = {
-      ticket_purchase: { variant: 'default' as const, label: 'Ticket Purchase', icon: Ticket },
-      commission: { variant: 'secondary' as const, label: 'Commission', icon: TrendingUp },
-      refund: { variant: 'outline' as const, label: 'Refund', icon: ArrowDownLeft },
-      payout: { variant: 'default' as const, label: 'Payout', icon: ArrowUpRight }
-    }
-    
-    const config = typeConfig[type as keyof typeof typeConfig] || typeConfig.ticket_purchase
-    const Icon = config.icon
-    
-    return (
-      <Badge variant={config.variant} className="flex items-center gap-1">
-        <Icon className="h-3 w-3" />
-        {config.label}
-      </Badge>
-    )
-  }
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage   = Math.min(page, totalPages)
+  const paginated  = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const pageNums   = buildPageNumbers(safePage, totalPages)
 
-  const filteredTransactions = useMemo(() => {
-    return transactionsData?.transactions?.filter(transaction => {
-      if (selectedTab !== 'all' && transaction.type !== selectedTab) return false
-      if (searchFilter) {
-        const search = searchFilter.toLowerCase()
-        return (
-          transaction.transaction_id.toLowerCase().includes(search) ||
-          transaction.gateway_transaction_id.toLowerCase().includes(search) ||
-          transaction.player_name?.toLowerCase().includes(search) ||
-          transaction.retailer_name?.toLowerCase().includes(search) ||
-          transaction.description.toLowerCase().includes(search)
-        )
-      }
-      return true
-    }) || []
-  }, [transactionsData, selectedTab, searchFilter])
-
-  const totalPages = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE))
-  const safePage = Math.min(page, totalPages)
-  const paginatedTransactions = filteredTransactions.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
-  const pageNumbers = buildPageNumbers(safePage, totalPages)
-
-  const resetPage = () => setPage(1)
-
-  if (transactionsLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
-    )
-  }
+  // Stats — always from full unfiltered set
+  const totalRevenue   = allTxns.reduce((s, t) => s + t.amount, 0)
+  const uniquePlayers  = new Set(allTxns.map(t => t.phone)).size
+  const passCount      = allTxns.filter(t => t.type.includes('Day')).length
+  const extraCount     = allTxns.filter(t => t.type.startsWith('Extra')).length
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader
-        title="Transactions Module"
-        description="Track ticket purchases, commissions, refunds, and payouts across all payment gateways"
+        title="Transactions"
+        description="Completed USSD ticket purchases collected via Hubtel"
         badge="Live"
       >
-        <Button variant="outline" size="sm">
-          <Download className="h-4 w-4 mr-2" />
-          Export Transactions
+        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+          Refresh
         </Button>
       </PageHeader>
 
-      {/* Statistics Cards */}
-      <div className="grid gap-4 md:grid-cols-5">
+      {/* Stats */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-900">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-green-700 dark:text-green-400">Total Revenue</CardTitle>
+            <span className="text-green-600 font-bold text-sm">₵</span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-700 dark:text-green-400">{formatCurrency(totalRevenue)}</div>
+            <p className="text-xs text-green-600">{allTxns.length} completed transactions</p>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Transactions</CardTitle>
+            <CardTitle className="text-sm font-medium">Unique Players</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{uniquePlayers}</div>
+            <p className="text-xs text-muted-foreground">distinct phone numbers</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pass Sales</CardTitle>
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {statistics?.total_transactions?.toLocaleString() || '0'}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {formatCurrency(statistics?.total_volume || 0)} volume
-            </p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              {statistics?.completed_transactions?.toLocaleString() || '0'}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {formatCurrency(statistics?.completed_volume || 0)}
-            </p>
+            <div className="text-2xl font-bold">{passCount}</div>
+            <p className="text-xs text-muted-foreground">1-Day &amp; 2-Day passes</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Extra WinBig</CardTitle>
+            <Hash className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">
-              {statistics?.pending_transactions?.toLocaleString() || '0'}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {formatCurrency(statistics?.pending_volume || 0)}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Failed</CardTitle>
-            <XCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">
-              {statistics?.failed_transactions?.toLocaleString() || '0'}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {formatCurrency(statistics?.failed_volume || 0)}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {statistics?.total_transactions 
-                ? Math.round((statistics.completed_transactions / statistics.total_transactions) * 100)
-                : 0}%
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Transaction success rate
-            </p>
+            <div className="text-2xl font-bold">{extraCount}</div>
+            <p className="text-xs text-muted-foreground">extra entry purchases</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Filters */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Filters</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            <div>
+        <CardContent className="pt-4">
+          <div className="flex flex-wrap gap-4 items-end">
+            <div className="flex-1 min-w-[200px]">
               <Label>Search</Label>
-              <div className="relative">
+              <div className="relative mt-1">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Transaction ID, gateway ID..."
-                  value={searchFilter}
-                  onChange={(e) => { setSearchFilter(e.target.value); resetPage() }}
+                  placeholder="Phone, payment ref, MoMo TX ID..."
+                  value={search}
+                  onChange={e => { setSearch(e.target.value); setPage(1) }}
                   className="pl-8"
                 />
               </div>
             </div>
-            
             <div>
               <Label>Type</Label>
-              <Select value={typeFilter || "all"} onValueChange={(value) => { setTypeFilter(value === "all" ? "" : value); resetPage() }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="ticket_purchase">Ticket Purchase</SelectItem>
-                  <SelectItem value="commission">Commission</SelectItem>
-                  <SelectItem value="refund">Refund</SelectItem>
-                  <SelectItem value="payout">Payout</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div>
-              <Label>Status</Label>
-              <Select value={statusFilter || "all"} onValueChange={(value) => { setStatusFilter(value === "all" ? "" : value); resetPage() }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label>Gateway</Label>
-              <Select value={gatewayFilter || "all"} onValueChange={(value) => { setGatewayFilter(value === "all" ? "" : value); resetPage() }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Gateways" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Gateways</SelectItem>
-                  <SelectItem value="mtn_momo">MTN MoMo</SelectItem>
-                  <SelectItem value="vodafone_cash">Vodafone Cash</SelectItem>
-                  <SelectItem value="airteltigo_money">AirtelTigo Money</SelectItem>
-                  <SelectItem value="paystack">Paystack</SelectItem>
-                  <SelectItem value="flutterwave">Flutterwave</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div>
-              <Label>From Date</Label>
-              <Input
-                type="date"
-                value={dateFromFilter}
-                onChange={(e) => setDateFromFilter(e.target.value)}
-              />
-            </div>
-            
-            <div>
-              <Label>To Date</Label>
-              <Input
-                type="date"
-                value={dateToFilter}
-                onChange={(e) => setDateToFilter(e.target.value)}
-              />
+              <div className="flex gap-2 mt-1">
+                {([
+                  { val: '',      label: 'All' },
+                  { val: '1-day', label: '1-Day Pass' },
+                  { val: '2-day', label: '2-Day Pass' },
+                  { val: 'extra', label: 'Extra WinBig' },
+                ] as const).map(({ val, label }) => (
+                  <Button
+                    key={val}
+                    size="sm"
+                    variant={typeFilter === val ? 'default' : 'outline'}
+                    onClick={() => { setTypeFilter(val); setPage(1) }}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Transaction Tabs */}
-      <Tabs value={selectedTab} onValueChange={(v) => { setSelectedTab(v); resetPage() }}>
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="all">
-            All ({transactionsData?.total_count || 0})
-          </TabsTrigger>
-          <TabsTrigger value="ticket_purchase">
-            Purchases ({statistics?.by_type.ticket_purchases.count || 0})
-          </TabsTrigger>
-          <TabsTrigger value="commission">
-            Commissions ({statistics?.by_type.commissions.count || 0})
-          </TabsTrigger>
-          <TabsTrigger value="refund">
-            Refunds ({statistics?.by_type.refunds.count || 0})
-          </TabsTrigger>
-          <TabsTrigger value="payout">
-            Payouts ({statistics?.by_type.payouts.count || 0})
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value={selectedTab} className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Transactions ({filteredTransactions.length})</CardTitle>
-                <CardDescription>
-                  {selectedTab === 'all' 
-                    ? 'All transaction types across payment gateways'
-                    : `${selectedTab.replace('_', ' ')} transactions`
-                  }
-                </CardDescription>
-              </div>
-              <span className="text-sm text-muted-foreground shrink-0">
-                Page {safePage} of {totalPages} · showing {paginatedTransactions.length} of {filteredTransactions.length}
-              </span>
-            </CardHeader>
-            <CardContent>
+      {/* Table */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            Completed Transactions ({filtered.length})
+          </CardTitle>
+          <span className="text-sm text-muted-foreground">
+            Page {safePage} of {totalPages}
+          </span>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center h-40">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+              <TrendingUp className="h-10 w-10" />
+              <p className="text-lg font-medium">No completed transactions yet</p>
+            </div>
+          ) : (
+            <>
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Transaction ID</TableHead>
-                      <TableHead>Gateway ID</TableHead>
+                      <TableHead>Payment Ref (Hubtel)</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead>Player/Entity</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>Player</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
                       <TableHead>Gateway</TableHead>
                       <TableHead>Date</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paginatedTransactions.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={9} className="text-center py-16">
-                          <div className="flex flex-col items-center gap-4">
-                            <div className="text-4xl text-muted-foreground">📊</div>
-                            <div className="text-lg font-medium">No Transactions Found</div>
-                            <p className="text-muted-foreground">
-                              Transactions will appear here when they are processed through the system.
-                            </p>
-                          </div>
+                    {paginated.map(tx => (
+                      <TableRow key={tx.payment_ref}>
+                        <TableCell className="font-mono text-xs text-muted-foreground max-w-[120px] truncate" title={tx.payment_ref}>
+                          {tx.payment_ref.slice(0, 12)}…
                         </TableCell>
-                      </TableRow>
-                    ) : (
-                      paginatedTransactions.map((transaction) => (
-                        <TableRow key={transaction.transaction_id}>
-                          <TableCell className="font-mono font-medium">
-                            {transaction.transaction_id}
-                          </TableCell>
-                          <TableCell className="font-mono text-sm">
-                            {transaction.gateway_transaction_id}
-                          </TableCell>
-                          <TableCell>
-                            {getTypeBadge(transaction.type)}
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">
-                                {transaction.player_name || transaction.retailer_name || transaction.agent_name || 'System'}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {transaction.player_id || transaction.retailer_id || transaction.agent_id || 'N/A'}
-                              </p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-semibold">
-                            {formatCurrency(transaction.amount)}
-                          </TableCell>
-                          <TableCell>
-                            {getStatusBadge(transaction.status)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="capitalize">
-                              {transaction.gateway_provider.replace('_', ' ')}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {formatInGhanaTime(transaction.created_at, 'PP p')}
-                          </TableCell>
-                          <TableCell>
-                            <Dialog>
-                              <DialogTrigger asChild>
-                                <Button variant="outline" size="sm">
-                                  <Eye className="h-4 w-4" />
-                                </Button>
-                              </DialogTrigger>
-                              <DialogContent className="max-w-2xl">
-                                <DialogHeader>
-                                  <DialogTitle>Transaction Details</DialogTitle>
-                                  <DialogDescription>
-                                    Complete information for transaction {transaction.transaction_id}
-                                  </DialogDescription>
-                                </DialogHeader>
-                                
-                                <div className="space-y-6">
-                                  {/* Transaction Information */}
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                      <Label>Transaction ID</Label>
-                                      <p className="font-mono text-sm">{transaction.transaction_id}</p>
-                                    </div>
-                                    <div>
-                                      <Label>Gateway Transaction ID</Label>
-                                      <p className="font-mono text-sm">{transaction.gateway_transaction_id}</p>
-                                    </div>
-                                    <div>
-                                      <Label>Type</Label>
-                                      <div className="mt-1">
-                                        {getTypeBadge(transaction.type)}
-                                      </div>
-                                    </div>
-                                    <div>
-                                      <Label>Status</Label>
-                                      <div className="mt-1">
-                                        {getStatusBadge(transaction.status)}
-                                      </div>
-                                    </div>
-                                    <div>
-                                      <Label>Amount</Label>
-                                      <p className="text-lg font-bold">{formatCurrency(transaction.amount)}</p>
-                                    </div>
-                                    <div>
-                                      <Label>Payment Method</Label>
-                                      <Badge variant="outline" className="capitalize">
-                                        {transaction.payment_method.replace('_', ' ')}
-                                      </Badge>
-                                    </div>
+                        <TableCell className="font-mono text-xs text-green-700 max-w-[130px] truncate" title={tx.momo_tx_id}>
+                          {tx.momo_tx_id ? tx.momo_tx_id.slice(0, 14) + '…' : '—'}
+                        </TableCell>
+                        <TableCell><TypeBadge type={tx.type} /></TableCell>
+                        <TableCell className="font-mono text-sm">{tx.phone}</TableCell>
+                        <TableCell className="text-right font-semibold">{formatCurrency(tx.amount)}</TableCell>
+                        <TableCell><GatewayBadge gateway={tx.gateway} /></TableCell>
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                          {formatInGhanaTime(tx.date, 'PP p')}
+                        </TableCell>
+                        <TableCell>
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <Button variant="ghost" size="sm"><Eye className="h-4 w-4" /></Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-lg">
+                              <DialogHeader>
+                                <DialogTitle>Transaction Detail</DialogTitle>
+                              </DialogHeader>
+                              <div className="space-y-4 text-sm">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Transaction ID</p>
+                                    <p className="font-mono text-xs break-all">{tx.payment_ref}</p>
                                   </div>
-
-                                  {/* Entity Information */}
-                                  <div className="grid grid-cols-2 gap-4">
-                                    {transaction.player_name && (
-                                      <>
-                                        <div>
-                                          <Label>Player</Label>
-                                          <p className="font-medium">{transaction.player_name}</p>
-                                        </div>
-                                        <div>
-                                          <Label>Player ID</Label>
-                                          <p className="font-mono text-sm">{transaction.player_id}</p>
-                                        </div>
-                                      </>
-                                    )}
-                                    {transaction.retailer_name && (
-                                      <>
-                                        <div>
-                                          <Label>Retailer</Label>
-                                          <p className="font-medium">{transaction.retailer_name}</p>
-                                        </div>
-                                        <div>
-                                          <Label>Retailer ID</Label>
-                                          <p className="font-mono text-sm">{transaction.retailer_id}</p>
-                                        </div>
-                                      </>
-                                    )}
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Hubtel MoMo Ref</p>
+                                    <p className="font-mono text-xs break-all text-green-700">{tx.momo_tx_id || '—'}</p>
                                   </div>
-
-                                  {/* Timing Information */}
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                      <Label>Created At</Label>
-                                      <p>{formatInGhanaTime(transaction.created_at, 'PPp')}</p>
-                                    </div>
-                                    <div>
-                                      <Label>Updated At</Label>
-                                      <p>{formatInGhanaTime(transaction.updated_at, 'PPp')}</p>
-                                    </div>
-                                    {transaction.processed_at && (
-                                      <div>
-                                        <Label>Processed At</Label>
-                                        <p>{formatInGhanaTime(transaction.processed_at, 'PPp')}</p>
-                                      </div>
-                                    )}
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Type</p>
+                                    <TypeBadge type={tx.type} />
                                   </div>
-
-                                  {/* Description and Reference */}
-                                  <div className="space-y-2">
-                                    <div>
-                                      <Label>Description</Label>
-                                      <p className="text-sm">{transaction.description}</p>
-                                    </div>
-                                    {transaction.reference_id && (
-                                      <div>
-                                        <Label>Reference ID</Label>
-                                        <p className="font-mono text-sm">{transaction.reference_id}</p>
-                                      </div>
-                                    )}
-                                    {transaction.failed_reason && (
-                                      <div>
-                                        <Label>Failure Reason</Label>
-                                        <Alert variant="destructive" className="mt-1">
-                                          <AlertCircle className="h-4 w-4" />
-                                          <AlertDescription>
-                                            {transaction.failed_reason}
-                                          </AlertDescription>
-                                        </Alert>
-                                      </div>
-                                    )}
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Player (MSISDN)</p>
+                                    <p className="font-mono">{tx.phone}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Total Amount</p>
+                                    <p className="font-bold text-base">{formatCurrency(tx.amount)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Gateway</p>
+                                    <GatewayBadge gateway={tx.gateway} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Date</p>
+                                    <p>{formatInGhanaTime(tx.date, 'PPp')}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Status</p>
+                                    <Badge className="bg-green-100 text-green-800">
+                                      <CheckCircle className="h-3 w-3 mr-1" />Completed
+                                    </Badge>
                                   </div>
                                 </div>
-                              </DialogContent>
-                            </Dialog>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
+                                <div>
+                                  <p className="text-xs text-muted-foreground mb-2">Tickets in this transaction</p>
+                                  <div className="rounded border divide-y text-xs">
+                                    {tx.tickets.map(t => (
+                                      <div key={t.serial_number} className="flex items-center justify-between px-3 py-2">
+                                        <span className="font-mono">{t.serial_number}</span>
+                                        <span className="text-muted-foreground">
+                                          {t.game_type === 'ACCESS_PASS' ? 'Access Pass' : 'Draw Entry'}
+                                        </span>
+                                        <span className="font-medium">{formatCurrency(t.unit_price)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </div>
@@ -723,48 +414,35 @@ const TransactionsModule: React.FC = () => {
                   <Pagination>
                     <PaginationContent>
                       <PaginationItem>
-                        <PaginationPrevious
-                          href="#"
+                        <PaginationPrevious href="#"
                           onClick={e => { e.preventDefault(); setPage(p => Math.max(1, p - 1)) }}
                           aria-disabled={safePage === 1}
-                          className={safePage === 1 ? 'pointer-events-none opacity-50' : ''}
-                        />
+                          className={safePage === 1 ? 'pointer-events-none opacity-50' : ''} />
                       </PaginationItem>
-                      {pageNumbers.map((n, i) =>
+                      {pageNums.map((n, i) =>
                         n === 'ellipsis' ? (
-                          <PaginationItem key={`ellipsis-${i}`}>
-                            <PaginationEllipsis />
-                          </PaginationItem>
+                          <PaginationItem key={`e${i}`}><PaginationEllipsis /></PaginationItem>
                         ) : (
                           <PaginationItem key={n}>
-                            <PaginationLink
-                              href="#"
-                              isActive={n === safePage}
-                              onClick={e => { e.preventDefault(); setPage(n) }}
-                            >
-                              {n}
-                            </PaginationLink>
+                            <PaginationLink href="#" isActive={n === safePage}
+                              onClick={e => { e.preventDefault(); setPage(n) }}>{n}</PaginationLink>
                           </PaginationItem>
                         )
                       )}
                       <PaginationItem>
-                        <PaginationNext
-                          href="#"
+                        <PaginationNext href="#"
                           onClick={e => { e.preventDefault(); setPage(p => Math.min(totalPages, p + 1)) }}
                           aria-disabled={safePage === totalPages}
-                          className={safePage === totalPages ? 'pointer-events-none opacity-50' : ''}
-                        />
+                          className={safePage === totalPages ? 'pointer-events-none opacity-50' : ''} />
                       </PaginationItem>
                     </PaginationContent>
                   </Pagination>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
-
-export default TransactionsModule

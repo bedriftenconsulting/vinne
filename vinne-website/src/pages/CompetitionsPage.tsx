@@ -23,22 +23,11 @@ const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
   const [ticketsSold, setTicketsSold] = useState<number>(0);
 
   useEffect(() => {
-    fetch(`${BASE}/players/games/${game.id}/schedule`, { cache: "no-store" })
+    fetch(`${BASE}/players/games/${game.id}/schedule`)
       .then(r => r.json())
       .then(d => {
         const schedules = d?.data?.schedules ?? [];
-        const parseDate = (d: string | { seconds: number } | undefined): Date | null => {
-          if (!d) return null;
-          if (typeof d === "object" && "seconds" in d) return new Date(d.seconds * 1000);
-          return new Date(d as string);
-        };
-        const now = new Date();
-        const future = schedules
-          .filter((s: { status: string; scheduled_draw?: string | { seconds: number } }) =>
-            s.status === "SCHEDULED" && (parseDate(s.scheduled_draw)?.getTime() ?? 0) > now.getTime())
-          .sort((a: { scheduled_draw?: string | { seconds: number } }, b: { scheduled_draw?: string | { seconds: number } }) =>
-            (parseDate(a.scheduled_draw)?.getTime() ?? 0) - (parseDate(b.scheduled_draw)?.getTime() ?? 0));
-        const active = future[0] ?? schedules[0];
+        const active = schedules.find((s: { status: string; is_active: boolean }) => s.status === "SCHEDULED" && s.is_active) ?? schedules[0];
         if (active?.tickets_sold != null) setTicketsSold(active.tickets_sold);
         else if (active?.total_tickets_sold != null) setTicketsSold(active.total_tickets_sold);
       })
@@ -67,13 +56,13 @@ const GameCard = ({ game, index = 0 }: { game: ApiGame; index?: number }) => {
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-black/80 flex items-center justify-center">
         {game.logo_url ? (
-          <img src={`${game.logo_url}?t=${Math.floor(Date.now() / 3600000)}`} alt={game.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
+          <img src={game.logo_url} alt={game.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
         ) : (
           <Trophy className="h-16 w-16 text-white/20" />
         )}
-        <span className="absolute top-3 left-3 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-lg"
-          style={{ background: "linear-gradient(90deg,#ff0080,#ff6000)", fontFamily: "'Poppins', sans-serif", fontSize: "0.72rem" }}>
-          {days === 0 ? "ENDS TODAY" : days === 1 ? "ENDS TOMORROW" : days <= 7 ? `ENDS IN ${days} DAYS` : `ENDS ${new Date(drawDate).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}).toUpperCase()}`}
+        <span className="absolute top-3 left-3 bg-[hsl(22_100%_52%)] text-white px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse inline-block" />
+          CLOSES IN {timeLabel}
         </span>
       </div>
 
@@ -127,7 +116,7 @@ const CompetitionsPage = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <div className="container pt-36 pb-16">
+      <div className="container pt-24 pb-16">
         <h1 className="font-heading text-4xl md:text-5xl text-primary mb-10">ALL COMPETITIONS</h1>
 
         {loading ? (

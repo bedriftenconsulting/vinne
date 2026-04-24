@@ -14,7 +14,7 @@ const faqs = [
 const FAQPage = () => (
   <div className="min-h-screen bg-background">
     <Navbar />
-    <div className="container pt-36 pb-16 max-w-3xl">
+    <div className="container pt-24 pb-16 max-w-3xl">
       <h1 className="font-heading text-4xl md:text-5xl text-primary mb-10">FAQ</h1>
       <Accordion type="single" collapsible className="space-y-3">
         {faqs.map((f, i) => (
