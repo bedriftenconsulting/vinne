@@ -124,16 +124,32 @@ export default function UssdSessions() {
     return map
   }, [allTickets])
 
+  // Deduplicate filtered tickets: one row per (payment_ref, game_type).
+  // Pick the most recently created ticket as representative — matches My Tickets order.
+  const deduped = useMemo(() => {
+    const map = new Map<string, UssdTicket>()
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    for (const t of sorted) {
+      const key = `${t.payment_ref}|${t.game_type}`
+      if (!map.has(key)) map.set(key, t)
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+  }, [filtered])
+
   // Reset to page 1 when filters change
   const handleFilter = (setter: (v: string) => void) => (v: string) => {
     setter(v)
     setPage(1)
   }
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  // Pagination (based on deduped rows)
+  const totalPages = Math.max(1, Math.ceil(deduped.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
-  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const paginated = deduped.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
   const pageNumbers = buildPageNumbers(safePage, totalPages)
 
   // Stats (always from full unfiltered set)
@@ -264,9 +280,9 @@ export default function UssdSessions() {
       {/* Table */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>USSD Tickets ({filtered.length})</CardTitle>
+          <CardTitle>USSD Tickets ({deduped.length})</CardTitle>
           <span className="text-sm text-muted-foreground">
-            Page {safePage} of {totalPages} · showing {paginated.length} of {filtered.length}
+            Page {safePage} of {totalPages} · showing {paginated.length} of {deduped.length}
           </span>
         </CardHeader>
         <CardContent>
@@ -274,7 +290,7 @@ export default function UssdSessions() {
             <div className="flex items-center justify-center h-40">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
-          ) : filtered.length === 0 ? (
+          ) : deduped.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
               <Phone className="h-10 w-10" />
               <p className="text-lg font-medium">No USSD tickets yet</p>
