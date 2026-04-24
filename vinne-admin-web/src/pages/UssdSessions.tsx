@@ -114,42 +114,16 @@ export default function UssdSessions() {
     return result
   }, [allTickets, gameTypeFilter, paymentStatusFilter, search])
 
-  // Combined amount per (payment_ref, game_type) — used in Amount column
-  const typeAmountMap = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const t of allTickets) {
-      const key = `${t.payment_ref}|${t.game_type}`
-      map.set(key, (map.get(key) || 0) + Number(t.unit_price || 0))
-    }
-    return map
-  }, [allTickets])
-
-  // Deduplicate filtered tickets: one row per (payment_ref, game_type).
-  // Pick the most recently created ticket as representative — matches My Tickets order.
-  const deduped = useMemo(() => {
-    const map = new Map<string, UssdTicket>()
-    const sorted = [...filtered].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )
-    for (const t of sorted) {
-      const key = `${t.payment_ref}|${t.game_type}`
-      if (!map.has(key)) map.set(key, t)
-    }
-    return Array.from(map.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )
-  }, [filtered])
-
   // Reset to page 1 when filters change
   const handleFilter = (setter: (v: string) => void) => (v: string) => {
     setter(v)
     setPage(1)
   }
 
-  // Pagination (based on deduped rows)
-  const totalPages = Math.max(1, Math.ceil(deduped.length / PAGE_SIZE))
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
-  const paginated = deduped.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
   const pageNumbers = buildPageNumbers(safePage, totalPages)
 
   // Stats (always from full unfiltered set)
@@ -280,9 +254,9 @@ export default function UssdSessions() {
       {/* Table */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>USSD Tickets ({deduped.length})</CardTitle>
+          <CardTitle>USSD Tickets ({filtered.length})</CardTitle>
           <span className="text-sm text-muted-foreground">
-            Page {safePage} of {totalPages} · showing {paginated.length} of {deduped.length}
+            Page {safePage} of {totalPages} · showing {paginated.length} of {filtered.length}
           </span>
         </CardHeader>
         <CardContent>
@@ -290,7 +264,7 @@ export default function UssdSessions() {
             <div className="flex items-center justify-center h-40">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
-          ) : deduped.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
               <Phone className="h-10 w-10" />
               <p className="text-lg font-medium">No USSD tickets yet</p>
@@ -321,7 +295,7 @@ export default function UssdSessions() {
                         <TableCell>{typeBadge(ticket)}</TableCell>
                         <TableCell className="text-sm max-w-[160px] truncate">{ticket.game_name}</TableCell>
                         <TableCell className="font-semibold">
-                          {formatCurrency(typeAmountMap.get(`${ticket.payment_ref}|${ticket.game_type}`) || 0)}
+                          {ticket.unit_price > 0 ? formatCurrency(Number(ticket.unit_price)) : '—'}
                         </TableCell>
                         <TableCell>{statusBadge(ticket.payment_status)}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground max-w-[140px] truncate">
@@ -346,7 +320,7 @@ export default function UssdSessions() {
                                 <div><Label>Payment Status</Label><div className="mt-1">{statusBadge(ticket.payment_status)}</div></div>
                                 <div><Label>Game</Label><p>{ticket.game_name}</p></div>
                                 <div><Label>Game Code</Label><p className="font-mono">{ticket.game_code}</p></div>
-                                <div><Label>Amount ({ticket.game_type === 'ACCESS_PASS' ? 'Access Pass total' : 'Draw Entry total'})</Label><p className="font-bold text-base">{formatCurrency(typeAmountMap.get(`${ticket.payment_ref}|${ticket.game_type}`) || 0)}</p></div>
+                                <div><Label>Amount</Label><p className="font-bold text-base">{formatCurrency(Number(ticket.unit_price))}</p></div>
                                 <div><Label>Payment Method</Label><p className="capitalize">{ticket.payment_method?.replace('_', ' ')}</p></div>
                                 <div className="col-span-2"><Label>Payment Reference</Label><p className="font-mono text-xs break-all">{ticket.payment_ref}</p></div>
                                 <div><Label>Draw Date</Label><p>{ticket.draw_date}</p></div>
