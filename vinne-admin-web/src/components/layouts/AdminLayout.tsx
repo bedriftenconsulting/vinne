@@ -74,14 +74,16 @@ function AppSidebar() {
   const { state } = useSidebar()
   const collapsed = state === 'collapsed'
 
-  // Role-based access — commerce_manager sees Commerce only, everyone else sees all
+  // Role-based access
+  // commerce_manager or manager role = Commerce only
+  // everyone else (super_admin, admin, support, viewer) = sees everything
   const userRoles = user?.roles?.map(r => r.name.toLowerCase()) || []
-  const isCommerceManager = userRoles.length > 0 && 
-    userRoles.every(r => r === 'commerce_manager')
-  const showOperations = !isCommerceManager
+  const isCommerceOnly = userRoles.length > 0 &&
+    userRoles.every(r => r === 'commerce_manager' || r === 'manager')
+  const showOperations = !isCommerceOnly
   const showCommerce = true
-  const showAdmin = !isCommerceManager
-  const showComingSoon = !isCommerceManager
+  const showAdmin = !isCommerceOnly
+  const showComingSoon = !isCommerceOnly
 
   const isActive = (href: string) =>
     location.pathname === href || location.pathname.startsWith(href + '/')
