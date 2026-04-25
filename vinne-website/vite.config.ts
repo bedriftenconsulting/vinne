@@ -15,6 +15,11 @@ export default defineConfig({
         target: 'http://localhost:4000',
         changeOrigin: true,
       },
+      '/hubtel': {
+        target: 'https://api.winbig.bedriften.xyz',
+        changeOrigin: true,
+        secure: true,
+      },
     },
   },
   plugins: [react()],

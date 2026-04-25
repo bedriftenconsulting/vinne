@@ -3,11 +3,15 @@ const BASE = import.meta.env.VITE_API_URL || "/api/v1";
 
 export const getToken = () => localStorage.getItem("player_token");
 export const getPlayerId = (): string | null => {
+  // Login stores profile.id directly — check that first
+  const stored = localStorage.getItem("player_id");
+  if (stored) return stored;
+  // Fallback: decode JWT
   const t = getToken();
   if (!t) return null;
   try {
     const p = JSON.parse(atob(t.split(".")[1]));
-    return p.user_id || p.sub || null;
+    return p.user_id || p.sub || p.id || null;
   } catch { return null; }
 };
 

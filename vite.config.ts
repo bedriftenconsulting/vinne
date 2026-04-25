@@ -16,6 +16,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/hubtel': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/hubtel/, ''),
+      },
       '/vinne-game-assets': {
         target: 'http://localhost:9000',
         changeOrigin: true,

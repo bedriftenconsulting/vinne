@@ -37,6 +37,13 @@ NETWORK_CHANNEL = {
     "tigo":       "tigo-gh",
 }
 
+# Maps frontend network names (MTN / TELECEL / AIRTELTIGO) to USSD keys
+WEB_NETWORK_MAP = {
+    "MTN":        "mtn",
+    "TELECEL":    "vodafone",
+    "AIRTELTIGO": "airteltigo",
+}
+
 # ---------------------------------------------------------------------------
 # Game / Pricing config
 # ---------------------------------------------------------------------------
@@ -568,6 +575,156 @@ def _sms_retry_worker():
                     time.sleep(1)
         except Exception as e:
             print(f"[SMS WORKER ERROR] {e}")
+
+
+# ---------------------------------------------------------------------------
+# Web payment helpers
+# ---------------------------------------------------------------------------
+
+def normalise_phone_any(phone):
+    """Handle +233..., 233..., or 0... prefixes → 233XXXXXXXXX (no plus)."""
+    phone = phone.strip().replace(" ", "")
+    if phone.startswith("+"):
+        phone = phone[1:]
+    if phone.startswith("0"):
+        return "233" + phone[1:]
+    if not phone.startswith("233"):
+        return "233" + phone
+    return phone
+
+
+def generate_web_serial():
+    return "WB-WEB-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+
+
+def create_web_tickets(player_id, msisdn, qty, game_code, game_schedule_id,
+                       draw_number, game_name, unit_price_pesewas):
+    phone     = normalise_phone_any(msisdn)
+    reference = _make_reference()
+    total_amt = qty * unit_price_pesewas
+    serials   = []
+    rows      = []
+
+    for _ in range(qty):
+        serial    = generate_web_serial()
+        serials.append(serial)
+        sec_hash  = make_security_hash(serial, reference, phone)
+        bet_lines = json.dumps([{"type": "DRAW_ENTRY", "source": "WinBig Web"}])
+        rows.append((
+            serial, game_code, game_schedule_id,
+            draw_number, game_name, "DRAW_ENTRY",
+            bet_lines, 1,
+            unit_price_pesewas, total_amt,
+            "WEBSITE", player_id,
+            phone,
+            "mobile_money", reference, "pending",
+            sec_hash, "issued", DRAW_DATE,
+        ))
+
+    conn = get_ticket_conn()
+    cur  = conn.cursor()
+    cur.executemany("""
+        INSERT INTO tickets (
+            serial_number, game_code, game_schedule_id,
+            draw_number, game_name, game_type,
+            bet_lines, number_of_lines,
+            unit_price, total_amount,
+            issuer_type, issuer_id,
+            customer_phone,
+            payment_method, payment_ref, payment_status,
+            security_hash, status, draw_date,
+            created_at, updated_at
+        ) VALUES (
+            %s, %s, %s,
+            %s, %s, %s,
+            %s::jsonb, %s,
+            %s, %s,
+            %s, %s,
+            %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            NOW(), NOW()
+        )
+    """, rows)
+    conn.commit()
+    cur.close(); conn.close()
+
+    print(f"[WEB TICKETS] {qty} ticket(s) ref={reference} player={player_id[:8]}")
+    return {"reference": reference, "serials": serials}
+
+
+# ---------------------------------------------------------------------------
+# Web payment routes (called by the React website)
+# ---------------------------------------------------------------------------
+
+@app.route("/web/payment/initiate", methods=["POST"])
+def web_payment_initiate():
+    """
+    Create tickets with payment_status=pending, fire a Hubtel STK push.
+    Returns {reference, serials} immediately; webhook confirms later.
+    """
+    import traceback
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+
+        # Use `or` so JSON null values fall back to defaults (dict.get default
+        # is only used when the key is absent, not when the value is null)
+        msisdn      = (data.get("msisdn")          or "").strip()
+        qty         = max(1, int(data.get("qty")    or 1))
+        network     = (data.get("network")          or "MTN")
+        player_id   = (data.get("player_id")        or "").strip()
+        game_code   = (data.get("game_code")        or GAME_CODE)
+        schedule_id = (data.get("game_schedule_id") or GAME_SCHEDULE_ID)
+        draw_number = int(data.get("draw_number")   or DRAW_NUMBER)
+        game_name   = (data.get("game_name")        or GAME_NAME)
+        unit_price  = int(data.get("unit_price")    or WINBIG_UNIT_PRICE)
+
+        if not msisdn:
+            return jsonify({"error": "msisdn is required"}), 400
+        if not player_id:
+            return jsonify({"error": "player_id is required"}), 400
+
+        result = create_web_tickets(
+            player_id, msisdn, qty,
+            game_code, schedule_id, draw_number, game_name, unit_price,
+        )
+
+        network_key = WEB_NETWORK_MAP.get(network.upper(), "mtn")
+        phone_norm  = normalise_phone_any(msisdn)
+        _fire_momo_async(phone_norm, qty * unit_price, result["reference"], network=network_key)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[WEB PAYMENT ERROR] {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/web/payment/status/<reference>", methods=["GET"])
+def web_payment_status(reference):
+    """Poll endpoint: returns {status, serials} for the given payment reference."""
+    try:
+        conn = get_ticket_conn()
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT serial_number, payment_status FROM tickets "
+            "WHERE payment_ref = %s ORDER BY serial_number",
+            (reference,)
+        )
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+
+        if not rows:
+            return jsonify({"status": "not_found"}), 404
+
+        return jsonify({
+            "status":  rows[0]["payment_status"] or "pending",
+            "serials": [r["serial_number"] for r in rows],
+        }), 200
+    except Exception as e:
+        print(f"[WEB STATUS ERROR] {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ---------------------------------------------------------------------------

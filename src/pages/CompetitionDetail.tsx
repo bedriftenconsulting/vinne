@@ -35,7 +35,6 @@ const CompetitionDetail = () => {
   const [momoPhone, setMomoPhone] = useState("");
   const [network, setNetwork] = useState("MTN");
   const [txRef, setTxRef] = useState("");
-  const [txId, setTxId] = useState("");
   const [ticketNumbers, setTicketNumbers] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [ticketLimitMsg, setTicketLimitMsg] = useState("");
@@ -109,14 +108,14 @@ const CompetitionDetail = () => {
   const fallbackDate = new Date(Date.now() + 3600000);
   const { days, hours, minutes, seconds } = useCountdown(comp?.endsAt ?? fallbackDate);
 
-  // Step 1: Initiate MoMo payment
+  // Initiate Hubtel MoMo payment — creates tickets then fires STK push
   const handleInitiatePayment = async () => {
     if (!isAuthenticated || !user) { navigate("/signin"); return; }
     if (!comp) return;
 
     const phone = momoPhone.replace(/\s+/g, "");
-    if (!phone.startsWith("+233") || phone.length < 12) {
-      setErrorMsg("Enter a valid Ghana phone number (+233XXXXXXXXX)");
+    if (!/^(\+233|0)[2-5][0-9]{8}$/.test(phone)) {
+      setErrorMsg("Enter a valid Ghana phone number (+233XXXXXXXXX or 0XXXXXXXXX)");
       return;
     }
 
@@ -124,71 +123,53 @@ const CompetitionDetail = () => {
     setErrorMsg("");
 
     try {
-      const token = localStorage.getItem("token");
-      const totalAmount = Math.round(comp.ticketPrice * 100) * qty; // pesewas
-
-      const res = await fetch(`${API}/api/v1/players/${user.id}/deposit`, {
+      const res = await fetch("/hubtel/web/payment/initiate", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount: totalAmount,
-          mobile_money_phone: phone,
-          payment_method: network,
-          customer_name: `${user.first_name} ${user.last_name}`.trim() || user.phone_number,
+          msisdn:           phone,
+          qty,
+          network,
+          player_id:        user.id,
+          game_code:        gameCode || comp.id,
+          game_schedule_id: scheduleId || "",
+          draw_number:      drawNumber || 1,
+          game_name:        comp.title,
+          unit_price:       Math.round(comp.ticketPrice * 100),
         }),
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        const rawMsg = data?.error?.message || data?.message || "Payment initiation failed";
-        
-        // Friendly error messages
-        let friendlyMsg = rawMsg;
-        if (rawMsg.includes('insufficient') || rawMsg.includes('balance')) {
-          friendlyMsg = "Insufficient wallet balance. Please top up and try again.";
-        } else if (rawMsg.includes('invalid phone') || rawMsg.includes('phone number')) {
-          friendlyMsg = "Invalid phone number. Please check and try again.";
-        } else if (rawMsg.includes('network') || rawMsg.includes('provider')) {
-          friendlyMsg = "Mobile money service unavailable. Please try again in a moment.";
-        }
-        
-        throw new Error(friendlyMsg);
-      }
+      if (!res.ok) throw new Error(data.error || "Payment initiation failed");
 
       setTxRef(data.reference || "");
-      setTxId(data.transaction_id || "");
-
-      // Poll for payment confirmation then issue ticket
-      pollPaymentAndIssueTicket(data.transaction_id, data.reference, token!, totalAmount);
+      pollHubtelStatus(data.reference, data.serials || []);
     } catch (err: any) {
       setErrorMsg(err.message || "Payment failed. Please try again.");
       setStep("momo");
     }
   };
 
-  // Poll payment status, then issue ticket on success
-  const pollPaymentAndIssueTicket = async (transactionId: string, reference: string, token: string, totalAmount: number) => {
-    const maxAttempts = 24; // 2 minutes (5s intervals)
+  // Poll USSD app every 5s until Hubtel webhook confirms or rejects payment
+  const pollHubtelStatus = (reference: string, pendingSerials: string[]) => {
+    const maxAttempts = 24; // 2 minutes
     let attempts = 0;
 
     const poll = async () => {
       attempts++;
       try {
-        const res = await fetch(`${API}/api/v1/players/${user!.id}/deposit/verify`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ transaction_id: transactionId, reference }),
-        });
+        const res = await fetch(`/hubtel/web/payment/status/${reference}`);
         const data = await res.json();
-        const status = data?.status || data?.data?.status || "";
+        const status = data?.status || "";
 
-        if (status.includes("SUCCESS") || status.includes("COMPLETED")) {
-          // Payment confirmed — issue ticket
-          await issueTicket(token, totalAmount);
+        if (status === "completed") {
+          setTicketNumbers(data.serials || pendingSerials);
+          setStep("success");
+          setComp(prev => prev ? { ...prev, soldTickets: prev.soldTickets + qty } : prev);
           return;
         }
-        if (status.includes("FAILED") || status.includes("CANCELLED")) {
-          setErrorMsg("Payment was declined or cancelled. Please try again.");
+        if (status === "failed") {
+          setErrorMsg("Payment was declined. Please try again.");
           setStep("momo");
           return;
         }
@@ -197,79 +178,12 @@ const CompetitionDetail = () => {
       if (attempts < maxAttempts) {
         setTimeout(poll, 5000);
       } else {
-        // Timeout — in test mode, issue ticket anyway (payment assumed successful)
-        await issueTicket(token, totalAmount);
+        setErrorMsg("Payment timed out. If you approved the MoMo prompt, your tickets will appear in My Tickets shortly.");
+        setStep("momo");
       }
     };
 
     setTimeout(poll, 5000);
-  };
-
-  const issueTicket = async (token: string, totalAmount: number) => {
-    if (!comp) return;
-
-    // Check if we have a valid schedule — if not, show a friendly message
-    if (!scheduleId) {
-      setErrorMsg("This competition isn't scheduled yet. Please check back soon or contact support.");
-      setStep("error");
-      return;
-    }
-
-    try {
-      const tickets: string[] = [];
-      for (let i = 0; i < qty; i++) {
-        const res = await fetch(`${API}/api/v1/players/${user!.id}/tickets`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({
-            game_code: gameCode || comp.id,
-            game_schedule_id: scheduleId,
-            draw_number: drawNumber || 1,
-            selected_numbers: [],
-            bet_lines: [
-              {
-                line_number: 1,
-                bet_type: "RAFFLE",
-                selected_numbers: [],
-                total_amount: Math.round(comp.ticketPrice * 100),
-              },
-            ],
-            customer_phone: user!.phone_number,
-            customer_name: `${user!.first_name} ${user!.last_name}`.trim() || user!.phone_number,
-            payment_method: "mobile_money",
-            payment_ref: txRef || `manual-${Date.now()}`,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          const rawMsg = data?.message || data?.error?.message || data?.error || "Ticket purchase failed";
-          
-          // Friendly error messages
-          let friendlyMsg = rawMsg;
-          if (rawMsg.includes('cutoff') || rawMsg.includes('sales closed') || rawMsg.includes('too late')) {
-            friendlyMsg = "Oops! The draw is almost here and we're no longer accepting tickets. Try the next draw!";
-          } else if (rawMsg.includes('max tickets') || rawMsg.includes('limit reached') || rawMsg.includes('exceeded') || rawMsg.includes('maximum tickets per player') || rawMsg.includes('FailedPrecondition')) {
-            friendlyMsg = `You've reached the maximum of ${comp.maxTicketsPerPlayer || 'allowed'} tickets for this competition.`;
-          } else if (rawMsg.includes('sold out') || rawMsg.includes('no tickets available')) {
-            friendlyMsg = "This competition is sold out! Check out our other competitions.";
-          } else if (rawMsg.includes('insufficient') || rawMsg.includes('balance')) {
-            friendlyMsg = "Insufficient wallet balance. Please top up and try again.";
-          } else if (rawMsg.includes('schedule') || rawMsg.includes('not found')) {
-            friendlyMsg = "This competition isn't available right now. Please try another one.";
-          }
-          
-          throw new Error(friendlyMsg);
-        }
-        const serial = data?.data?.ticket?.serial_number || data?.ticket?.serial_number || `TKT-${Math.floor(10000000 + Math.random() * 89999999)}`;
-        tickets.push(serial);
-      }
-      setTicketNumbers(tickets);
-      setStep("success");
-      setComp(prev => prev ? { ...prev, soldTickets: prev.soldTickets + qty } : prev);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Something went wrong. Please try again or contact support.");
-      setStep("error");
-    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -377,17 +291,8 @@ const CompetitionDetail = () => {
                   <h3 className="font-heading text-lg text-foreground mb-2">Waiting for payment...</h3>
                   <p className="text-muted-foreground text-sm mb-1">A payment prompt has been sent to</p>
                   <p className="text-primary font-mono font-bold">{momoPhone}</p>
-                  <p className="text-muted-foreground text-xs mt-3">Approve the request on your phone to confirm your tickets.</p>
+                  <p className="text-muted-foreground text-xs mt-3">Enter your MoMo PIN on your phone to confirm your tickets.</p>
                   <p className="text-muted-foreground text-xs mt-1">Ref: {txRef}</p>
-
-                  {/* Manual confirm — until real MoMo webhook is connected */}
-                  <button
-                    onClick={() => issueTicket(localStorage.getItem("token")!, Math.round(comp.ticketPrice * 100) * qty)}
-                    className="mt-5 w-full py-3 bg-green-600 hover:bg-green-700 text-white font-heading rounded-lg transition flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 size={18} /> I Have Paid — Confirm My Tickets
-                  </button>
-                  <p className="text-xs text-muted-foreground mt-2">Use this button after approving the MoMo prompt on your phone</p>
                 </div>
               )}
 

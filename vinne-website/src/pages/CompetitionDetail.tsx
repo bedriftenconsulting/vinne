@@ -1,19 +1,20 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Minus, Plus, Loader2, CheckCircle2, AlertCircle, Trophy, Smartphone, Copy, Check } from "lucide-react";
+import { ArrowLeft, Minus, Plus, Loader2, CheckCircle2, AlertCircle, Trophy, Smartphone, Phone } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { useCountdown } from "@/hooks/useCountdown";
-import { fetchActiveGames, fetchGameSchedule, buyTicket, initiateDeposit, getToken, getPlayerId, type ApiGame, type ApiSchedule } from "@/lib/api";
+import { fetchActiveGames, fetchGameSchedule, getToken, getPlayerId, type ApiGame, type ApiSchedule } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
-// ── MoMo config — update with real merchant number ────────────────────────────
-const MOMO_NUMBER  = "0244000000";
-const MOMO_NAME    = "WinBig Africa";
-const MOMO_NETWORK = "MTN MoMo";
+type PayState = "idle" | "momo_input" | "waiting" | "success" | "error";
 
-type PayState = "idle" | "awaiting_payment" | "processing" | "success" | "error";
+const NETWORKS = [
+  { id: "MTN",        label: "MTN MoMo" },
+  { id: "TELECEL",    label: "Telecel Cash" },
+  { id: "AIRTELTIGO", label: "AirtelTigo" },
+];
 
 const CompetitionDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -26,9 +27,9 @@ const CompetitionDetail = () => {
   const [payState, setPayState] = useState<PayState>("idle");
   const [tickets, setTickets]   = useState<string[]>([]);
   const [errMsg, setErrMsg]     = useState("");
-  const [copied, setCopied]     = useState(false);
-  const [momoPhone, setMomoPhone] = useState("");
+  const [momoPhone, setMomoPhone]   = useState("");
   const [momoNetwork, setMomoNetwork] = useState("MTN");
+  const [txRef, setTxRef]       = useState("");
 
   const isLoggedIn = !!getToken();
   const playerId   = getPlayerId();
@@ -58,7 +59,6 @@ const CompetitionDetail = () => {
     if (game?.draw_date) {
       return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
     }
-    // Daily/weekly — next draw at draw_time today or tomorrow
     const [h, m] = (game?.draw_time || "20:00").split(":").map(Number);
     const now = new Date();
     const next = new Date(now);
@@ -69,46 +69,85 @@ const CompetitionDetail = () => {
   }, [game?.id, game?.draw_date, game?.draw_time]);
   const { days, hours, minutes, seconds } = useCountdown(drawDate);
 
-  const copyMoMo = () => {
-    navigator.clipboard.writeText(MOMO_NUMBER).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  // Create tickets + fire Hubtel STK push
+  const handleInitiatePayment = async () => {
+    if (!playerId) {
+      setErrMsg("Session expired — please sign out and sign in again.");
+      return;
+    }
+    if (!game || !schedule) return;
+
+    const phone = momoPhone.replace(/\s+/g, "");
+    if (!/^(\+233|0)[2-5][0-9]{8}$/.test(phone)) {
+      setErrMsg("Enter a valid Ghana phone number (+233XXXXXXXXX or 0XXXXXXXXX)");
+      return;
+    }
+
+    setPayState("waiting");
+    setErrMsg("");
+
+    try {
+      const res = await fetch("/hubtel/web/payment/initiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          msisdn:           phone,
+          qty,
+          network:          momoNetwork,
+          player_id:        playerId,
+          game_code:        game.code,
+          game_schedule_id: schedule.id,
+          draw_number:      schedule.draw_number ?? 1,
+          game_name:        game.name,
+          unit_price:       Math.round(game.base_price * 100),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Payment initiation failed");
+
+      setTxRef(data.reference || "");
+      pollHubtelStatus(data.reference, data.serials || []);
+    } catch (err: unknown) {
+      const msg = (err as Error).message || "Payment failed. Please try again.";
+      setErrMsg(msg);
+      setPayState("momo_input");
+      toast({ title: "Payment failed", description: msg, variant: "destructive" });
+    }
   };
 
-  const handleConfirmPayment = async () => {
-    if (!playerId || !game || !schedule) return;
-    setPayState("processing");
-    setErrMsg("");
-    try {
-      // Record the payment transaction first
-      const phone = momoPhone || "+233256826832"; // fallback to registered phone
-      await initiateDeposit(playerId, {
-        amount: Math.round(game.base_price * qty * 100), // total in pesewas
-        mobile_money_phone: phone,
-        payment_method: momoNetwork,
-        customer_name: "WinBig Player",
-      }).catch(() => {}); // don't block ticket issue if deposit recording fails
+  // Poll every 5s — Hubtel webhook updates DB when payment confirmed
+  const pollHubtelStatus = (reference: string, pendingSerials: string[]) => {
+    const maxAttempts = 24; // 2 minutes
+    let attempts = 0;
 
-      // Issue the tickets
-      const results: string[] = [];
-      for (let i = 0; i < qty; i++) {
-        const r = await buyTicket(playerId, {
-          game_code: game.code,
-          game_schedule_id: schedule.id,
-          draw_number: schedule.draw_number ?? 1,
-          bet_lines: [{ line_number: 1, bet_type: "RAFFLE", total_amount: Math.round(game.base_price * 100) }],
-        });
-        results.push(r?.ticket?.serial_number || r?.serial_number || `TKT-${Date.now()}`);
+    const poll = async () => {
+      attempts++;
+      try {
+        const res = await fetch(`/hubtel/web/payment/status/${reference}`);
+        const data = await res.json();
+        const status = data?.status || "";
+
+        if (status === "completed") {
+          setTickets(data.serials || pendingSerials);
+          setPayState("success");
+          return;
+        }
+        if (status === "failed") {
+          setErrMsg("Payment was declined. Please try again.");
+          setPayState("momo_input");
+          return;
+        }
+      } catch { /* keep polling */ }
+
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 5000);
+      } else {
+        setErrMsg("Payment timed out. If you approved the MoMo prompt, your tickets will appear in My Tickets shortly.");
+        setPayState("momo_input");
       }
-      setTickets(results);
-      setPayState("success");
-    } catch (err: unknown) {
-      const msg = (err as Error).message || "Could not issue ticket";
-      setErrMsg(msg);
-      setPayState("error");
-      toast({ title: "Ticket issue failed", description: msg, variant: "destructive" });
-    }
+    };
+
+    setTimeout(poll, 5000);
   };
 
   if (loading) return (
@@ -130,12 +169,11 @@ const CompetitionDetail = () => {
   let prizeLabel = "";
   try { const p = JSON.parse(game.prize_details || "[]"); if (p[0]?.description) prizeLabel = p[0].description; } catch { /* */ }
 
-  const price   = game.base_price;
-  const total   = (qty * price).toFixed(2);
-  const maxQty  = game.max_tickets_per_player || 10;
+  const price      = game.base_price;
+  const total      = (qty * price).toFixed(2);
+  const maxQty     = game.max_tickets_per_player || 10;
   const hasSchedule = !!schedule;
-  const ref     = `${game.code}-${qty}TKT`;
-  const timeLeft = days > 0
+  const timeLeft   = days > 0
     ? `${days}d ${String(hours).padStart(2,"0")}h`
     : `${String(hours).padStart(2,"0")}:${String(minutes).padStart(2,"0")}:${String(seconds).padStart(2,"0")}`;
 
@@ -167,7 +205,12 @@ const CompetitionDetail = () => {
 
             {/* Countdown */}
             <div className="flex gap-3 mb-4">
-              {days > 0 && <div className="bg-card border border-border rounded-lg px-3 py-2 text-center"><div className="font-heading text-xl text-primary">{String(days).padStart(2,"0")}</div><div className="text-[10px] text-muted-foreground">DAYS</div></div>}
+              {days > 0 && (
+                <div className="bg-card border border-border rounded-lg px-3 py-2 text-center">
+                  <div className="font-heading text-xl text-primary">{String(days).padStart(2,"0")}</div>
+                  <div className="text-[10px] text-muted-foreground">DAYS</div>
+                </div>
+              )}
               {[{l:"HRS",v:hours},{l:"MIN",v:minutes},{l:"SEC",v:seconds}].map(t => (
                 <div key={t.l} className="bg-card border border-border rounded-lg px-3 py-2 text-center">
                   <div className="font-heading text-xl text-primary">{String(t.v).padStart(2,"0")}</div>
@@ -175,7 +218,11 @@ const CompetitionDetail = () => {
                 </div>
               ))}
             </div>
-            {game.draw_date && <p className="text-xs text-muted-foreground mb-5">Draw: {new Date(game.draw_date).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})} at {game.draw_time}</p>}
+            {game.draw_date && (
+              <p className="text-xs text-muted-foreground mb-5">
+                Draw: {new Date(game.draw_date).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})} at {game.draw_time}
+              </p>
+            )}
 
             {/* Purchase card */}
             <div className="bg-card border border-border rounded-xl p-6 mt-auto">
@@ -187,78 +234,79 @@ const CompetitionDetail = () => {
                   <h3 className="font-heading text-xl text-foreground mb-2">You're in! Good Luck 🎉</h3>
                   <p className="text-muted-foreground text-sm mb-4">{tickets.length} ticket{tickets.length > 1 ? "s" : ""} confirmed.</p>
                   <div className="flex flex-wrap gap-2 justify-center mb-4">
-                    {tickets.map(t => <span key={t} className="bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-md text-sm font-mono">{t}</span>)}
+                    {tickets.map(t => (
+                      <span key={t} className="bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-md text-sm font-mono">{t}</span>
+                    ))}
                   </div>
                   <p className="text-xs text-muted-foreground mb-4">Draw in {timeLeft}</p>
                   <Link to="/my-tickets" className="text-primary text-sm hover:underline">View My Tickets →</Link>
                 </div>
               )}
 
-              {/* ── AWAITING MOMO PAYMENT ── */}
-              {(payState === "awaiting_payment" || payState === "processing" || payState === "error") && (
+              {/* ── WAITING FOR MOMO PIN ── */}
+              {payState === "waiting" && (
+                <div className="text-center py-4">
+                  <Loader2 className="animate-spin text-primary mx-auto mb-4" size={40} />
+                  <h3 className="font-heading text-lg text-foreground mb-2">Waiting for payment...</h3>
+                  <p className="text-muted-foreground text-sm mb-1">A MoMo prompt has been sent to</p>
+                  <p className="text-primary font-mono font-bold text-lg">{momoPhone}</p>
+                  <p className="text-muted-foreground text-xs mt-3">Enter your MoMo PIN on your phone to confirm.</p>
+                  {txRef && <p className="text-muted-foreground text-xs mt-1">Ref: {txRef}</p>}
+                </div>
+              )}
+
+              {/* ── MOMO PHONE INPUT ── */}
+              {payState === "momo_input" && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Smartphone size={18} className="text-primary" />
-                    <h3 className="font-heading text-base text-foreground">Pay via {MOMO_NETWORK}</h3>
+                    <h3 className="font-heading text-base text-foreground">Mobile Money Payment</h3>
                   </div>
 
-                  <div className="bg-secondary rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Send to</p>
-                        <p className="font-mono text-xl font-bold text-foreground">{MOMO_NUMBER}</p>
-                        <p className="text-xs text-muted-foreground">{MOMO_NAME}</p>
-                      </div>
-                      <button onClick={copyMoMo} className="flex items-center gap-1.5 text-xs text-primary border border-primary/30 px-3 py-1.5 rounded-lg hover:bg-primary/10 transition">
-                        {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy</>}
-                      </button>
-                    </div>
-                    <div className="border-t border-border pt-3 flex items-center justify-between">
-                      <p className="text-xs text-muted-foreground">Amount</p>
-                      <p className="font-heading text-2xl text-primary">GHS {total}</p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Reference: <span className="font-mono text-foreground">{ref}</span></p>
-                  </div>
-
-                  <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
-                    <li>Open MoMo app or dial <strong className="text-foreground">*170#</strong></li>
-                    <li>Send <strong className="text-foreground">GHS {total}</strong> to <strong className="text-foreground">{MOMO_NUMBER}</strong></li>
-                    <li>Use reference: <span className="font-mono text-foreground">{ref}</span></li>
-                    <li>Come back and tap <strong className="text-foreground">"I Have Paid"</strong></li>
-                  </ol>
-
-                  {/* Phone + network for transaction record */}
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground font-medium">Your MoMo details (for receipt)</p>
-                    <div className="flex gap-2">
-                      <select value={momoNetwork} onChange={e => setMomoNetwork(e.target.value)}
-                        className="bg-secondary text-foreground border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition w-28">
-                        <option value="MTN">MTN</option>
-                        <option value="TELECEL">Telecel</option>
-                        <option value="AIRTELTIGO">AirtelTigo</option>
-                      </select>
-                      <input type="tel" placeholder="Your MoMo number" value={momoPhone}
-                        onChange={e => setMomoPhone(e.target.value)}
-                        className="flex-1 bg-secondary text-foreground placeholder:text-muted-foreground border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition" />
-                    </div>
-                  </div>
-
-                  {payState === "error" && errMsg && (
+                  {errMsg && (
                     <div className="flex items-center gap-2 text-red-400 text-xs bg-red-400/10 rounded-lg px-3 py-2">
                       <AlertCircle size={13} /> {errMsg}
                     </div>
                   )}
 
+                  {/* Network selector */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">Select network</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {NETWORKS.map(n => (
+                        <button key={n.id} onClick={() => setMomoNetwork(n.id)}
+                          className={`py-2 px-3 rounded-lg border text-xs font-semibold transition ${momoNetwork === n.id ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                          {n.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Phone input */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">MoMo phone number</p>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <input type="tel" value={momoPhone}
+                        onChange={e => setMomoPhone(e.target.value.replace(/\s+/g, ""))}
+                        placeholder="+233XXXXXXXXX"
+                        className="w-full pl-10 pr-4 py-2 bg-background border border-input rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Total ({qty} ticket{qty > 1 ? "s" : ""})</span>
+                    <span className="text-primary font-bold text-lg">GHS {total}</span>
+                  </div>
+
                   <div className="flex gap-3">
                     <button onClick={() => { setPayState("idle"); setErrMsg(""); }}
                       className="flex-1 border border-border text-muted-foreground py-3 rounded-lg text-sm hover:border-primary/50 hover:text-foreground transition">
-                      Cancel
+                      Back
                     </button>
-                    <button onClick={handleConfirmPayment} disabled={payState === "processing"}
-                      className="flex-1 bg-green-500 text-white font-heading py-3 rounded-lg hover:brightness-110 transition disabled:opacity-60 flex items-center justify-center gap-2">
-                      {payState === "processing"
-                        ? <><Loader2 className="animate-spin" size={16} /> Confirming...</>
-                        : <><CheckCircle2 size={16} /> I Have Paid</>}
+                    <button onClick={handleInitiatePayment}
+                      className="flex-1 bg-primary text-white font-heading py-3 rounded-lg hover:brightness-110 transition flex items-center justify-center gap-2">
+                      <Smartphone size={16} /> Pay GHS {total}
                     </button>
                   </div>
                 </div>
@@ -285,7 +333,9 @@ const CompetitionDetail = () => {
 
                   <div className="text-center text-muted-foreground text-sm mb-4">
                     Total: <span className="text-primary font-bold text-lg">GHS {total}</span>
-                    <span className="flex items-center justify-center gap-1 text-xs mt-0.5"><Smartphone size={11} /> Pay via MoMo</span>
+                    <span className="flex items-center justify-center gap-1 text-xs mt-0.5">
+                      <Smartphone size={11} /> Pay via MoMo
+                    </span>
                   </div>
 
                   {!hasSchedule && (
@@ -295,16 +345,17 @@ const CompetitionDetail = () => {
                   )}
 
                   <button
-                    onClick={() => { if (!isLoggedIn) { navigate("/sign-in"); return; } setPayState("awaiting_payment"); }}
+                    onClick={() => { if (!isLoggedIn) { navigate("/sign-in"); return; } setPayState("momo_input"); }}
                     disabled={!hasSchedule}
                     className="w-full bg-primary text-white font-heading text-lg py-4 rounded-lg btn-glow hover:brightness-110 transition disabled:opacity-60"
                   >
-                    {!isLoggedIn ? "SIGN IN TO BUY" : "BUY TICKETS"}
+                    {!isLoggedIn ? "SIGN IN TO BUY" : "BUY WITH MOBILE MONEY"}
                   </button>
 
                   {!isLoggedIn && (
                     <p className="text-center text-xs text-muted-foreground mt-2">
-                      <Link to="/sign-in" className="text-primary hover:underline">Sign in</Link> or <Link to="/sign-up" className="text-primary hover:underline">create account</Link>
+                      <Link to="/sign-in" className="text-primary hover:underline">Sign in</Link> or{" "}
+                      <Link to="/sign-up" className="text-primary hover:underline">create account</Link>
                     </p>
                   )}
                 </>
