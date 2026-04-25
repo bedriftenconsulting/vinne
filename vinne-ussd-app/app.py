@@ -11,6 +11,7 @@ import uuid
 import requests
 import psycopg2
 import psycopg2.extras
+from collections import defaultdict
 from datetime import datetime
 from flask import Flask, request, jsonify
 
@@ -20,6 +21,24 @@ USSD_CODE      = "*899*92"
 TEST_MODE      = False
 BYPASS_PAYMENT = False
 CHARGE_GHS_1   = False
+
+# ---------------------------------------------------------------------------
+# Security constants
+# ---------------------------------------------------------------------------
+MAX_ENTRIES_PER_TXN   = 10          # max draw entries purchasable in one USSD session
+MAX_TXN_AMOUNT_PESEWA = 100_000     # GHS 1,000 hard cap per transaction
+TICKET_EXPIRY_MINUTES = 30          # pending tickets older than this are expired
+HUBTEL_WEBHOOK_IPS    = {           # Hubtel callback source IPs
+    "18.202.122.131",
+    "34.240.73.225",
+    "54.194.245.127",
+}
+
+# In-memory rate limiter: msisdn -> (count, window_start)
+_ussd_rate: dict = defaultdict(lambda: [0, 0.0])
+_ussd_rate_lock = threading.Lock()
+USSD_RATE_LIMIT   = 30   # max requests per MSISDN per window
+USSD_RATE_WINDOW  = 60   # seconds
 
 # ---------------------------------------------------------------------------
 # Hubtel credentials — set via environment variables on the server
@@ -66,21 +85,21 @@ TICKET_DB = {
     "port":     5442,
     "dbname":   "ticket_service",
     "user":     "ticket",
-    "password": "ticket123",
+    "password": "#kettic@333!",
 }
 PLAYER_DB = {
     "host":     "localhost",
     "port":     5444,
     "dbname":   "player_service",
     "user":     "player",
-    "password": "player123",
+    "password": "#yerpla@333!",
 }
 PAYMENT_DB = {
     "host":     "localhost",
     "port":     5440,
     "dbname":   "payment_service",
     "user":     "payment",
-    "password": "payment123",
+    "password": "#mentpay@333!",
 }
 WALLET_DB = {
     "host":     "localhost",
@@ -89,6 +108,26 @@ WALLET_DB = {
     "user":     "wallet",
     "password": "wallet123",
 }
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Security helpers
+# ---------------------------------------------------------------------------
+
+def _check_ussd_rate(msisdn: str) -> bool:
+    """Return True if the request is within rate limits, False if it should be dropped."""
+    now = time.time()
+    with _ussd_rate_lock:
+        count, window_start = _ussd_rate[msisdn]
+        if now - window_start > USSD_RATE_WINDOW:
+            _ussd_rate[msisdn] = [1, now]
+            return True
+        if count >= USSD_RATE_LIMIT:
+            return False
+        _ussd_rate[msisdn][0] += 1
+        return True
+
+
 
 # ---------------------------------------------------------------------------
 # In-memory session state
@@ -469,14 +508,20 @@ def send_sms(msisdn, message):
             },
             timeout=10,
         )
+        print(f"[SMS] HTTP {resp.status_code} to={phone} raw={resp.text[:300]}")
         result = resp.json()
         if result.get("status") == "success":
-            print(f"[SMS] to={phone} status=success code={result.get('code')}")
+            print(f"[SMS OK] to={phone} code={result.get('code')}")
             return True
-        print(f"[SMS FAILED] to={phone} response={result}")
+        print(f"[SMS FAILED] to={phone} status={result.get('status')!r} "
+              f"code={result.get('code')!r} message={result.get('message')!r} "
+              f"full={result}")
+        return False
+    except requests.exceptions.Timeout:
+        print(f"[SMS ERROR] timeout sending to={phone}")
         return False
     except Exception as e:
-        print(f"[SMS ERROR] {e}")
+        print(f"[SMS ERROR] to={phone} {type(e).__name__}: {e}")
         return False
 
 
@@ -548,7 +593,7 @@ def send_winbig_sms(reference):
 def _sms_retry_worker():
     """
     Runs every SMS_RETRY_INTERVAL seconds.
-    Finds completed DRAW_ENTRY tickets where sms_sent=FALSE and retries sending.
+    Finds completed tickets where sms_sent=FALSE and retries sending.
     Grouped by payment_ref so each purchase gets one attempt per cycle.
     """
     print(f"[SMS WORKER] started -- interval={SMS_RETRY_INTERVAL}s")
@@ -562,7 +607,6 @@ def _sms_retry_worker():
                 FROM tickets
                 WHERE payment_status = 'completed'
                   AND (sms_sent = FALSE OR sms_sent IS NULL)
-                  AND game_type = 'DRAW_ENTRY'
                 ORDER BY payment_ref
             """)
             pending_refs = [r["payment_ref"] for r in cur.fetchall()]
@@ -575,6 +619,85 @@ def _sms_retry_worker():
                     time.sleep(1)
         except Exception as e:
             print(f"[SMS WORKER ERROR] {e}")
+
+
+# ---------------------------------------------------------------------------
+# Pending payment reconciliation worker
+# ---------------------------------------------------------------------------
+
+PAYMENT_POLL_INTERVAL = 180  # seconds between reconciliation sweeps
+
+def _reconcile_payment(reference):
+    """Poll Hubtel for the real outcome of a stuck-pending payment."""
+    try:
+        credentials = base64.b64encode(
+            f"{HUBTEL_CLIENT_ID}:{HUBTEL_CLIENT_SECRET}".encode()
+        ).decode()
+        url = (
+            f"https://rmp.hubtel.com/merchantaccount/merchants/"
+            f"{HUBTEL_POS_SALES_ID}/transactions/clientreference/{reference}"
+        )
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Basic {credentials}"},
+            timeout=10,
+        )
+        print(f"[RECONCILER] GET status ref={reference} -> {resp.status_code}")
+
+        if resp.status_code != 200:
+            print(f"[RECONCILER] non-200 ref={reference}: {resp.text[:200]}")
+            return
+
+        body          = resp.json()
+        response_code = body.get("ResponseCode", "")
+        tx_data       = body.get("Data", {})
+
+        if response_code == "0000":
+            momo_tx_id = tx_data.get("TransactionId", "") or tx_data.get("OrderId", "")
+            print(f"[RECONCILER] ref={reference} -> completed (momo_tx={momo_tx_id})")
+            _update_payment_status(reference, "completed", momo_tx_id=momo_tx_id)
+            threading.Thread(target=send_winbig_sms,        args=(reference,), daemon=True).start()
+            threading.Thread(target=push_to_payment_service, args=(reference,), daemon=True).start()
+        elif response_code in ("2001", "4003"):
+            print(f"[RECONCILER] ref={reference} -> failed (code={response_code})")
+            _update_payment_status(reference, "failed")
+        else:
+            print(f"[RECONCILER] ref={reference} -> still pending (code={response_code})")
+    except Exception as e:
+        print(f"[RECONCILER ERROR] ref={reference}: {e}")
+
+
+def _payment_reconciliation_worker():
+    """
+    Runs every PAYMENT_POLL_INTERVAL seconds.
+    Finds payments stuck in 'pending' for > 5 minutes and queries Hubtel for their
+    real outcome.  Catches any case where the webhook callback was never delivered.
+    """
+    print(f"[RECONCILER] started -- interval={PAYMENT_POLL_INTERVAL}s")
+    while True:
+        time.sleep(PAYMENT_POLL_INTERVAL)
+        try:
+            conn = get_ticket_conn()
+            cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT payment_ref, MIN(created_at) AS oldest
+                FROM tickets
+                WHERE payment_status = 'pending'
+                  AND created_at < NOW() - INTERVAL '5 minutes'
+                GROUP BY payment_ref
+                ORDER BY oldest
+                LIMIT 20
+            """)
+            stale_refs = [r["payment_ref"] for r in cur.fetchall()]
+            cur.close(); conn.close()
+
+            if stale_refs:
+                print(f"[RECONCILER] {len(stale_refs)} stale pending payment(s)")
+                for ref in stale_refs:
+                    _reconcile_payment(ref)
+                    time.sleep(1)
+        except Exception as e:
+            print(f"[RECONCILER ERROR] {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +904,12 @@ def handle_buy_entries(session_id, msisdn, qty, network="mtn"):
     Orchestrates the confirm->create->pay flow for WinBig entries.
     Returns (message, end_session).
     """
+    # -- Server-side transaction limits ---------------------------------------
+    if qty < 1 or qty > MAX_ENTRIES_PER_TXN:
+        return (f"Invalid quantity. Max {MAX_ENTRIES_PER_TXN} entries per purchase.", True)
     amount = qty * WINBIG_UNIT_PRICE
+    if amount > MAX_TXN_AMOUNT_PESEWA:
+        return ("Transaction amount exceeds the allowed limit.", True)
 
     # BYPASS MODE -- for testing without real payments
     if BYPASS_PAYMENT:
@@ -855,6 +983,15 @@ def ussd():
     sequence_id = request.form.get("sequenceID", "")
     raw_data    = request.form.get("data", "").strip().rstrip("#")
     network     = request.form.get("network", "")
+
+    # -- Rate limit: 30 requests/min per MSISDN -------------------------------
+    if msisdn and not _check_ussd_rate(msisdn):
+        print(f"[RATE LIMIT] msisdn={msisdn} seq={sequence_id}")
+        return ussd_response(msisdn, sequence_id, "Service busy. Please try again shortly.", end=True)
+
+    # -- Validate required fields ---------------------------------------------
+    if not msisdn or not sequence_id:
+        return ussd_response("", "", "Invalid request.", end=True)
 
     print(f"[REQUEST] msisdn={msisdn} seq={sequence_id} data={repr(raw_data)} net={network}")
 
@@ -1041,6 +1178,13 @@ def payment_webhook():
     ResponseCode "0000" = success, "2001" = failed.
     Only updates existing tickets -- never creates new ones.
     """
+    # -- IP check: log unlisted IPs but still process (reference is 32-char
+    #    random UUID hex -- cannot be guessed, so blocking on IP alone causes
+    #    silent payment failures when Hubtel rotates callback IPs)
+    ip = request.headers.get("X-Real-IP") or request.remote_addr or ""
+    if ip not in HUBTEL_WEBHOOK_IPS:
+        print(f"[WEBHOOK WARNING] callback from unlisted IP: {ip} -- add to HUBTEL_WEBHOOK_IPS if legitimate")
+
     event = request.get_json(force=True, silent=True) or {}
     print(f"[WEBHOOK] {event}")
 
@@ -1250,12 +1394,134 @@ def home():
     return jsonify({"status": "WinBig USSD API is running -- CarPark Ed. 7"})
 
 
+@app.route("/admin/tickets", methods=["GET"])
+def admin_tickets_api():
+    # Returns all tickets with full fields (payment_status, payment_ref, game_type)
+    # that are absent from the microservices gRPC/proto response.
+    # Response shape: { "success": true, "data": { "tickets": [...], "total": N, "page": P, "page_size": S } }
+    try:
+        page      = max(1, int(request.args.get("page",      1)))
+        page_size = max(1, min(100, int(request.args.get("page_size", 10))))
+        offset    = (page - 1) * page_size
+
+        issuer_type    = request.args.get("issuer_type",    "").strip()
+        payment_status = request.args.get("payment_status", "").strip()
+        game_type_arg  = request.args.get("game_type",      "").strip()
+        game_code      = request.args.get("game_code",      "").strip()
+        search         = request.args.get("search",         "").strip()
+
+        conditions = []
+        params     = []
+
+        if issuer_type:
+            conditions.append("issuer_type = %s")
+            params.append(issuer_type)
+        if payment_status:
+            conditions.append("payment_status = %s")
+            params.append(payment_status)
+        if game_type_arg:
+            conditions.append("game_type = %s")
+            params.append(game_type_arg)
+        if game_code:
+            conditions.append("game_code = %s")
+            params.append(game_code)
+        if search:
+            conditions.append(
+                "(serial_number ILIKE %s OR customer_phone ILIKE %s OR payment_ref ILIKE %s)"
+            )
+            params += [f"%{search}%", f"%{search}%", f"%{search}%"]
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        conn = get_ticket_conn()
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute(f"SELECT COUNT(*) as total FROM tickets {where}", params)
+        total = cur.fetchone()["total"]
+
+        cur.execute(
+            f"""
+            SELECT id, serial_number, game_type, game_name, game_code,
+                   game_schedule_id, draw_number, draw_date,
+                   issuer_type, issuer_id, customer_phone,
+                   payment_method, payment_ref, payment_status,
+                   payment_reference, unit_price, total_amount,
+                   status, security_hash, paid_at,
+                   created_at, updated_at
+            FROM tickets
+            {where}
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            params + [page_size, offset],
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        def to_dict(row):
+            r = dict(row)
+            for k in ("created_at", "updated_at", "paid_at", "draw_date"):
+                if r.get(k) is not None:
+                    r[k] = r[k].isoformat()
+            return r
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "tickets":   [to_dict(r) for r in rows],
+                "total":     total,
+                "page":      page,
+                "page_size": page_size,
+            },
+        })
+    except Exception as e:
+        print(f"[ERROR] admin_tickets_api: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
-# Startup -- launch background SMS retry worker
+# Ticket expiry worker — voids pending tickets older than TICKET_EXPIRY_MINUTES
+# ---------------------------------------------------------------------------
+
+def _ticket_expiry_worker():
+    print(f"[EXPIRY] started -- expires pending tickets after {TICKET_EXPIRY_MINUTES}m")
+    while True:
+        time.sleep(300)
+        try:
+            conn = get_ticket_conn()
+            cur  = conn.cursor()
+            cur.execute(
+                """
+                UPDATE tickets
+                SET payment_status = 'expired', updated_at = NOW()
+                WHERE payment_status = 'pending'
+                  AND created_at < NOW() - INTERVAL '%s minutes'
+                """,
+                (TICKET_EXPIRY_MINUTES,)
+            )
+            n = cur.rowcount
+            conn.commit()
+            cur.close(); conn.close()
+            if n:
+                print(f"[EXPIRY] expired {n} stale pending ticket(s)")
+        except Exception as e:
+            print(f"[EXPIRY ERROR] {e}")
+
+
+# ---------------------------------------------------------------------------
+# Startup -- launch background workers
 # ---------------------------------------------------------------------------
 
 _worker_thread = threading.Thread(target=_sms_retry_worker, daemon=True)
 _worker_thread.start()
 
+_reconciler_thread = threading.Thread(target=_payment_reconciliation_worker, daemon=True)
+_reconciler_thread.start()
+
+_expiry_thread = threading.Thread(target=_ticket_expiry_worker, daemon=True)
+_expiry_thread.start()
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001)
+    app.run(host="127.0.0.1", port=5001)
+
