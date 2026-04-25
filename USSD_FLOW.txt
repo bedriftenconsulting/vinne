@@ -1,0 +1,270 @@
+USSD FLOW — CarPark Ed. 7 (*899*92)
+=====================================
+
+ENTRY POINT
+-----------
+User dials *899*92
+
+  Welcome to CarPark Ed. 7
+  Buy a ticket & Stand a
+  chance to win an
+  iPhone 17 Pro
+
+  1. Buy Ticket
+  2. My Tickets
+  3. Help
+  0. Exit
+
+
+1 → BUY TICKET
+--------------
+
+  Car Park Tickets
+
+  1. 1-Day Pass - GHS 100
+  2. 2-Day Pass - GHS 180
+  3. Extra WinBig Entry
+     - GHS 20 each
+  0. Back
+
+
+1*1 → 1-Day Pass Confirm
+-------------------------
+
+  Confirm Purchase:
+  1-Day Pass = GHS 100
+  Includes: 1 draw entry
+
+  1. Confirm & Pay
+  0. Cancel
+
+
+1*1*1 → Payment Triggered (1-Day Pass)
+---------------------------------------
+- Tickets created instantly:
+    1x ACCESS_PASS  (CP-ACC-XXXXXXXX) — GHS 80, payment_status=pending
+    1x DRAW_ENTRY   (WB-ENT-XXXXXXXX) — GHS 20, payment_status=pending
+- After 3 seconds, Hubtel MoMo STK push sent to customer's phone
+- Customer sees on USSD screen:
+
+  Processing payment...
+  1-Day Pass - GHS 100
+
+  Enter PIN when prompted.
+  Go to My Approvals if
+  payment prompt delays.
+  SMS with tickets.
+
+  (session ends)
+
+1*1*0 → Cancel
+  Transaction cancelled.
+
+  1. Buy Ticket
+  0. Back
+  (session ends)
+
+
+1*2 → 2-Day Pass Confirm
+-------------------------
+
+  Confirm Purchase:
+  2-Day Pass = GHS 180
+  Includes: 2 draw entries
+
+  1. Confirm & Pay
+  0. Cancel
+
+
+1*2*1 → Payment Triggered (2-Day Pass)
+---------------------------------------
+- Tickets created instantly:
+    2x ACCESS_PASS  (CP-ACC-XXXXXXXX, CP-ACC-YYYYYYYY) — GHS 70 each, payment_status=pending
+    2x DRAW_ENTRY   (WB-ENT-XXXXXXXX, WB-ENT-YYYYYYYY) — GHS 20 each, payment_status=pending
+  Total charged: GHS 180 (7000+7000+2000+2000 pesewas)
+- After 3 seconds, Hubtel MoMo STK push sent to customer's phone
+- Customer sees on USSD screen:
+
+  Processing payment...
+  2-Day Pass - GHS 180
+
+  Enter PIN when prompted.
+  Go to My Approvals if
+  payment prompt delays.
+  SMS with tickets.
+
+  (session ends)
+
+1*2*0 → Cancel
+  Transaction cancelled.
+
+  1. Buy Ticket
+  0. Back
+  (session ends)
+
+
+1*3 → Extra WinBig Entries
+---------------------------
+
+  Extra WinBig Entries
+  GHS 20 each
+
+  How many entries?
+  Enter a number:
+
+
+1*3*N → Confirm screen (e.g. N=5)
+----------------------------------
+
+  Confirm Purchase:
+  5 WinBig Entry(ies)
+  Total = GHS 100
+
+  1. Confirm & Pay
+  0. Cancel
+
+
+1*3*N*1 → Payment Triggered (Extra WinBig)
+-------------------------------------------
+- Tickets created instantly:
+    Nx DRAW_ENTRY   (WB-ENT-XXXXXXXX ...) — GHS 20 each, payment_status=pending
+  Total charged: N × GHS 20
+- After 3 seconds, Hubtel MoMo STK push sent to customer's phone
+- Customer sees on USSD screen:
+
+  Processing payment...
+  5 WinBig Entry(ies)
+  GHS 100
+
+  Enter PIN when prompted.
+  Go to My Approvals if
+  payment prompt delays.
+  SMS with tickets.
+
+  (session ends)
+
+1*3*N*0 → Cancel
+  Transaction cancelled.
+
+  1. Buy Ticket
+  0. Back
+  (session ends)
+
+
+2 → MY TICKETS
+--------------
+
+  My Tickets
+
+  1. Car Park Tickets
+  2. Win Big Entries
+  0. Back
+
+
+2*1 → Car Park Tickets (completed only)
+----------------------------------------
+  If none:
+    Car Park Tickets
+
+    No passes yet.
+
+    1. Buy Ticket
+    0. Back
+
+  If found (up to 5, newest first):
+    Car Park Tickets
+
+    CP-ACC-XFNX3PV6
+    1-Day Pass — Day 1 (02/05/2026)
+
+    0. Back
+
+
+2*2 → Win Big Entries (completed only)
+----------------------------------------
+  If none:
+    Win Big Entries
+
+    No entries yet.
+
+    1. Buy Ticket
+    0. Back
+
+  If found (up to 10, newest first):
+    Win Big Entries
+
+    WB-ENT-HJUZ5AS1
+    WB-ENT-TQGZ9VF8
+
+    Total: 2
+    0. Back
+
+
+3 → HELP
+--------
+
+  Help & Support
+
+  Call: 020 XXX XXXX
+  Email: support@carpark.com
+
+  0. Back
+
+
+0 → EXIT
+--------
+  Thank you for using Car Park.
+  (session ends)
+
+
+BACKGROUND PAYMENT FLOW (after customer enters MoMo PIN)
+---------------------------------------------------------
+1. Customer enters PIN on phone — Hubtel processes MoMo payment
+2. Hubtel calls POST /payment/webhook on our server
+3. Tickets updated: payment_status=completed, paid_at set, payment_reference (MoMo TX ID) stored
+4. One transaction pushed to payment_service (SUM of unit_price across all tickets for the payment_ref)
+5. SMS retry worker (runs every 2 minutes via systemd) detects sms_sent=FALSE and sends SMS via mNotify:
+
+   1-Day Pass (1 ACCESS_PASS + 1 DRAW_ENTRY) — 1 SMS:
+     CarPark payment confirmed!
+     Pass: CP-ACC-XXXXXXXX
+     Valid: Day 1 — Sat 3 May 2026
+     WinBig Entry: WB-ENT-XXXXXXXX
+     Draw: 03 May 2026
+
+   2-Day Pass (2 ACCESS_PASS + 2 DRAW_ENTRY) — 2 SMS (one per day):
+     SMS 1:
+       CarPark payment confirmed!
+       Pass: CP-ACC-XXXXXXXX
+       Valid: Day 1 (02/05/2026)
+       WinBig Entry: WB-ENT-XXXXXXXX
+       Draw: 03 May 2026
+
+     SMS 2:
+       CarPark payment confirmed!
+       Pass: CP-ACC-YYYYYYYY
+       Valid: Day 2 (03/05/2026)
+       WinBig Entry: WB-ENT-YYYYYYYY
+       Draw: 03 May 2026
+
+   Extra WinBig (DRAW_ENTRY only) — chunked 5 per SMS:
+     CarPark payment confirmed!
+     WinBig Entries:
+     WB-ENT-XXXXXXXX
+     WB-ENT-YYYYYYYY
+     ...
+     Draw: 03 May 2026
+
+6. sms_sent=TRUE set on all tickets for the payment_ref once all SMS delivered
+
+
+PRICING SUMMARY
+---------------
+  1-Day Pass      GHS 100   = 1x ACCESS_PASS (GHS 80) + 1x DRAW_ENTRY (GHS 20)
+  2-Day Pass      GHS 180   = 2x ACCESS_PASS (GHS 70 each) + 2x DRAW_ENTRY (GHS 20 each)
+  Extra WinBig    GHS 20ea  = 1x DRAW_ENTRY per entry (min 1, no max)
+
+SERIAL PREFIXES
+---------------
+  CP-ACC-XXXXXXXX   Car Park Access Pass
+  WB-ENT-XXXXXXXX   WinBig Draw Entry

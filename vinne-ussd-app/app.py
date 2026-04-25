@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import string
 import threading
 import time
@@ -36,33 +37,23 @@ NETWORK_CHANNEL = {
     "tigo":       "tigo-gh",
 }
 
-PRICES = {
-    "1": {
-        "label":              "1-Day Pass",
-        "amount":             10000,          # GHS 100 — total charged to customer
-        "days":               [("Day 1", "02/05/2026")],
-        "access_unit_price":  8000,           # GHS 80 net per ACCESS_PASS (sent to admin)
-        "entry_unit_price":   2000,           # GHS 20 per included DRAW_ENTRY
-    },
-    "2": {
-        "label":              "2-Day Pass",
-        "amount":             18000,          # GHS 180 — total charged to customer
-        "days":               [("Day 1", "02/05/2026"), ("Day 2", "03/05/2026")],
-        "access_unit_price":  8000,           # GHS 80 net per ACCESS_PASS per day (sent to admin)
-        "entry_unit_price":   1000,           # GHS 10 per included DRAW_ENTRY (2 × 10 = GHS 20)
-    },
-}
-WINBIG_UNIT_PRICE = 2000  # GHS 20 per extra draw entry in pesewas
-
-MNOTIFY_SMS_KEY = "F9XhjQbbJnqKt2fy9lhPIQCSD"
-SMS_SENDER_ID   = "CARPARK"
+# ---------------------------------------------------------------------------
+# Game / Pricing config
+# ---------------------------------------------------------------------------
+WINBIG_UNIT_PRICE = 2000        # GHS 20 per draw entry (pesewas)
+MNOTIFY_SMS_KEY   = "F9XhjQbbJnqKt2fy9lhPIQCSD"
+SMS_SENDER_ID     = "CARPARK"
 
 GAME_CODE        = "IPHONE17"
 GAME_NAME        = "iPhone 17 Pro Max"
 GAME_SCHEDULE_ID = "8aaa6e8d-c01f-4e4e-8a1b-e9668f481e34"
 DRAW_NUMBER      = 1
 DRAW_DATE        = "2026-05-03"
+DRAW_DATE_LABEL  = "03 May 2026"
 
+# ---------------------------------------------------------------------------
+# Database config
+# ---------------------------------------------------------------------------
 TICKET_DB = {
     "host":     os.environ.get("TICKET_DB_HOST", "localhost"),
     "port":     5442,
@@ -70,7 +61,6 @@ TICKET_DB = {
     "user":     "ticket",
     "password": "ticket123",
 }
-
 PLAYER_DB = {
     "host":     "localhost",
     "port":     5444,
@@ -78,7 +68,6 @@ PLAYER_DB = {
     "user":     "player",
     "password": "player123",
 }
-
 PAYMENT_DB = {
     "host":     "localhost",
     "port":     5440,
@@ -86,7 +75,6 @@ PAYMENT_DB = {
     "user":     "payment",
     "password": "payment123",
 }
-
 WALLET_DB = {
     "host":     "localhost",
     "port":     5438,
@@ -95,12 +83,20 @@ WALLET_DB = {
     "password": "wallet123",
 }
 
-# In-memory session state: sequenceID -> list of user inputs
+# ---------------------------------------------------------------------------
+# In-memory session state
+# ---------------------------------------------------------------------------
+# sequenceID  -> list of user inputs accumulated in this session
 sessions = {}
 
-# Idempotency guard: session_id -> payment_ref
-# Prevents duplicate ticket creation if the USSD gateway retries the same step
+# MSISDN -> active sequenceID  (Telecel fallback: gateway may change seq mid-session)
+sessions_by_msisdn = {}
+
+# sequenceID -> payment_ref  (idempotency guard against gateway retries)
 session_purchases = {}
+
+# SMS retry worker interval (seconds)
+SMS_RETRY_INTERVAL = 120
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +109,7 @@ def ussd_response(msisdn, sequence_id, message, end=False):
         "sequenceID":   sequence_id,
         "message":      message,
         "timestamp":    datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "continueFlag": 1 if end else 0
+        "continueFlag": 1 if end else 0,
     })
 
 
@@ -126,46 +122,52 @@ def normalise_phone(phone):
     return phone
 
 
-def generate_access_serial():
-    """CP-ACC-XXXXXXXX — Car Park access pass."""
-    return "CP-ACC-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+def player_phone(msisdn):
+    """Return +233XXXXXXXXX format for player_service."""
+    return "+" + normalise_phone(msisdn)
 
 
 def generate_entry_serial():
-    """WB-ENT-XXXXXXXX — Draw entry."""
+    """WB-ENT-XXXXXXXX -- WinBig draw entry."""
     return "WB-ENT-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 
 def make_security_hash(serial_number, payment_ref, customer_phone):
-    """SHA256(serial_number + payment_ref + customer_phone)"""
     raw = f"{serial_number}{payment_ref}{customer_phone}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _make_reference():
-    """Generate a unique, Hubtel-safe reference (32 hex chars, <= 36)."""
+    """Generate a unique Hubtel-safe payment reference (32 hex chars)."""
     return uuid.uuid4().hex
 
 
 # ---------------------------------------------------------------------------
-# Database
+# Database connections
 # ---------------------------------------------------------------------------
 
 def get_ticket_conn():
-    return psycopg2.connect(**TICKET_DB, connect_timeout=2)
+    return psycopg2.connect(**TICKET_DB, connect_timeout=5)
 
 
 def get_player_conn():
-    return psycopg2.connect(**PLAYER_DB, connect_timeout=2)
+    return psycopg2.connect(**PLAYER_DB, connect_timeout=5)
 
 
-def player_phone(msisdn):
-    """Return phone in +233XXXXXXXXX format for player_service."""
-    return "+" + normalise_phone(msisdn)
+def get_payment_conn():
+    return psycopg2.connect(**PAYMENT_DB, connect_timeout=5)
 
+
+def get_wallet_conn():
+    return psycopg2.connect(**WALLET_DB, connect_timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# Player
+# ---------------------------------------------------------------------------
 
 def get_or_create_player(msisdn):
-    """Upsert a player record in player_service. Returns the player UUID or None on error."""
+    """Upsert a player record. Returns the player UUID or None on error."""
     phone = player_phone(msisdn)
     try:
         conn = get_player_conn()
@@ -187,12 +189,12 @@ def get_or_create_player(msisdn):
         print(f"[PLAYER] upserted phone={phone} id={player_id}")
         return player_id
     except Exception as e:
-        print(f"[PLAYER ERROR] get_or_create_player: {e}")
+        print(f"[PLAYER ERROR] {e}")
         return None
 
 
 def log_ussd_session(sequence_id, msisdn, player_id, payment_ref):
-    """Insert a completed USSD purchase session into player_service.ussd_sessions."""
+    """Record a completed USSD purchase session in player_service."""
     if not player_id:
         return
     phone = player_phone(msisdn)
@@ -214,134 +216,60 @@ def log_ussd_session(sequence_id, msisdn, player_id, payment_ref):
         cur.close(); conn.close()
         print(f"[SESSION] logged seq={sequence_id} player={player_id} ref={payment_ref}")
     except Exception as e:
-        print(f"[SESSION ERROR] log_ussd_session: {e}")
+        print(f"[SESSION ERROR] {e}")
 
 
-def create_tickets_from_ussd(session_data):
+# ---------------------------------------------------------------------------
+# Ticket creation (Phase 1 -- called on USSD confirmation)
+# ---------------------------------------------------------------------------
+
+def create_winbig_tickets(session_id, msisdn, qty):
     """
-    Phase 1: Creates tickets immediately on USSD confirmation.
-    All tickets are inserted with payment_status='pending'.
-
-    session_data keys:
-      session_id    : str   — USSD sequenceID (used for idempotency)
-      msisdn        : str   — raw MSISDN from USSD gateway
-      purchase_type : str   — "day_pass" | "extra_entries"
-      ticket_key    : str   — "1" | "2"  (day_pass only)
-      qty           : int   — number of extra entries (extra_entries only)
-
-    Returns:
-      {"reference": str, "access": [serials], "entries": [serials]}
-
-    Idempotency:
-      If session_id already maps to a payment_ref (e.g. gateway retry),
-      the existing tickets are fetched from DB and returned — no new rows created.
+    Create N DRAW_ENTRY tickets with payment_status=pending.
+    Idempotent: if session_id already has a payment_ref, returns existing tickets.
+    Returns {"reference": str, "entries": [serial, ...]}
     """
-    session_id = session_data["session_id"]
-    msisdn     = session_data["msisdn"]
-    phone      = normalise_phone(msisdn)
-
-    # ------------------------------------------------------------------
-    # Idempotency check — return existing tickets if session already used
-    # ------------------------------------------------------------------
+    # -- Idempotency guard ------------------------------------------------
     if session_id in session_purchases:
         existing_ref = session_purchases[session_id]
-        print(f"[IDEMPOTENCY] session={session_id} already has ref={existing_ref}, returning existing")
+        print(f"[IDEMPOTENCY] session={session_id} ref={existing_ref} already exists")
         try:
             conn = get_ticket_conn()
             cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute(
-                "SELECT serial_number, game_type FROM tickets WHERE payment_ref=%s ORDER BY game_type, serial_number",
+                "SELECT serial_number FROM tickets WHERE payment_ref=%s ORDER BY serial_number",
                 (existing_ref,)
             )
             rows = cur.fetchall()
             cur.close(); conn.close()
-            return {
-                "reference": existing_ref,
-                "access":    [r["serial_number"] for r in rows if r["game_type"] == "ACCESS_PASS"],
-                "entries":   [r["serial_number"] for r in rows if r["game_type"] == "DRAW_ENTRY"],
-            }
+            return {"reference": existing_ref, "entries": [r["serial_number"] for r in rows]}
         except Exception as e:
             print(f"[IDEMPOTENCY ERROR] {e}")
-            # Fall through to create fresh (safety net)
 
-    reference = _make_reference()
-    rows_to_insert  = []   # list of tuples for executemany
-    access_serials  = []
-    entry_serials   = []
+    phone      = normalise_phone(msisdn)
+    reference  = _make_reference()
+    total_amt  = qty * WINBIG_UNIT_PRICE
+    player_id  = get_or_create_player(msisdn)
 
-    # ------------------------------------------------------------------
-    # Build ticket rows
-    # ------------------------------------------------------------------
-    if session_data["purchase_type"] == "day_pass":
-        ticket     = PRICES[session_data["ticket_key"]]
-        num_days   = len(ticket["days"])
+    rows_to_insert = []
+    entry_serials  = []
 
-        for day_label, day_date in ticket["days"]:
-            # --- ACCESS_PASS (one per day) — net price sent to admin ---
-            acc_serial = generate_access_serial()
-            access_serials.append(acc_serial)
-            acc_hash = make_security_hash(acc_serial, reference, phone)
-            acc_bet_lines = json.dumps([{"type": "ACCESS_PASS", "days": day_label}])
-            rows_to_insert.append((
-                acc_serial, GAME_CODE, GAME_SCHEDULE_ID,
-                DRAW_NUMBER, f"{ticket['label']} — {day_label} ({day_date})", "ACCESS_PASS",
-                acc_bet_lines, 1,
-                ticket["access_unit_price"], ticket["access_unit_price"],
-                "USSD", msisdn,
-                phone,
-                "mobile_money", reference, "pending",
-                acc_hash, "issued", DRAW_DATE,
-            ))
+    for _ in range(qty):
+        serial    = generate_entry_serial()
+        entry_serials.append(serial)
+        sec_hash  = make_security_hash(serial, reference, phone)
+        bet_lines = json.dumps([{"type": "DRAW_ENTRY", "source": "WinBig USSD"}])
+        rows_to_insert.append((
+            serial, GAME_CODE, GAME_SCHEDULE_ID,
+            DRAW_NUMBER, GAME_NAME, "DRAW_ENTRY",
+            bet_lines, 1,
+            WINBIG_UNIT_PRICE, total_amt,
+            "USSD", msisdn,
+            phone,
+            "mobile_money", reference, "pending",
+            sec_hash, "issued", DRAW_DATE,
+        ))
 
-            # --- DRAW_ENTRY (one per day, paired with access pass) ---
-            ent_serial = generate_entry_serial()
-            entry_serials.append(ent_serial)
-            ent_hash = make_security_hash(ent_serial, reference, phone)
-
-            if num_days == 1:
-                ent_bet_lines = json.dumps([{"type": "DRAW_ENTRY", "source": "1-Day Pass"}])
-            else:
-                ent_bet_lines = json.dumps([{"type": "DRAW_ENTRY", "source": "2-Day Pass", "day": day_label}])
-
-            rows_to_insert.append((
-                ent_serial, GAME_CODE, GAME_SCHEDULE_ID,
-                DRAW_NUMBER, GAME_NAME, "DRAW_ENTRY",
-                ent_bet_lines, 1,
-                ticket["entry_unit_price"], ticket["entry_unit_price"],
-                "USSD", msisdn,
-                phone,
-                "mobile_money", reference, "pending",
-                ent_hash, "issued", DRAW_DATE,
-            ))
-
-    elif session_data["purchase_type"] == "extra_entries":
-        qty       = session_data["qty"]
-        total_amt = qty * WINBIG_UNIT_PRICE
-
-        for _ in range(qty):
-            ent_serial = generate_entry_serial()
-            entry_serials.append(ent_serial)
-            ent_hash = make_security_hash(ent_serial, reference, phone)
-            ent_bet_lines = json.dumps([{"type": "DRAW_ENTRY", "source": "Extra WinBig"}])
-            rows_to_insert.append((
-                ent_serial, GAME_CODE, GAME_SCHEDULE_ID,
-                DRAW_NUMBER, GAME_NAME, "DRAW_ENTRY",
-                ent_bet_lines, 1,
-                WINBIG_UNIT_PRICE, total_amt,
-                "USSD", msisdn,
-                phone,
-                "mobile_money", reference, "pending",
-                ent_hash, "issued", DRAW_DATE,
-            ))
-
-    # ------------------------------------------------------------------
-    # Register / fetch player before inserting tickets
-    # ------------------------------------------------------------------
-    player_id = get_or_create_player(msisdn)
-
-    # ------------------------------------------------------------------
-    # Bulk insert — single round-trip for all tickets
-    # ------------------------------------------------------------------
     conn = get_ticket_conn()
     cur  = conn.cursor()
     cur.executemany("""
@@ -368,55 +296,21 @@ def create_tickets_from_ussd(session_data):
         )
     """, rows_to_insert)
     conn.commit()
-    cur.close()
-    conn.close()
+    cur.close(); conn.close()
 
-    # Lock session to prevent duplicate creation on gateway retry
     session_purchases[session_id] = reference
-    print(f"[TICKETS] {len(rows_to_insert)} ticket(s) created ref={reference} access={access_serials} entries={entry_serials}")
+    print(f"[TICKETS] {qty} DRAW_ENTRY ticket(s) created ref={reference} entries={entry_serials}")
 
-    # Log the USSD purchase session in player_service (non-blocking — failure won't break flow)
     log_ussd_session(session_id, msisdn, player_id, reference)
 
-    return {"reference": reference, "access": access_serials, "entries": entry_serials}
+    return {"reference": reference, "entries": entry_serials}
 
 
-def handle_payment_webhook(payload):
-    """
-    Phase 2: Webhook handler — updates existing tickets only, never creates new ones.
-
-    ResponseCode:
-      "0000" → completed (payment success)
-      "2001" → failed    (user rejected / timeout)
-      other  → pending/ignored
-    """
-    data          = payload.get("Data", {})
-    response_code = payload.get("ResponseCode", "")
-    reference     = data.get("ClientReference", "")
-    amount        = data.get("Amount", 0)
-    phone         = data.get("CustomerMsisdn", "")
-
-    if not reference:
-        print("[WEBHOOK] missing ClientReference, ignoring")
-        return
-
-    if response_code == "0000":
-        momo_tx_id = data.get("TransactionId", "") or data.get("OrderId", "")
-        print(f"[PAYMENT SUCCESS] ref={reference} amount=GHS{amount} phone={phone} momo_tx={momo_tx_id}")
-        _update_payment_status(reference, "completed", momo_tx_id=momo_tx_id)
-        send_confirmation_sms(reference)
-        threading.Thread(target=push_to_payment_service, args=(reference,), daemon=True).start()
-
-    elif response_code == "2001":
-        print(f"[PAYMENT FAILED] ref={reference} code={response_code}")
-        _update_payment_status(reference, "failed")
-
-    else:
-        print(f"[PAYMENT PENDING/OTHER] ref={reference} code={response_code}")
-
+# ---------------------------------------------------------------------------
+# Payment status update
+# ---------------------------------------------------------------------------
 
 def _update_payment_status(reference, status, momo_tx_id=None):
-    """Update payment_status (and paid_at / payment_reference for completed) on all tickets."""
     try:
         conn = get_ticket_conn()
         cur  = conn.cursor()
@@ -434,80 +328,58 @@ def _update_payment_status(reference, status, momo_tx_id=None):
                 (status, reference)
             )
         conn.commit()
-        cur.close()
-        conn.close()
-        print(f"[DB] payment_status={status} momo_tx={momo_tx_id} for ref={reference}")
+        cur.close(); conn.close()
+        print(f"[DB] payment_status={status} momo_tx={momo_tx_id} ref={reference}")
     except Exception as e:
         print(f"[DB ERROR] _update_payment_status: {e}")
 
 
-def _get_payment_db_conn():
-    return psycopg2.connect(**PAYMENT_DB, connect_timeout=5)
-
-
-def _get_wallet_db_conn():
-    return psycopg2.connect(**WALLET_DB, connect_timeout=5)
-
+# ---------------------------------------------------------------------------
+# Payment service sync (background thread after successful webhook)
+# ---------------------------------------------------------------------------
 
 def push_to_payment_service(reference):
     """
-    After a successful Hubtel webhook, insert ONE transaction row per payment_ref
-    into payment_service.transactions and ensure player wallet exists.
-
-    Amount = SUM(unit_price) across all tickets for the payment_ref:
-      1-day pass  → 8000 + 2000           = 10000 (GHS 100)
-      2-day pass  → 16000 + 2000          = 18000 (GHS 180)
-      5 extra WB  → 5 × 2000             = 10000 (GHS 100)
+    Insert ONE transaction row into payment_service and ensure wallet exists.
+    Amount = SUM(unit_price) across all tickets for the payment_ref.
     """
     try:
-        # ── 1. Fetch all tickets for this payment_ref ──────────────────────
+        # 1. Fetch tickets
         tconn = get_ticket_conn()
         tcur  = tconn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         tcur.execute("""
-            SELECT serial_number, game_type, unit_price, customer_phone,
+            SELECT serial_number, unit_price, customer_phone,
                    payment_reference, paid_at, created_at
             FROM tickets
             WHERE payment_ref = %s
-            ORDER BY game_type DESC
         """, (reference,))
         tickets = tcur.fetchall()
         tcur.close(); tconn.close()
 
         if not tickets:
-            print(f"[PAYMENT SVC] no tickets found for ref={reference[:8]}, skipping")
+            print(f"[PAYMENT SVC] no tickets for ref={reference[:8]}")
             return
 
         customer_phone = tickets[0]["customer_phone"]
-        phone_fmt      = player_phone(customer_phone)   # +233XXXXXXXXX
+        phone_fmt      = player_phone(customer_phone)
         momo_tx_id     = tickets[0]["payment_reference"] or ""
         completed      = tickets[0]["paid_at"] or tickets[0]["created_at"]
-
-        # Total amount = SUM of all unit prices for this purchase
         total_amount   = sum(int(t["unit_price"] or 0) for t in tickets)
-
-        # Describe the bundle type for the narration
-        has_access = any(t["game_type"] == "ACCESS_PASS" for t in tickets)
-        n_access   = sum(1 for t in tickets if t["game_type"] == "ACCESS_PASS")
-        n_entries  = sum(1 for t in tickets if t["game_type"] == "DRAW_ENTRY")
-        if has_access and n_access == 1:
-            label = "1-Day CarPark Pass"
-        elif has_access and n_access == 2:
-            label = "2-Day CarPark Pass"
-        else:
-            label = f"{n_entries} Extra WinBig Entr{'y' if n_entries == 1 else 'ies'}"
-        narration = f"CarPark {label} via Hubtel MoMo"
-
-        serials  = [t["serial_number"] for t in tickets]
+        n_entries      = len(tickets)
+        narration      = (
+            f"CarPark Ed. 7 -- {n_entries} WinBig "
+            f"Entr{'y' if n_entries == 1 else 'ies'} via Hubtel MoMo"
+        )
         metadata = json.dumps({
             "source":      "ussd",
             "user_role":   "player",
             "game":        GAME_CODE,
             "payment_ref": reference,
             "momo_tx_id":  momo_tx_id,
-            "serials":     serials,
+            "serials":     [t["serial_number"] for t in tickets],
         })
 
-        # ── 2. Resolve player_id ───────────────────────────────────────────
+        # 2. Resolve player
         pconn = get_player_conn()
         pcur  = pconn.cursor()
         pcur.execute("SELECT id FROM players WHERE phone_number = %s", (phone_fmt,))
@@ -518,10 +390,9 @@ def push_to_payment_service(reference):
             return
         player_id = str(row[0])
 
-        # ── 3. Insert ONE transaction per payment_ref ──────────────────────
-        pyconn = _get_payment_db_conn()
+        # 3. Insert transaction (one per payment_ref, idempotent)
+        pyconn = get_payment_conn()
         pycur  = pyconn.cursor()
-
         pycur.execute("""
             INSERT INTO transactions (
                 reference, type, status, amount, currency, narration,
@@ -549,13 +420,13 @@ def push_to_payment_service(reference):
         pycur.close(); pyconn.close()
 
         if inserted:
-            print(f"[PAYMENT SVC] inserted tx ref={reference[:8]} amount={total_amount} ({label})")
+            print(f"[PAYMENT SVC] tx inserted ref={reference[:8]} amount={total_amount} ({n_entries} entr{'y' if n_entries==1 else 'ies'})")
         else:
-            print(f"[PAYMENT SVC] tx already exists for ref={reference[:8]}, skipped")
+            print(f"[PAYMENT SVC] tx already exists ref={reference[:8]}, skipped")
 
-        # ── 4. Ensure wallet row exists ────────────────────────────────────
+        # 4. Ensure wallet row exists
         try:
-            wconn = _get_wallet_db_conn()
+            wconn = get_wallet_conn()
             wcur  = wconn.cursor()
             wcur.execute("""
                 INSERT INTO player_wallets (player_id, balance, pending_balance, available_balance, currency, status)
@@ -566,52 +437,8 @@ def push_to_payment_service(reference):
         except Exception as we:
             print(f"[PAYMENT SVC] wallet upsert error: {we}")
 
-        print(f"[PAYMENT SVC] ref={reference[:8]} done — amount={total_amount} tickets={len(tickets)}")
-
     except Exception as e:
         print(f"[PAYMENT SVC ERROR] ref={reference[:8]}: {e}")
-
-
-def get_access_passes(msisdn):
-    phone = normalise_phone(msisdn)
-    rows  = []
-    try:
-        conn = get_ticket_conn()
-        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
-            SELECT serial_number, game_name, payment_status, created_at
-            FROM tickets
-            WHERE customer_phone=%s AND game_type='ACCESS_PASS'
-              AND payment_status='completed'
-            ORDER BY created_at DESC LIMIT 5
-        """, (phone,))
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"[DB ERROR] get_access_passes: {e}")
-    return rows
-
-
-def get_draw_entries(msisdn):
-    phone = normalise_phone(msisdn)
-    rows  = []
-    try:
-        conn = get_ticket_conn()
-        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
-            SELECT serial_number, payment_status, created_at
-            FROM tickets
-            WHERE customer_phone=%s AND game_type='DRAW_ENTRY'
-              AND payment_status='completed'
-            ORDER BY created_at DESC LIMIT 10
-        """, (phone,))
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"[DB ERROR] get_draw_entries: {e}")
-    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +446,7 @@ def get_draw_entries(msisdn):
 # ---------------------------------------------------------------------------
 
 def send_sms(msisdn, message):
+    """Send a single SMS via mNotify. Returns True on success."""
     phone = msisdn.strip()
     if phone.startswith("233"):
         phone = "0" + phone[3:]
@@ -632,90 +460,62 @@ def send_sms(msisdn, message):
                 "is_schedule":   False,
                 "schedule_date": "",
             },
-            timeout=10
+            timeout=10,
         )
         result = resp.json()
         if result.get("status") == "success":
             print(f"[SMS] to={phone} status=success code={result.get('code')}")
             return True
-        else:
-            print(f"[SMS FAILED] to={phone} response={result}")
-            return False
+        print(f"[SMS FAILED] to={phone} response={result}")
+        return False
     except Exception as e:
         print(f"[SMS ERROR] {e}")
         return False
 
 
-def send_confirmation_sms(reference):
+def send_winbig_sms(reference):
     """
-    Send confirmation SMS after payment is completed.
-    - ACCESS_PASS tickets → 1 SMS per pass (paired with its draw entry)
-    - Extra WinBig only  → chunk entries into groups of 5
-    Marks sms_sent=TRUE on full success so the retry worker skips this ref.
+    Send confirmation SMS(es) for a completed WinBig payment.
+    Entries are chunked 5 per SMS.
+    Marks sms_sent=TRUE on all tickets when every SMS succeeds.
     """
     try:
         conn = get_ticket_conn()
         cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT serial_number, game_type, game_name, customer_phone FROM tickets WHERE payment_ref=%s",
+            "SELECT serial_number, customer_phone FROM tickets "
+            "WHERE payment_ref=%s ORDER BY serial_number",
             (reference,)
         )
         rows = cur.fetchall()
+        cur.close()
 
         if not rows:
-            print(f"[SMS] no tickets found for ref={reference}")
-            cur.close(); conn.close()
+            print(f"[SMS] no tickets for ref={reference}")
+            conn.close()
             return
 
         msisdn  = rows[0]["customer_phone"]
-        access  = sorted(
-            [r for r in rows if r["game_type"] == "ACCESS_PASS"],
-            key=lambda r: r["game_name"]   # "...Day 1..." sorts before "...Day 2..."
-        )
-        entries = sorted(
-            [r for r in rows if r["game_type"] == "DRAW_ENTRY"],
-            key=lambda r: r["serial_number"]
-        )
+        serials = [r["serial_number"] for r in rows]
 
+        CHUNK    = 5
+        chunks   = [serials[i:i+CHUNK] for i in range(0, len(serials), CHUNK)]
         all_sent = True
 
-        if access:
-            # One SMS per access pass — 1-Day Pass sends 1, 2-Day Pass sends 2
-            print(f"[SMS] {len(access)} pass SMS(es) for ref={reference}")
-            for i, pass_row in enumerate(access):
-                # game_name format: "1-Day Pass — Day 1 (02/05/2026)"
-                valid_label  = pass_row["game_name"].split("—")[-1].strip()
-                entry_serial = entries[i]["serial_number"] if i < len(entries) else "—"
-                print(f"[SMS] {i+1}/{len(access)} pass={pass_row['serial_number']} entry={entry_serial}")
-                ok = send_sms(
-                    msisdn,
-                    f"CarPark payment confirmed!\n"
-                    f"Pass: {pass_row['serial_number']}\n"
-                    f"Valid: {valid_label}\n"
-                    f"WinBig Entry: {entry_serial}\n"
-                    f"Draw: 03 May 2026"
-                )
-                if not ok:
-                    all_sent = False
-                if i < len(access) - 1:
-                    time.sleep(1)   # avoid mNotify rate-limit between back-to-back sends
-        else:
-            # Extra WinBig entries only — chunk into groups of 5
-            CHUNK = 5
-            chunks = [entries[i:i+CHUNK] for i in range(0, len(entries), CHUNK)]
-            print(f"[SMS] {len(chunks)} entries SMS chunk(s) for ref={reference}")
-            for j, chunk in enumerate(chunks):
-                entries_text = "\n".join(r["serial_number"] for r in chunk)
-                ok = send_sms(
-                    msisdn,
-                    f"CarPark payment confirmed!\n"
-                    f"WinBig Entries:\n{entries_text}\n"
-                    f"Draw: 03 May 2026"
-                )
-                if not ok:
-                    all_sent = False
-                if j < len(chunks) - 1:
-                    time.sleep(1)
+        print(f"[SMS] {len(chunks)} chunk(s) for ref={reference} to={msisdn}")
+        for j, chunk in enumerate(chunks):
+            entries_text = "\n".join(chunk)
+            label = "Entry" if len(chunk) == 1 else "Entries"
+            ok = send_sms(
+                msisdn,
+                f"WinBig {label}:\n{entries_text}\n"
+                f"CarPark Ed. 7 Draw: {DRAW_DATE_LABEL}\n"
+                f"Good luck!"
+            )
+            if not ok:
+                all_sent = False
+            if j < len(chunks) - 1:
+                time.sleep(1)   # avoid mNotify rate-limit between back-to-back sends
 
         if all_sent:
             upd = conn.cursor()
@@ -727,16 +527,51 @@ def send_confirmation_sms(reference):
             upd.close()
             print(f"[SMS] sms_sent=TRUE for ref={reference}")
         else:
-            print(f"[SMS] some sends failed for ref={reference} — retry worker will pick up")
+            print(f"[SMS] some sends failed for ref={reference} -- retry worker will pick up")
 
-        cur.close()
         conn.close()
     except Exception as e:
-        print(f"[DB ERROR] send_confirmation_sms: {e}")
+        print(f"[SMS ERROR] send_winbig_sms ref={reference}: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Payment
+# Background SMS retry worker
+# ---------------------------------------------------------------------------
+
+def _sms_retry_worker():
+    """
+    Runs every SMS_RETRY_INTERVAL seconds.
+    Finds completed DRAW_ENTRY tickets where sms_sent=FALSE and retries sending.
+    Grouped by payment_ref so each purchase gets one attempt per cycle.
+    """
+    print(f"[SMS WORKER] started -- interval={SMS_RETRY_INTERVAL}s")
+    while True:
+        time.sleep(SMS_RETRY_INTERVAL)
+        try:
+            conn = get_ticket_conn()
+            cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT DISTINCT payment_ref
+                FROM tickets
+                WHERE payment_status = 'completed'
+                  AND (sms_sent = FALSE OR sms_sent IS NULL)
+                  AND game_type = 'DRAW_ENTRY'
+                ORDER BY payment_ref
+            """)
+            pending_refs = [r["payment_ref"] for r in cur.fetchall()]
+            cur.close(); conn.close()
+
+            if pending_refs:
+                print(f"[SMS WORKER] {len(pending_refs)} ref(s) pending SMS")
+                for ref in pending_refs:
+                    send_winbig_sms(ref)
+                    time.sleep(1)
+        except Exception as e:
+            print(f"[SMS WORKER ERROR] {e}")
+
+
+# ---------------------------------------------------------------------------
+# Hubtel payment
 # ---------------------------------------------------------------------------
 
 def trigger_momo_payment(msisdn, amount_pesewas, reference, network="mtn"):
@@ -748,11 +583,10 @@ def trigger_momo_payment(msisdn, amount_pesewas, reference, network="mtn"):
     credentials = base64.b64encode(
         f"{HUBTEL_CLIENT_ID}:{HUBTEL_CLIENT_SECRET}".encode()
     ).decode()
-
     payload = {
         "Amount":             amount_ghs,
-        "Title":              "CarPark Ed. 7",
-        "Description":        "Car Park ticket / WinBig draw entry",
+        "Title":              "CarPark Ed. 7 -- WinBig",
+        "Description":        "WinBig draw entry",
         "PrimaryCallbackUrl": HUBTEL_CALLBACK_URL,
         "ClientReference":    reference,
         "CustomerName":       phone,
@@ -764,113 +598,51 @@ def trigger_momo_payment(msisdn, amount_pesewas, reference, network="mtn"):
         "Content-Type":  "application/json",
         "Cache-Control": "no-cache",
     }
-    url = f"https://rmp.hubtel.com/merchantaccount/merchants/{HUBTEL_POS_SALES_ID}/receive/mobilemoney"
+    url  = f"https://rmp.hubtel.com/merchantaccount/merchants/{HUBTEL_POS_SALES_ID}/receive/mobilemoney"
     resp = requests.post(url, json=payload, headers=headers, timeout=15)
-    print(f"[HUBTEL] POST {url} → {resp.status_code} {resp.text[:300]}")
+    print(f"[HUBTEL] POST {url} -> {resp.status_code} {resp.text[:300]}")
     return resp.json()
 
 
 def _fire_momo_async(msisdn, amount_pesewas, reference, network="mtn"):
-    """Trigger Hubtel MoMo prompt in a background thread after a short delay
-    so the USSD session can close first."""
+    """Trigger Hubtel MoMo in a background thread after a short delay
+    so the USSD session can close before the STK push arrives."""
     def _call():
         time.sleep(3)
         try:
             result    = trigger_momo_payment(msisdn, amount_pesewas, reference, network=network)
             resp_code = result.get("ResponseCode", "?")
-            print(f"[ASYNC PAYMENT] ref={reference} network={network} "
+            print(f"[ASYNC PAYMENT] ref={reference} net={network} "
                   f"ResponseCode={resp_code} msg={result.get('Data', {}).get('Description', '')}")
         except Exception as e:
             print(f"[ASYNC PAYMENT ERROR] {e}")
     threading.Thread(target=_call, daemon=True).start()
 
 
-def handle_day_pass(session_id, msisdn, ticket_key, network="mtn"):
-    ticket = PRICES[ticket_key]
-
-    # ------------------------------------------------------------------
-    # BYPASS MODE
-    # ------------------------------------------------------------------
-    if BYPASS_PAYMENT:
-        result = create_tickets_from_ussd({
-            "session_id":    session_id,
-            "msisdn":        msisdn,
-            "purchase_type": "day_pass",
-            "ticket_key":    ticket_key,
-        })
-        _update_payment_status(result["reference"], "completed")
-        send_confirmation_sms(result["reference"])
-        passes_display  = "\r\n".join(result["access"])
-        entries_display = "\r\n".join(result["entries"])
-        return (
-            f"Purchase Confirmed!\r\n"
-            f"Pass(es):\r\n{passes_display}\r\n\r\n"
-            f"Draw Entries:\r\n{entries_display}\r\n\r\n"
-            f"Good luck!",
-            True
-        )
-
-    # ------------------------------------------------------------------
-    # LIVE MODE — create tickets (pending), fire MoMo in background
-    # ------------------------------------------------------------------
-    try:
-        result = create_tickets_from_ussd({
-            "session_id":    session_id,
-            "msisdn":        msisdn,
-            "purchase_type": "day_pass",
-            "ticket_key":    ticket_key,
-        })
-    except Exception as e:
-        print(f"[ERROR] ticket creation failed: {e}")
-        return ("Sorry, an error occurred.\r\nPlease try again later.", True)
-
-    _fire_momo_async(msisdn, ticket["amount"], result["reference"], network=network)
-    return (
-        f"Processing payment...\r\n"
-        f"{ticket['label']} - GHS {ticket['amount'] // 100}\r\n"
-        "\r\n"
-        "Enter PIN when prompted.\r\n"
-        "Go to My Approvals if\r\n"
-        "payment prompt delays.\r\n"
-        "SMS with tickets.",
-        True
-    )
-
-
-def handle_extra_entries(session_id, msisdn, qty, network="mtn"):
+def handle_buy_entries(session_id, msisdn, qty, network="mtn"):
+    """
+    Orchestrates the confirm->create->pay flow for WinBig entries.
+    Returns (message, end_session).
+    """
     amount = qty * WINBIG_UNIT_PRICE
 
-    # ------------------------------------------------------------------
-    # BYPASS MODE
-    # ------------------------------------------------------------------
+    # BYPASS MODE -- for testing without real payments
     if BYPASS_PAYMENT:
-        result = create_tickets_from_ussd({
-            "session_id":    session_id,
-            "msisdn":        msisdn,
-            "purchase_type": "extra_entries",
-            "qty":           qty,
-        })
+        result = create_winbig_tickets(session_id, msisdn, qty)
         _update_payment_status(result["reference"], "completed")
-        send_confirmation_sms(result["reference"])
-        entries_display = "\r\n".join(result["entries"])
+        send_winbig_sms(result["reference"])
+        entries_text = "\r\n".join(result["entries"])
         return (
             f"Entries Confirmed!\r\n"
-            f"{qty} Draw Entry(ies):\r\n"
-            f"{entries_display}\r\n\r\n"
+            f"{qty} WinBig Entr{'y' if qty == 1 else 'ies'}:\r\n"
+            f"{entries_text}\r\n\r\n"
             f"Good luck!",
-            True
+            True,
         )
 
-    # ------------------------------------------------------------------
-    # LIVE MODE — create tickets (pending), fire MoMo in background
-    # ------------------------------------------------------------------
+    # LIVE MODE
     try:
-        result = create_tickets_from_ussd({
-            "session_id":    session_id,
-            "msisdn":        msisdn,
-            "purchase_type": "extra_entries",
-            "qty":           qty,
-        })
+        result = create_winbig_tickets(session_id, msisdn, qty)
     except Exception as e:
         print(f"[ERROR] ticket creation failed: {e}")
         return ("Sorry, an error occurred.\r\nPlease try again later.", True)
@@ -878,15 +650,42 @@ def handle_extra_entries(session_id, msisdn, qty, network="mtn"):
     _fire_momo_async(msisdn, amount, result["reference"], network=network)
     return (
         f"Processing payment...\r\n"
-        f"{qty} WinBig Entry(ies)\r\n"
+        f"{qty} WinBig Entr{'y' if qty == 1 else 'ies'}\r\n"
         f"GHS {qty * 20}\r\n"
         "\r\n"
         "Enter PIN when prompted.\r\n"
         "Go to My Approvals if\r\n"
         "payment prompt delays.\r\n"
-        "SMS with tickets.",
-        True
+        "SMS with entries.",
+        True,
     )
+
+
+# ---------------------------------------------------------------------------
+# My Entries query
+# ---------------------------------------------------------------------------
+
+def get_my_entries(msisdn):
+    """Return up to 10 completed DRAW_ENTRY serials for this MSISDN, newest first."""
+    phone = normalise_phone(msisdn)
+    try:
+        conn = get_ticket_conn()
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT serial_number
+            FROM tickets
+            WHERE customer_phone = %s
+              AND game_type = 'DRAW_ENTRY'
+              AND payment_status = 'completed'
+            ORDER BY created_at DESC
+            LIMIT 10
+        """, (phone,))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return [r["serial_number"] for r in rows]
+    except Exception as e:
+        print(f"[DB ERROR] get_my_entries: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -902,15 +701,36 @@ def ussd():
 
     print(f"[REQUEST] msisdn={msisdn} seq={sequence_id} data={repr(raw_data)} net={network}")
 
+    # -- Telecel/gateway session-end signal ---------------------------------
+    if raw_data.lower() == "release":
+        sessions.pop(sequence_id, None)
+        sessions_by_msisdn.pop(msisdn, None)
+        print(f"[RELEASE] msisdn={msisdn} seq={sequence_id}")
+        return ussd_response(msisdn, sequence_id, "Session ended.", end=True)
+
+    # Hubtel gateway error codes e.g. '03020340-UNKNOWN_ERROR' -- not user input
+    _GATEWAY_ERR = bool(re.match(r'^[0-9A-Fa-f]+-[A-Z_]+$', raw_data))
+
     is_initial = (raw_data == USSD_CODE or raw_data.startswith(USSD_CODE + "*"))
 
     if is_initial:
         prefix = USSD_CODE + "*"
         text   = "" if raw_data == USSD_CODE else raw_data[len(prefix):]
         sessions[sequence_id] = text.split("*") if text else []
+        sessions_by_msisdn[msisdn] = sequence_id
     else:
+        # -- MSISDN fallback: Telecel may change sequenceID mid-session -----
+        existing_seq = sessions_by_msisdn.get(msisdn)
+        if existing_seq and existing_seq != sequence_id and sequence_id not in sessions:
+            old_history = sessions.pop(existing_seq, [])
+            sessions[sequence_id] = old_history
+            sessions_by_msisdn[msisdn] = sequence_id
+            print(f"[SESSION MIGRATE] msisdn={msisdn} {existing_seq} -> {sequence_id}")
+
         history = sessions.get(sequence_id, [])
-        if raw_data:
+        if _GATEWAY_ERR:
+            print(f"[GATEWAY ERROR] ignored: {repr(raw_data)}")
+        elif raw_data:
             history.append(raw_data)
         sessions[sequence_id] = history
         text = "*".join(history)
@@ -920,157 +740,111 @@ def ussd():
     def resp(message, end=False):
         if end:
             sessions.pop(sequence_id, None)
+            sessions_by_msisdn.pop(msisdn, None)
         return ussd_response(msisdn, sequence_id, message, end)
 
-    # ---- Main menu ----
+    # -- Main menu ----------------------------------------------------------
     if text == "":
         return resp(
-            "Welcome to CarPark Ed. 7\r\n"
-            "Buy a ticket & Stand a\r\n"
+            "CarPark Ed. 7 -- WinBig\r\n"
+            "Buy entries & stand a\r\n"
             "chance to win an\r\n"
             "iPhone 17 Pro\r\n\r\n"
-            "1. Buy Ticket\r\n"
-            "2. My Tickets\r\n"
+            "1. Buy WinBig Entries\r\n"
+            "2. My Entries\r\n"
             "3. Help\r\n"
             "0. Exit"
         )
 
-    # ---- Buy Ticket menu ----
+    # -- Buy WinBig Entries -------------------------------------------------
     elif text == "1":
         return resp(
-            "Car Park Tickets\r\n\r\n"
-            "1. 1-Day Pass - GHS 100\r\n"
-            "2. 2-Day Pass - GHS 180\r\n"
-            "3. Extra WinBig Entry\r\n"
-            "   - GHS 20 each\r\n"
-            "0. Back"
-        )
-
-    # ---- Day pass confirm screens ----
-    elif text == "1*1":
-        return resp(
-            "Confirm Purchase:\r\n"
-            "1-Day Pass = GHS 100\r\n"
-            "Includes: 1 draw entry\r\n\r\n"
-            "1. Confirm & Pay\r\n"
-            "0. Cancel"
-        )
-    elif text == "1*2":
-        return resp(
-            "Confirm Purchase:\r\n"
-            "2-Day Pass = GHS 180\r\n"
-            "Includes: 2 draw entries\r\n\r\n"
-            "1. Confirm & Pay\r\n"
-            "0. Cancel"
-        )
-
-    # ---- Day pass payments ----
-    elif text == "1*1*1":
-        msg, end = handle_day_pass(sequence_id, msisdn, "1", network=network)
-        return resp(msg, end)
-    elif text == "1*2*1":
-        msg, end = handle_day_pass(sequence_id, msisdn, "2", network=network)
-        return resp(msg, end)
-    elif text in ["1*1*0", "1*2*0"]:
-        return resp("Transaction cancelled.\r\n\r\n1. Buy Ticket\r\n0. Back", end=True)
-
-    # ---- Extra WinBig Entry flow ----
-    elif text == "1*3":
-        return resp(
-            "Extra WinBig Entries\r\n"
+            "WinBig Entries\r\n"
             "GHS 20 each\r\n\r\n"
             "How many entries?\r\n"
             "Enter a number:"
         )
-    elif text.startswith("1*3*"):
-        parts   = text.split("*")
-        qty_str = parts[2] if len(parts) > 2 else ""
 
-        if len(parts) == 3:
+    elif text.startswith("1*"):
+        parts   = text.split("*")
+        qty_str = parts[1] if len(parts) > 1 else ""
+
+        if len(parts) == 2:
+            # User entered a quantity -- show confirm screen
             if not qty_str.isdigit() or int(qty_str) < 1:
-                return resp("Invalid number.\r\nPlease enter a\r\npositive number:")
+                return resp(
+                    "Invalid number.\r\n"
+                    "Please enter a\r\n"
+                    "positive number:"
+                )
             qty   = int(qty_str)
             total = qty * 20
             return resp(
                 f"Confirm Purchase:\r\n"
-                f"{qty} WinBig Entry(ies)\r\n"
+                f"{qty} WinBig Entr{'y' if qty == 1 else 'ies'}\r\n"
                 f"Total = GHS {total}\r\n\r\n"
                 "1. Confirm & Pay\r\n"
                 "0. Cancel"
             )
-        elif len(parts) == 4:
-            action = parts[3]
+
+        elif len(parts) == 3:
+            action = parts[2]
             if action == "0":
-                return resp("Transaction cancelled.\r\n\r\n1. Buy Ticket\r\n0. Back", end=True)
+                return resp(
+                    "Transaction cancelled.\r\n\r\n"
+                    "1. Buy WinBig Entries\r\n"
+                    "0. Back",
+                    end=True,
+                )
             elif action == "1":
                 if not qty_str.isdigit() or int(qty_str) < 1:
                     return resp("Invalid number.\r\nPlease try again.", end=True)
-                msg, end = handle_extra_entries(sequence_id, msisdn, int(qty_str), network=network)
+                msg, end = handle_buy_entries(sequence_id, msisdn, int(qty_str), network=network)
                 return resp(msg, end)
             else:
                 return resp("Invalid choice.\r\nPlease try again.")
+
         else:
             return resp("Invalid choice.\r\nPlease try again.")
 
-    # ---- My Tickets — sub-menu ----
+    # -- My Entries ---------------------------------------------------------
     elif text == "2":
-        return resp(
-            "My Tickets\r\n\r\n"
-            "1. Car Park Tickets\r\n"
-            "2. Win Big Entries\r\n"
-            "0. Back"
-        )
-
-    elif text == "2*1":
-        passes = get_access_passes(msisdn)
-        if not passes:
-            return resp(
-                "Car Park Tickets\r\n\r\n"
-                "No passes yet.\r\n\r\n"
-                "1. Buy Ticket\r\n"
-                "0. Back"
-            )
-        lines = ["Car Park Tickets\r\n"]
-        for p in passes:
-            lines.append(f"{p['serial_number']}\r\n{p['game_name']}")
-        lines.append("\r\n0. Back")
-        return resp("\r\n".join(lines))
-
-    elif text == "2*2":
-        entries = get_draw_entries(msisdn)
+        entries = get_my_entries(msisdn)
         if not entries:
             return resp(
-                "Win Big Entries\r\n\r\n"
+                "My WinBig Entries\r\n\r\n"
                 "No entries yet.\r\n\r\n"
-                "1. Buy Ticket\r\n"
+                "1. Buy WinBig Entries\r\n"
                 "0. Back"
             )
-        lines = ["Win Big Entries\r\n"]
-        for e in entries:
-            lines.append(e["serial_number"])
+        lines = ["My WinBig Entries\r\n"]
+        for serial in entries:
+            lines.append(serial)
         lines.append(f"\r\nTotal: {len(entries)}\r\n0. Back")
         return resp("\r\n".join(lines))
 
-    elif text in ["2*0", "2*1*0", "2*2*0"]:
-        if text == "2*0":
+    elif text in ("2*0", "2*1"):
+        if text == "2*1":
+            # "1. Buy WinBig Entries" from My Entries empty state
             return resp(
-                "Welcome to CarPark Ed. 7\r\n"
-                "Buy a ticket & Stand a\r\n"
-                "chance to win an\r\n"
-                "iPhone 17 Pro\r\n\r\n"
-                "1. Buy Ticket\r\n"
-                "2. My Tickets\r\n"
-                "3. Help\r\n"
-                "0. Exit"
+                "WinBig Entries\r\n"
+                "GHS 20 each\r\n\r\n"
+                "How many entries?\r\n"
+                "Enter a number:"
             )
+        # "0. Back" -- return to main menu
         return resp(
-            "My Tickets\r\n\r\n"
-            "1. Car Park Tickets\r\n"
-            "2. Win Big Entries\r\n"
-            "0. Back"
+            "CarPark Ed. 7 -- WinBig\r\n"
+            "Buy entries & stand a\r\n"
+            "chance to win an\r\n"
+            "iPhone 17 Pro\r\n\r\n"
+            "1. Buy WinBig Entries\r\n"
+            "2. My Entries\r\n"
+            "3. Help\r\n"
+            "0. Exit"
         )
 
-    # ---- Help ----
+    # -- Help ---------------------------------------------------------------
     elif text == "3":
         return resp(
             "Help & Support\r\n\r\n"
@@ -1079,34 +853,76 @@ def ussd():
             "0. Back"
         )
 
-    # ---- Exit ----
+    elif text == "3*0":
+        return resp(
+            "CarPark Ed. 7 -- WinBig\r\n"
+            "Buy entries & stand a\r\n"
+            "chance to win an\r\n"
+            "iPhone 17 Pro\r\n\r\n"
+            "1. Buy WinBig Entries\r\n"
+            "2. My Entries\r\n"
+            "3. Help\r\n"
+            "0. Exit"
+        )
+
+    # -- Exit ---------------------------------------------------------------
     elif text == "0":
-        return resp("Thank you for using Car Park.", end=True)
+        return resp("Thank you for using\r\nCarPark Ed. 7 WinBig.", end=True)
 
     else:
         return resp("Invalid choice.\r\nPlease try again.")
 
 
 # ---------------------------------------------------------------------------
-# Hubtel webhook
+# Hubtel payment webhook
 # ---------------------------------------------------------------------------
 
 @app.route("/payment/webhook", methods=["POST"])
 def payment_webhook():
-    """Hubtel calls this after a payment attempt.
-    Delegates to handle_payment_webhook — only updates tickets, never creates them.
+    """
+    Hubtel calls this after a MoMo payment attempt.
+    ResponseCode "0000" = success, "2001" = failed.
+    Only updates existing tickets -- never creates new ones.
     """
     event = request.get_json(force=True, silent=True) or {}
     print(f"[WEBHOOK] {event}")
-    handle_payment_webhook(event)
+
+    data          = event.get("Data", {})
+    response_code = event.get("ResponseCode", "")
+    reference     = data.get("ClientReference", "")
+    amount        = data.get("Amount", 0)
+    phone         = data.get("CustomerMsisdn", "")
+
+    if not reference:
+        print("[WEBHOOK] missing ClientReference, ignoring")
+        return jsonify({"status": "ok"}), 200
+
+    if response_code == "0000":
+        momo_tx_id = data.get("TransactionId", "") or data.get("OrderId", "")
+        print(f"[PAYMENT SUCCESS] ref={reference} amount=GHS{amount} phone={phone} momo_tx={momo_tx_id}")
+        _update_payment_status(reference, "completed", momo_tx_id=momo_tx_id)
+        threading.Thread(target=send_winbig_sms,         args=(reference,), daemon=True).start()
+        threading.Thread(target=push_to_payment_service,  args=(reference,), daemon=True).start()
+
+    elif response_code == "2001":
+        print(f"[PAYMENT FAILED] ref={reference} code={response_code}")
+        _update_payment_status(reference, "failed")
+
+    else:
+        print(f"[PAYMENT PENDING/OTHER] ref={reference} code={response_code}")
+
     return jsonify({"status": "ok"}), 200
 
 
+# ---------------------------------------------------------------------------
+# Admin API endpoints
+# ---------------------------------------------------------------------------
+
 @app.route("/ussd/sessions", methods=["GET"])
-def ussd_sessions():
+def ussd_sessions_api():
     """
-    Admin endpoint — returns paginated USSD session records.
-    Query params: page (default 1), limit (default 20), msisdn (optional filter)
+    Paginated USSD session records from player_service.
+    Query params: page, limit, msisdn
     """
     try:
         page   = max(1, int(request.args.get("page",  1)))
@@ -1133,15 +949,14 @@ def ussd_sessions():
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
             """,
-            params + (limit, offset)
+            params + (limit, offset),
         )
         rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
 
-        sessions = []
+        result = []
         for r in rows:
-            sessions.append({
+            result.append({
                 "id":            str(r["id"]),
                 "msisdn":        r["msisdn"],
                 "sequence_id":   r["sequence_id"],
@@ -1149,30 +964,29 @@ def ussd_sessions():
                 "session_state": r["session_state"],
                 "current_menu":  r["current_menu"],
                 "user_input":    r["user_input"],
-                "started_at":    r["started_at"].isoformat()   if r["started_at"]   else None,
+                "started_at":    r["started_at"].isoformat()    if r["started_at"]    else None,
                 "last_activity": r["last_activity"].isoformat() if r["last_activity"] else None,
-                "completed_at":  r["completed_at"].isoformat() if r["completed_at"] else None,
-                "created_at":    r["created_at"].isoformat()   if r["created_at"]   else None,
+                "completed_at":  r["completed_at"].isoformat()  if r["completed_at"]  else None,
+                "created_at":    r["created_at"].isoformat()    if r["created_at"]    else None,
             })
 
         return jsonify({
-            "data":  sessions,
+            "data":  result,
             "total": total,
             "page":  page,
             "limit": limit,
             "pages": (total + limit - 1) // limit,
         })
     except Exception as e:
-        print(f"[ERROR] ussd_sessions: {e}")
+        print(f"[ERROR] ussd_sessions_api: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/ussd/tickets", methods=["GET"])
-def ussd_tickets():
+def ussd_tickets_api():
     """
-    Admin endpoint — returns paginated USSD tickets with full payment fields.
-    Query params:
-      page, limit, payment_status, game_type, search, start_date, end_date
+    Paginated ticket records from ticket_service.
+    Query params: page, limit, payment_status, game_type, search, start_date, end_date
     """
     try:
         page           = max(1, int(request.args.get("page",   1)))
@@ -1194,7 +1008,9 @@ def ussd_tickets():
             conditions.append("game_type = %s")
             params.append(game_type)
         if search:
-            conditions.append("(serial_number ILIKE %s OR customer_phone ILIKE %s OR payment_ref ILIKE %s)")
+            conditions.append(
+                "(serial_number ILIKE %s OR customer_phone ILIKE %s OR payment_ref ILIKE %s)"
+            )
             params += [f"%{search}%", f"%{search}%", f"%{search}%"]
         if start_date:
             conditions.append("created_at >= %s")
@@ -1223,11 +1039,10 @@ def ussd_tickets():
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
             """,
-            params + [limit, offset]
+            params + [limit, offset],
         )
         rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
 
         def fmt_phone(raw):
             if not raw:
@@ -1242,23 +1057,23 @@ def ussd_tickets():
         tickets = []
         for r in rows:
             tickets.append({
-                "id":                 str(r["id"]),
-                "serial_number":      r["serial_number"],
-                "game_type":          r["game_type"],
-                "game_name":          r["game_name"],
-                "game_code":          r["game_code"],
-                "customer_phone":     fmt_phone(r["customer_phone"]),
-                "unit_price":         int(r["unit_price"]) if r["unit_price"] else 0,
-                "total_amount":       int(r["total_amount"]) if r["total_amount"] else 0,
-                "payment_status":     r["payment_status"] or "pending",
-                "payment_ref":        r["payment_ref"],
-                "payment_reference":  r["payment_reference"],
-                "payment_method":     r["payment_method"],
-                "status":             r["status"],
-                "draw_date":          r["draw_date"].isoformat() if r["draw_date"] else None,
-                "created_at":         r["created_at"].isoformat() if r["created_at"] else None,
-                "updated_at":         r["updated_at"].isoformat() if r["updated_at"] else None,
-                "paid_at":            r["paid_at"].isoformat() if r["paid_at"] else None,
+                "id":                str(r["id"]),
+                "serial_number":     r["serial_number"],
+                "game_type":         r["game_type"],
+                "game_name":         r["game_name"],
+                "game_code":         r["game_code"],
+                "customer_phone":    fmt_phone(r["customer_phone"]),
+                "unit_price":        int(r["unit_price"])    if r["unit_price"]    else 0,
+                "total_amount":      int(r["total_amount"])  if r["total_amount"]  else 0,
+                "payment_status":    r["payment_status"] or "pending",
+                "payment_ref":       r["payment_ref"],
+                "payment_reference": r["payment_reference"],
+                "payment_method":    r["payment_method"],
+                "status":            r["status"],
+                "draw_date":         r["draw_date"].isoformat()  if r["draw_date"]  else None,
+                "created_at":        r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at":        r["updated_at"].isoformat() if r["updated_at"] else None,
+                "paid_at":           r["paid_at"].isoformat()    if r["paid_at"]    else None,
             })
 
         return jsonify({
@@ -1269,14 +1084,21 @@ def ussd_tickets():
             "pages": (total + limit - 1) // limit,
         })
     except Exception as e:
-        print(f"[ERROR] ussd_tickets: {e}")
+        print(f"[ERROR] ussd_tickets_api: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/")
 def home():
-    return jsonify({"status": "WinBig USSD API is running"})
+    return jsonify({"status": "WinBig USSD API is running -- CarPark Ed. 7"})
 
+
+# ---------------------------------------------------------------------------
+# Startup -- launch background SMS retry worker
+# ---------------------------------------------------------------------------
+
+_worker_thread = threading.Thread(target=_sms_retry_worker, daemon=True)
+_worker_thread.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
