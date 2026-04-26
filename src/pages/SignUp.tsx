@@ -13,7 +13,11 @@ import { toast } from "@/hooks/use-toast";
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
-const isValidPhone = (p: string) => /^\+233\d{9}$/.test(p);
+const isValidPhone = (p: string) => {
+  // Remove all non-digits and check if it's 10 digits (Ghana format)
+  const digits = p.replace(/\D/g, '');
+  return digits.length === 10;
+};
 const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 const isValidName  = (n: string) => n.trim().length >= 2;
 

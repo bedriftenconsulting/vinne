@@ -8,10 +8,17 @@ import { toast } from "@/hooks/use-toast";
 import { API_BASE } from "@/lib/config";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  "already exists": "An account with this phone number already exists. Try signing in instead.",
+  "already exists": "This phone number already exists. Please try signing in instead, or use a different phone number.",
+  "phone number already registered": "This phone number already exists. Please try signing in instead, or use a different phone number.",
   "phone number": "Please enter a valid Ghana phone number (e.g. 0244123456).",
   "password": "Password must be at least 6 characters long.",
   "invalid": "Some details look incorrect. Please check and try again.",
+  "409": "This phone number already exists. Please try signing in instead, or use a different phone number.",
+  "conflict": "This phone number already exists. Please try signing in instead, or use a different phone number.",
+  "400": "Please check your details and try again. Make sure all fields are filled correctly.",
+  "500": "Our servers are having a moment. Please try again in a few seconds.",
+  "network": "Connection issue. Please check your internet and try again.",
+  "timeout": "Request timed out. Please try again.",
 };
 
 function friendlyError(raw: string): string {
@@ -19,7 +26,22 @@ function friendlyError(raw: string): string {
   for (const [key, msg] of Object.entries(ERROR_MESSAGES)) {
     if (lower.includes(key)) return msg;
   }
-  return "Something went wrong. Please check your details and try again.";
+  
+  // Handle specific HTTP status codes
+  if (raw.includes('409')) {
+    return "This phone number already exists. Please try signing in instead, or use a different phone number.";
+  }
+  if (raw.includes('400')) {
+    return "Please check your details and try again. Make sure all fields are filled correctly.";
+  }
+  if (raw.includes('500')) {
+    return "Our servers are having a moment. Please try again in a few seconds.";
+  }
+  if (raw.includes('timeout') || raw.includes('network')) {
+    return "Connection issue. Please check your internet and try again.";
+  }
+  
+  return "Something went wrong. Please check your details and try again, or contact support if the issue persists.";
 }
 
 const SignUpPage = () => {

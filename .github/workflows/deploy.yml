@@ -1,0 +1,78 @@
+name: Deploy Website
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'vinne-website/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: vinne-website/package-lock.json
+        
+    - name: Install dependencies
+      run: |
+        cd vinne-website
+        npm ci
+        
+    - name: Build website
+      run: |
+        cd vinne-website
+        npm run build
+        
+    - name: Deploy to server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 34.42.87.251
+        username: suraj
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          # Create backup
+          sudo cp -r /var/www/winbig /var/www/winbig-backup-$(date +%Y%m%d-%H%M%S)
+          
+          # Clear old assets
+          sudo rm -f /var/www/winbig/assets/index-*.js
+          sudo rm -f /var/www/winbig/assets/index-*.css
+          sudo rm -f /var/www/winbig/assets/logo-*.png
+          
+    - name: Upload files
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: 34.42.87.251
+        username: suraj
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "vinne-website/dist/*"
+        target: "/tmp/website-deploy"
+        strip_components: 2
+        
+    - name: Move files to web directory
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 34.42.87.251
+        username: suraj
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          # Move new files
+          sudo cp -r /tmp/website-deploy/* /var/www/winbig/
+          sudo chown -R www-data:www-data /var/www/winbig/
+          sudo chmod -R 755 /var/www/winbig/
+          
+          # Reload nginx
+          sudo nginx -t && sudo systemctl reload nginx
+          
+          # Clean up
+          rm -rf /tmp/website-deploy
+          
+          echo "✅ Deployment completed successfully!"

@@ -42,7 +42,7 @@ const SignIn = () => {
     setPhone(normalized);
   };
 
-  const phoneOk    = /^\+233\d{9}$/.test(phone);
+  const phoneOk    = phone.replace(/\D/g, '').length === 10;
   const passwordOk = password.length >= 1;
 
   const handleSubmit = async (e: React.FormEvent) => {

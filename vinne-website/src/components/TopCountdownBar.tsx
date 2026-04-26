@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { fetchActiveGames, type ApiGame } from "@/lib/api";
 import { useCountdown } from "@/hooks/useCountdown";
+import { API_BASE } from "@/lib/config";
 
 const getNextDrawDate = (game: ApiGame): Date => {
   if (game.draw_date) return new Date(game.draw_date + "T" + (game.draw_time || "20:00") + ":00Z");
@@ -82,7 +83,7 @@ const TopCountdownBar = () => {
   const [game, setGame] = useState<ApiGame | null>(null);
 
   useEffect(() => {
-    const configUrl = "https://api.winbig.bedriften.xyz/api/v1/config";
+    const configUrl = `${API_BASE}/config`;
     Promise.all([
       fetchActiveGames(),
       fetch(configUrl).then(r => r.json()).catch(() => ({})),

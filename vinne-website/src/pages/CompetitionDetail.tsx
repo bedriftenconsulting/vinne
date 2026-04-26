@@ -78,8 +78,8 @@ const CompetitionDetail = () => {
     if (!game || !schedule) return;
 
     const phone = momoPhone.replace(/\s+/g, "");
-    if (!/^(\+233|0)[2-5][0-9]{8}$/.test(phone)) {
-      setErrMsg("Enter a valid Ghana phone number (+233XXXXXXXXX or 0XXXXXXXXX)");
+    if (phone.replace(/\D/g, '').length !== 10) {
+      setErrMsg("Enter a valid 10-digit Ghana phone number");
       return;
     }
 

@@ -5,7 +5,7 @@
 set -e
 
 VM_USER="suraj"
-VM_IP="34.121.254.209"
+VM_IP="34.42.87.251"
 SSH_KEY="/c/Users/Suraj/.ssh/google_compute_engine"
 SSH="ssh -i $SSH_KEY -o StrictHostKeyChecking=no $VM_USER@$VM_IP"
 REMOTE_DIR="/var/www/winbig"

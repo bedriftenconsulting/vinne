@@ -8,12 +8,16 @@ import { toast } from "@/hooks/use-toast";
 import { API_BASE } from "@/lib/config";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  "invalid credentials": "Incorrect phone number or password. Please try again.",
-  "unauthorized": "Incorrect phone number or password. Please try again.",
-  "401": "Incorrect phone number or password. Please try again.",
-  "user not found": "No account found with that phone number. Please sign up.",
-  "account suspended": "Your account has been suspended. Contact support.",
-  "too many attempts": "Too many failed attempts. Please wait a few minutes and try again.",
+  "invalid credentials": "Incorrect phone number or password. Please double-check and try again.",
+  "unauthorized": "Incorrect phone number or password. Please double-check and try again.",
+  "401": "Incorrect phone number or password. Please double-check and try again.",
+  "user not found": "No account found with that phone number. Please check the number or sign up for a new account.",
+  "account suspended": "Your account has been temporarily suspended. Please contact our support team for assistance.",
+  "too many attempts": "Too many failed attempts. Please wait a few minutes before trying again.",
+  "400": "Please check your phone number and password, then try again.",
+  "500": "Our servers are having a moment. Please try again in a few seconds.",
+  "network": "Connection issue. Please check your internet and try again.",
+  "timeout": "Request timed out. Please try again.",
 };
 
 function friendlyError(raw: string): string {
@@ -21,7 +25,22 @@ function friendlyError(raw: string): string {
   for (const [key, msg] of Object.entries(ERROR_MESSAGES)) {
     if (lower.includes(key)) return msg;
   }
-  return "Something went wrong. Please check your details and try again.";
+  
+  // Handle specific HTTP status codes
+  if (raw.includes('401') || raw.includes('unauthorized')) {
+    return "Incorrect phone number or password. Please double-check and try again.";
+  }
+  if (raw.includes('400')) {
+    return "Please check your phone number and password, then try again.";
+  }
+  if (raw.includes('500')) {
+    return "Our servers are having a moment. Please try again in a few seconds.";
+  }
+  if (raw.includes('timeout') || raw.includes('network')) {
+    return "Connection issue. Please check your internet and try again.";
+  }
+  
+  return "Something went wrong during sign in. Please check your details and try again, or contact support if the issue persists.";
 }
 
 const SignInPage = () => {

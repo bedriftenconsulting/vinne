@@ -6,7 +6,7 @@ import Footer from "@/components/Footer";
 import { toast } from "@/hooks/use-toast";
 import { API_BASE } from "@/lib/config";
 
-const OTP_BASE = "https://api.winbig.bedriften.xyz/api/v1/otp";
+const OTP_BASE = `${API_BASE}/otp`;
 
 const getToken = () => localStorage.getItem("player_token");
 const getPlayerIdFromToken = (t: string | null): string | null => {
