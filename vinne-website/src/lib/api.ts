@@ -66,12 +66,105 @@ export const fetchActiveGames = async (): Promise<ApiGame[]> => {
 };
 
 export const fetchGameSchedule = async (gameId: string): Promise<ApiSchedule[]> => {
-  const r = await fetch(`${BASE}/public/games/${gameId}/schedule`);
+  const r = await fetch(`${BASE}/players/games/${gameId}/schedule`);
   const d = await r.json();
   return d?.data?.schedules ?? [];
 };
 
-// ── Wallet ────────────────────────────────────────────────────────────────────
+// ── Authentication ────────────────────────────────────────────────────────────
+export interface LoginResponse {
+  success: boolean;
+  data?: {
+    token: string;
+    player: {
+      id: string;
+      phone: string;
+      name?: string;
+    };
+  };
+  error?: string;
+  message?: string;
+}
+
+export interface OtpResponse {
+  success: boolean;
+  message: string;
+  data?: {
+    otp_id: string;
+  };
+}
+
+// Send OTP to phone number
+export const sendOtp = async (phone: string): Promise<OtpResponse> => {
+  const r = await fetch(`${BASE}/players/auth/send-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+  });
+  const d = await r.json();
+  return d;
+};
+
+// Verify OTP and login
+export const verifyOtpLogin = async (phone: string, otp: string): Promise<LoginResponse> => {
+  const r = await fetch(`${BASE}/players/auth/verify-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, otp }),
+  });
+  const d = await r.json();
+  return d;
+};
+
+// Traditional login (fallback)
+export const loginWithPassword = async (phone: string, password: string): Promise<LoginResponse> => {
+  const r = await fetch(`${BASE}/players/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, password }),
+  });
+  const d = await r.json();
+  return d;
+};
+
+// ── Tickets & Transactions ───────────────────────────────────────────────────
+export interface ApiTicket {
+  id: string;
+  game_code: string;
+  game_name: string;
+  draw_number: number;
+  bet_lines: Array<{
+    line_number: number;
+    bet_type: string;
+    total_amount: number;
+  }>;
+  total_amount: number;
+  status: string;
+  created_at: string;
+  draw_date?: string;
+}
+
+export interface ApiTransaction {
+  id: string;
+  type: string;
+  amount: number;
+  status: string;
+  description: string;
+  created_at: string;
+  reference?: string;
+}
+
+export const fetchPlayerTickets = async (playerId: string): Promise<ApiTicket[]> => {
+  const r = await fetch(`${BASE}/players/${playerId}/tickets`, { headers: authHeaders() });
+  const d = await r.json();
+  return d?.data?.tickets ?? [];
+};
+
+export const fetchPlayerTransactions = async (playerId: string): Promise<ApiTransaction[]> => {
+  const r = await fetch(`${BASE}/players/${playerId}/transactions`, { headers: authHeaders() });
+  const d = await r.json();
+  return d?.data?.transactions ?? [];
+};
 export const fetchWalletBalance = async (playerId: string): Promise<number> => {
   const r = await fetch(`${BASE}/players/${playerId}/wallet/balance`, { headers: authHeaders() });
   const d = await r.json();
