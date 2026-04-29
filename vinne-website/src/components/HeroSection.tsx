@@ -78,13 +78,9 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
       className="relative min-h-screen flex items-center overflow-hidden bg-[hsl(0_0%_4%)] pt-16"
     >
       <motion.div style={{ y: bgY }} className="absolute inset-0 scale-110">
-        {game.logo_url ? (
-          <img src={game.logo_url} alt={game.name} className="w-full h-full object-cover" />
-        ) : (
-          <video autoPlay muted loop playsInline className="w-full h-full object-cover" style={{ mixBlendMode: "screen" }}>
-            <source src="/large_2x.mp4" type="video/mp4" />
-          </video>
-        )}
+        <video autoPlay muted loop playsInline className="w-full h-full object-cover" style={{ mixBlendMode: "screen" }}>
+          <source src={`/large_2x.mp4?v=${Date.now()}`} type="video/mp4" />
+        </video>
         <div className="absolute inset-0 bg-gradient-to-r from-[hsl(0_0%_4%)] via-[hsl(0_0%_4%/0.72)] to-[hsl(0_0%_4%/0.15)]" />
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(0_0%_4%)] via-transparent to-transparent" />
         <div className="absolute inset-0 bg-[hsl(0_80%_45%/0.08)]" />
@@ -112,11 +108,17 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
             {days > 0 ? (
               /* Multi-day: show "X days left" badge + HH:MM:SS */
               <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 bg-primary/20 border border-primary/40 rounded-full px-4 py-1.5">
-                  <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                  <span className="font-heading text-primary text-sm tracking-wide">
-                    {days} {days === 1 ? "DAY" : "DAYS"} LEFT — ENDING {days <= 3 ? "SOON!" : new Date(drawDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase()}
-                  </span>
+                <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 mb-2">
+                  <div className="inline-flex items-center gap-1.5 bg-emerald-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-semibold shadow-lg">
+                    <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+                    LIVE
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 bg-slate-800/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-medium shadow-lg">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                    </svg>
+                    {days} {days === 1 ? "day" : "days"} left
+                  </div>
                 </div>
                 <div className="flex items-center justify-center md:justify-start gap-1">
                   {[{ label: "HRS", value: hours }, { label: "MIN", value: minutes }, { label: "SEC", value: seconds }].map((t, i) => (
@@ -148,7 +150,18 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
             ) : (
               /* Same-day: big HH:MM:SS countdown */
               <div className="space-y-1">
-                <p className="text-primary font-heading text-sm tracking-widest animate-pulse">⚡ DRAW TODAY</p>
+                <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 mb-2">
+                  <div className="inline-flex items-center gap-1.5 bg-emerald-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-semibold shadow-lg">
+                    <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+                    LIVE
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 bg-amber-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-medium shadow-lg">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+                    </svg>
+                    Draw today
+                  </div>
+                </div>
                 <div className="flex items-center justify-center md:justify-start gap-1">
                   {[{ value: hours }, { value: minutes }, { value: seconds }].map((t, i) => (
                     <span key={i} className="flex items-center">
