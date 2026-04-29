@@ -51,7 +51,7 @@ HUBTEL_CALLBACK_URL  = "https://api.winbig.bedriften.xyz/payment/webhook"
 NETWORK_CHANNEL = {
     "mtn":        "mtn-gh",
     "vodafone":   "vodafone-gh",
-    "airteltigo": "tigo-gh",
+    "airteltigo": "airteltigo-gh",
     "airtel":     "airtel-gh",
     "tigo":       "tigo-gh",
 }
@@ -67,6 +67,7 @@ WEB_NETWORK_MAP = {
 # Game / Pricing config
 # ---------------------------------------------------------------------------
 WINBIG_UNIT_PRICE = 2000        # GHS 20 per draw entry (pesewas)
+HUBTEL_FEE_GHS    = 0.50        # flat Hubtel processing fee added on top of ticket price
 MNOTIFY_SMS_KEY   = "F9XhjQbbJnqKt2fy9lhPIQCSD"
 SMS_SENDER_ID     = "CARPARK"
 
@@ -933,15 +934,14 @@ def handle_buy_entries(session_id, msisdn, qty, network="mtn"):
         return ("Sorry, an error occurred.\r\nPlease try again later.", True)
 
     _fire_momo_async(msisdn, amount, result["reference"], network=network)
+    total = qty * 20 + HUBTEL_FEE_GHS
     return (
         f"Processing payment...\r\n"
-        f"{qty} WinBig Entr{'y' if qty == 1 else 'ies'}\r\n"
-        f"GHS {qty * 20}\r\n"
-        "\r\n"
-        "Enter PIN when prompted.\r\n"
-        "Go to My Approvals if\r\n"
-        "payment prompt delays.\r\n"
-        "SMS with entries.",
+        f"{qty} Entr{'y' if qty == 1 else 'ies'} GHS {total:.2f}\r\n"
+        "Approve MoMo prompt.\r\n"
+        "Check My Approvals if\r\n"
+        "prompt delays.\r\n"
+        "Entries sent by SMS.",
         True,
     )
 
@@ -1005,11 +1005,21 @@ def ussd():
     # Hubtel gateway error codes e.g. '03020340-UNKNOWN_ERROR' -- not user input
     _GATEWAY_ERR = bool(re.match(r'^[0-9A-Fa-f]+-[A-Z_]+$', raw_data))
 
-    is_initial = (raw_data == USSD_CODE or raw_data.startswith(USSD_CODE + "*"))
+    # AirtelTigo omits the leading '*' and sends '899*92' instead of '*899*92'
+    USSD_CODE_BARE = USSD_CODE.lstrip("*")
+    is_initial = (
+        raw_data in (USSD_CODE, USSD_CODE_BARE) or
+        raw_data.startswith(USSD_CODE + "*") or
+        raw_data.startswith(USSD_CODE_BARE + "*")
+    )
 
     if is_initial:
-        prefix = USSD_CODE + "*"
-        text   = "" if raw_data == USSD_CODE else raw_data[len(prefix):]
+        for prefix in (USSD_CODE + "*", USSD_CODE_BARE + "*"):
+            if raw_data.startswith(prefix):
+                text = raw_data[len(prefix):]
+                break
+        else:
+            text = ""
         sessions[sequence_id] = text.split("*") if text else []
         sessions_by_msisdn[msisdn] = sequence_id
     else:
@@ -1021,13 +1031,22 @@ def ussd():
             sessions_by_msisdn[msisdn] = sequence_id
             print(f"[SESSION MIGRATE] msisdn={msisdn} {existing_seq} -> {sequence_id}")
 
-        history = sessions.get(sequence_id, [])
-        if _GATEWAY_ERR:
-            print(f"[GATEWAY ERROR] ignored: {repr(raw_data)}")
-        elif raw_data:
-            history.append(raw_data)
-        sessions[sequence_id] = history
-        text = "*".join(history)
+        # Use sentinel None to distinguish "no session" from "empty session"
+        history = sessions.get(sequence_id)
+        if history is None:
+            # No session at all — non-standard initial data from this network,
+            # start fresh and show the main menu
+            print(f"[NEW SESSION] no session for seq={sequence_id} net={network} raw={repr(raw_data)}")
+            sessions[sequence_id] = []
+            sessions_by_msisdn[msisdn] = sequence_id
+            text = ""
+        else:
+            if _GATEWAY_ERR:
+                print(f"[GATEWAY ERROR] ignored: {repr(raw_data)}")
+            elif raw_data:
+                history.append(raw_data)
+            sessions[sequence_id] = history
+            text = "*".join(history)
 
     print(f"[SESSION] seq={sequence_id} text={repr(text)}")
 
@@ -1041,9 +1060,8 @@ def ussd():
     if text == "":
         return resp(
             "CarPark Ed. 7 -- WinBig\r\n"
-            "Buy entries & stand a\r\n"
-            "chance to win an\r\n"
-            "iPhone 17 Pro\r\n\r\n"
+            "Win an iPhone 17 Pro\r\n"
+            "\r\n"
             "1. Buy WinBig Entries\r\n"
             "2. My Entries\r\n"
             "3. Help\r\n"
@@ -1072,11 +1090,12 @@ def ussd():
                     "positive number:"
                 )
             qty   = int(qty_str)
-            total = qty * 20
+            total = qty * 20 + HUBTEL_FEE_GHS
             return resp(
                 f"Confirm Purchase:\r\n"
                 f"{qty} WinBig Entr{'y' if qty == 1 else 'ies'}\r\n"
-                f"Total = GHS {total}\r\n\r\n"
+                f"Total = GHS {total:.2f}\r\n"
+                "(incl. GHS 0.50 fee)\r\n\r\n"
                 "1. Confirm & Pay\r\n"
                 "0. Cancel"
             )
@@ -1129,9 +1148,8 @@ def ussd():
         # "0. Back" -- return to main menu
         return resp(
             "CarPark Ed. 7 -- WinBig\r\n"
-            "Buy entries & stand a\r\n"
-            "chance to win an\r\n"
-            "iPhone 17 Pro\r\n\r\n"
+            "Win an iPhone 17 Pro\r\n"
+            "\r\n"
             "1. Buy WinBig Entries\r\n"
             "2. My Entries\r\n"
             "3. Help\r\n"
@@ -1150,9 +1168,8 @@ def ussd():
     elif text == "3*0":
         return resp(
             "CarPark Ed. 7 -- WinBig\r\n"
-            "Buy entries & stand a\r\n"
-            "chance to win an\r\n"
-            "iPhone 17 Pro\r\n\r\n"
+            "Win an iPhone 17 Pro\r\n"
+            "\r\n"
             "1. Buy WinBig Entries\r\n"
             "2. My Entries\r\n"
             "3. Help\r\n"
