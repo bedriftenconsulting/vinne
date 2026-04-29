@@ -78,8 +78,21 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
       className="relative min-h-screen flex items-center overflow-hidden bg-[hsl(0_0%_4%)] pt-16"
     >
       <motion.div style={{ y: bgY }} className="absolute inset-0 scale-110">
-        <video autoPlay muted loop playsInline className="w-full h-full object-cover" style={{ mixBlendMode: "screen" }}>
-          <source src={`/large_2x.mp4?v=${Date.now()}`} type="video/mp4" />
+        <video 
+          autoPlay 
+          muted 
+          loop 
+          playsInline 
+          preload="auto"
+          className="w-full h-full object-cover" 
+          style={{ mixBlendMode: "screen" }}
+          onLoadStart={() => console.log('Video loading started')}
+          onCanPlay={() => console.log('Video can play')}
+          onError={(e) => console.error('Video error:', e)}
+          key={`video-${Date.now()}`}
+        >
+          <source src={`/large_2x.mp4?t=${Date.now()}`} type="video/mp4" />
+          Your browser does not support the video tag.
         </video>
         <div className="absolute inset-0 bg-gradient-to-r from-[hsl(0_0%_4%)] via-[hsl(0_0%_4%/0.72)] to-[hsl(0_0%_4%/0.15)]" />
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(0_0%_4%)] via-transparent to-transparent" />
