@@ -2184,7 +2184,8 @@ const DrawDetails: React.FC = () => {
                           setBulkUploading(true)
                           try {
                             const token = localStorage.getItem('admin_token')
-                            const res = await fetch(`/api/v1/admin/draws/${drawId}/tickets/bulk-upload`, {
+                            const apiBase = import.meta.env.VITE_API_URL || '/api/v1'
+                            const res = await fetch(`${apiBase}/admin/draws/${drawId}/tickets/bulk-upload`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                               body: JSON.stringify({ entries: bulkParsed }),
