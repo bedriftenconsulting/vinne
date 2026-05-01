@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Phone } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import PhoneInput from "@/components/PhoneInput";
+import USSDLoginFlow from "@/components/USSDLoginFlow";
 import { toast } from "@/hooks/use-toast";
 import { API_BASE } from "@/lib/config";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  "already exists": "This phone number already exists. Please try signing in instead, or use a different phone number.",
-  "phone number already registered": "This phone number already exists. Please try signing in instead, or use a different phone number.",
+  "already exists": "This phone number is already registered with a password. Please sign in instead.",
+  "phone number already registered": "This phone number is already registered with a password. Please sign in instead.",
   "phone number": "Please enter a valid Ghana phone number (e.g. 0244123456).",
   "password": "Password must be at least 6 characters long.",
   "invalid": "Some details look incorrect. Please check and try again.",
@@ -51,6 +52,7 @@ const SignUpPage = () => {
   });  const [showPwd, setShowPwd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showUSSD, setShowUSSD] = useState(false);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }));
@@ -137,7 +139,11 @@ const SignUpPage = () => {
           <h1 className="font-heading text-3xl text-primary mb-1 text-center tracking-wide">CREATE ACCOUNT</h1>
           <p className="text-muted-foreground text-center mb-8 text-sm">Join WinBig Africa and start winning today</p>
 
-          <form onSubmit={handleSubmit} className="bg-card rounded-2xl p-8 space-y-5 border border-border shadow-lg">
+          {showUSSD ? (
+            <USSDLoginFlow onSuccess={() => navigate("/")} onBack={() => setShowUSSD(false)} />
+          ) : null}
+
+          {!showUSSD && <form onSubmit={handleSubmit} className="bg-card rounded-2xl p-8 space-y-5 border border-border shadow-lg">
 
             <div className="space-y-1.5">
               <label className="block text-sm font-medium text-foreground">Full Name</label>
@@ -146,9 +152,11 @@ const SignUpPage = () => {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-foreground">Email Address</label>
+              <label className="block text-sm font-medium text-foreground">
+                Email Address <span className="text-muted-foreground font-normal">(optional)</span>
+              </label>
               <input type="email" placeholder="e.g. kwame@gmail.com" value={form.email}
-                onChange={set("email")} required className={inputCls} />
+                onChange={set("email")} className={inputCls} />
             </div>
 
             <div className="space-y-1.5">
@@ -194,7 +202,15 @@ const SignUpPage = () => {
               Already have an account?{" "}
               <Link to="/sign-in" className="text-primary font-semibold hover:underline">Sign In</Link>
             </p>
-          </form>
+          </form>}
+
+          {!showUSSD && (
+            <button onClick={() => setShowUSSD(true)}
+              className="mt-4 w-full flex items-center justify-center gap-2 text-sm text-muted-foreground border border-border rounded-xl px-4 py-3 hover:border-primary/50 hover:text-primary transition bg-card">
+              <Phone size={15} />
+              Already bought tickets? Sign in with your number
+            </button>
+          )}
         </div>
       </main>
       <Footer />

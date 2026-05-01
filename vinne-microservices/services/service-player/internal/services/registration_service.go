@@ -32,13 +32,38 @@ func NewRegistrationService(
 	}
 }
 
-// RegisterPlayer registers a new player
+// RegisterPlayer registers a new player, or upgrades a USSD-only account (no password) with full credentials.
 func (s *registrationService) RegisterPlayer(ctx context.Context, req models.RegistrationRequest) (*models.Player, error) {
 	normalizedPhone := validation.NormalizePhone(req.PhoneNumber)
 
 	existingPlayer, err := s.playerRepo.GetByPhoneNumber(ctx, normalizedPhone)
 	if err == nil && existingPlayer != nil {
-		return nil, fmt.Errorf("phone number already registered")
+		// Allow upgrade only if this is a USSD-created account with no password set
+		if existingPlayer.PasswordHash != "" {
+			return nil, fmt.Errorf("phone number already registered")
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", err)
+		}
+
+		updateReq := models.UpdatePlayerRequest{
+			ID:        existingPlayer.ID,
+			FirstName: req.FirstName,
+			LastName:  req.LastName,
+			Email:     req.Email,
+		}
+		updatedPlayer, err := s.playerRepo.Update(ctx, updateReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upgrade player profile: %w", err)
+		}
+
+		if err := s.authRepo.UpdatePassword(ctx, existingPlayer.ID, string(hashedPassword)); err != nil {
+			return nil, fmt.Errorf("failed to set password: %w", err)
+		}
+
+		return updatedPlayer, nil
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
