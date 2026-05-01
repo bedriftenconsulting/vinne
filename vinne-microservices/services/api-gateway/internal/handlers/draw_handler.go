@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -280,8 +281,19 @@ func (h *drawHandler) BulkUploadTickets(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+	// If schedule lookup didn't return a code, derive it from the game name by
+	// keeping only alphanumeric chars and uppercasing — e.g. "iPhone 17 Pro Max" → "IPHONE17PROMAX"
+	if gameCode == "" && draw.GameName != "" {
+		safe := ""
+		for _, c := range draw.GameName {
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+				safe += string(c)
+			}
+		}
+		gameCode = strings.ToUpper(safe)
+	}
 	if gameCode == "" {
-		gameCode = draw.GameName // last-resort fallback so the ticket service can store something
+		return response.ValidationError(w, "could not resolve game code for this draw", nil)
 	}
 
 	// ── 3. Ticket service client ─────────────────────────────────────────────
