@@ -519,6 +519,7 @@ func setupRoutes(r *router.Router, grpcManager *grpc.ClientManager, jwtService j
 	adminGroup.GET("/draws/{id}/statistics", drawHandler.GetDrawStatistics)
 	adminGroup.GET("/draws/{id}/winning-numbers", drawHandler.GetWinningNumbers)
 	adminGroup.GET("/draws/{id}/tickets", drawHandler.GetDrawTickets)
+	adminGroup.POST("/draws/{id}/tickets/bulk-upload", drawHandler.BulkUploadTickets)
 	adminGroup.POST("/draws/{id}/record-physical", drawHandler.RecordPhysicalDraw)
 
 	// Player admin operations

@@ -11,6 +11,9 @@ import {
   RefreshCw,
   CheckCircle,
   Eye,
+  Upload,
+  MessageSquare,
+  XCircle,
 } from 'lucide-react'
 import { isPast } from 'date-fns'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -141,6 +144,18 @@ const DrawDetails: React.FC = () => {
   const [machineNumbersErrors, setMachineNumbersErrors] = useState(false)
   const [machineNumbersDuplicates, setMachineNumbersDuplicates] = useState(false)
   const [selectedTicket, setSelectedTicket] = useState<Record<string, unknown> | null>(null)
+
+  // Bulk upload state
+  const [bulkRawText, setBulkRawText] = useState('')
+  const [bulkParsed, setBulkParsed] = useState<{ phone: string; name: string; quantity: number }[]>([])
+  const [bulkParseError, setBulkParseError] = useState('')
+  const [bulkUploading, setBulkUploading] = useState(false)
+  const [bulkResult, setBulkResult] = useState<{
+    total_entries: number
+    tickets_created: number
+    sms_sent: number
+    results: { phone: string; name: string; quantity: number; tickets: string[]; sms_sent: boolean; error?: string }[]
+  } | null>(null)
 
   // Fetch draw details
   const { data: draw, isLoading: drawLoading } = useQuery({
@@ -1746,9 +1761,10 @@ const DrawDetails: React.FC = () => {
 
       {/* Tabs for Additional Information */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
+          <TabsTrigger value="bulk-upload">Bulk Upload</TabsTrigger>
         </TabsList>
 
         {/* Overview Tab */}
@@ -2102,6 +2118,193 @@ const DrawDetails: React.FC = () => {
                   </TableBody>
                 </Table>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Bulk Upload Tab ─────────────────────────────────────────── */}
+        <TabsContent value="bulk-upload">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Upload className="h-4 w-4" />
+                Bulk Ticket Upload
+              </CardTitle>
+              <CardDescription>
+                Paste a list of phone numbers (one per line). Optional: add name and quantity separated by commas.
+                <br />
+                <span className="font-mono text-xs">Format: phone, name, quantity — e.g. <strong>0241234567, John Doe, 2</strong></span>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+
+              {/* Input area */}
+              {!bulkResult && (
+                <>
+                  <Textarea
+                    placeholder={`0241234567, John Doe, 2\n0279876543, Jane Smith\n0501112233`}
+                    className="font-mono text-sm min-h-[200px]"
+                    value={bulkRawText}
+                    onChange={e => {
+                      setBulkRawText(e.target.value)
+                      setBulkParsed([])
+                      setBulkParseError('')
+                    }}
+                  />
+
+                  {bulkParseError && (
+                    <p className="text-destructive text-sm flex items-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5" /> {bulkParseError}
+                    </p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const lines = bulkRawText.split('\n').map(l => l.trim()).filter(Boolean)
+                        if (lines.length === 0) { setBulkParseError('Paste at least one phone number'); return }
+                        const parsed = lines.map((line, i) => {
+                          const parts = line.split(',').map(p => p.trim())
+                          const phone = parts[0]
+                          if (!phone) { setBulkParseError(`Line ${i + 1}: phone number is missing`); return null }
+                          return { phone, name: parts[1] || '', quantity: parseInt(parts[2] || '1', 10) || 1 }
+                        }).filter(Boolean) as { phone: string; name: string; quantity: number }[]
+                        setBulkParsed(parsed)
+                        setBulkParseError('')
+                      }}
+                    >
+                      Preview ({bulkRawText.split('\n').filter(l => l.trim()).length} lines)
+                    </Button>
+
+                    {bulkParsed.length > 0 && (
+                      <Button
+                        disabled={bulkUploading}
+                        onClick={async () => {
+                          setBulkUploading(true)
+                          try {
+                            const token = localStorage.getItem('admin_token')
+                            const res = await fetch(`/api/v1/admin/draws/${drawId}/tickets/bulk-upload`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                              body: JSON.stringify({ entries: bulkParsed }),
+                            })
+                            const data = await res.json()
+                            setBulkResult(data?.data ?? data)
+                          } catch (err) {
+                            setBulkParseError('Upload failed: ' + String(err))
+                          } finally {
+                            setBulkUploading(false)
+                          }
+                        }}
+                      >
+                        {bulkUploading ? (
+                          <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Uploading…</>
+                        ) : (
+                          <><MessageSquare className="h-4 w-4 mr-2" /> Create Tickets & Send SMS ({bulkParsed.length})</>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Preview table */}
+                  {bulkParsed.length > 0 && (
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>#</TableHead>
+                            <TableHead>Phone</TableHead>
+                            <TableHead>Name</TableHead>
+                            <TableHead className="text-center">Tickets</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {bulkParsed.map((entry, i) => (
+                            <TableRow key={i}>
+                              <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                              <TableCell className="font-mono text-sm">{entry.phone}</TableCell>
+                              <TableCell className="text-sm">{entry.name || <span className="text-muted-foreground italic">—</span>}</TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant="secondary">{entry.quantity}</Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                      <div className="p-3 border-t bg-muted/30 text-sm text-muted-foreground">
+                        <strong>{bulkParsed.reduce((s, e) => s + e.quantity, 0)}</strong> total tickets across <strong>{bulkParsed.length}</strong> recipients
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Results view */}
+              {bulkResult && (
+                <div className="space-y-4">
+                  {/* Summary cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-lg border bg-card p-4 text-center">
+                      <p className="text-2xl font-bold text-green-500">{bulkResult.tickets_created}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Tickets Created</p>
+                    </div>
+                    <div className="rounded-lg border bg-card p-4 text-center">
+                      <p className="text-2xl font-bold text-blue-500">{bulkResult.sms_sent}</p>
+                      <p className="text-xs text-muted-foreground mt-1">SMS Sent</p>
+                    </div>
+                    <div className="rounded-lg border bg-card p-4 text-center">
+                      <p className="text-2xl font-bold">{bulkResult.total_entries}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Total Recipients</p>
+                    </div>
+                  </div>
+
+                  {/* Per-entry results */}
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Tickets</TableHead>
+                          <TableHead className="text-center">SMS</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {bulkResult.results?.map((r, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="font-mono text-sm">{r.phone}</TableCell>
+                            <TableCell className="text-sm">{r.name || '—'}</TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1">
+                                {r.tickets?.map((t, j) => (
+                                  <Badge key={j} variant="outline" className="font-mono text-xs">{t}</Badge>
+                                ))}
+                                {(!r.tickets || r.tickets.length === 0) && <span className="text-muted-foreground text-xs">—</span>}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {r.sms_sent
+                                ? <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
+                                : <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />}
+                            </TableCell>
+                            <TableCell>
+                              {r.error
+                                ? <span className="text-destructive text-xs">{r.error}</span>
+                                : <span className="text-green-600 text-xs">OK</span>}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  <Button variant="outline" onClick={() => { setBulkResult(null); setBulkRawText(''); setBulkParsed([]) }}>
+                    Upload Another Batch
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

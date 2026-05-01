@@ -10,6 +10,7 @@ import (
 
 	drawv1 "github.com/randco/randco-microservices/proto/draw/v1"
 	gamepb "github.com/randco/randco-microservices/proto/game/v1"
+	notificationv1 "github.com/randco/randco-microservices/proto/notification/v1"
 	ticketv1 "github.com/randco/randco-microservices/proto/ticket/v1"
 	"github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
 	"github.com/randco/randco-microservices/services/api-gateway/internal/response"
@@ -224,6 +225,211 @@ func (h *drawHandler) ListDraws(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	return response.Success(w, http.StatusOK, resp.Message, result)
+}
+
+// BulkUploadTickets creates tickets from an uploaded list and sends SMS to each recipient.
+// POST /api/v1/admin/draws/{id}/tickets/bulk-upload
+// Body: {"entries": [{"phone":"233241234567","name":"John Doe","quantity":2}, ...]}
+func (h *drawHandler) BulkUploadTickets(w http.ResponseWriter, r *http.Request) error {
+	drawID := router.GetParam(r, "id")
+	if drawID == "" {
+		return response.ValidationError(w, "draw_id is required", nil)
+	}
+
+	// Parse request body
+	var req struct {
+		Entries []struct {
+			Phone    string `json:"phone"`
+			Name     string `json:"name"`
+			Quantity int    `json:"quantity"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return response.ValidationError(w, "invalid request body", nil)
+	}
+	if len(req.Entries) == 0 {
+		return response.ValidationError(w, "entries list is empty", nil)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+
+	// ── 1. Fetch the draw ────────────────────────────────────────────────────
+	drawConn, err := h.grpcManager.GetConnection("draw")
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Draw")
+	}
+	drawClient := drawv1.NewDrawServiceClient(drawConn)
+	drawResp, err := drawClient.GetDraw(ctx, &drawv1.GetDrawRequest{Id: drawID})
+	if err != nil || !drawResp.Success {
+		return response.NotFoundError(w, "Draw")
+	}
+	draw := drawResp.Draw
+
+	// ── 2. Resolve game_code via the game schedule ───────────────────────────
+	gameCode := draw.GameCode
+	const nilUUID = "00000000-0000-0000-0000-000000000000"
+	if gameCode == "" && draw.GameScheduleId != "" && draw.GameScheduleId != nilUUID {
+		gameClient, gcErr := h.grpcManager.GameServiceClient()
+		if gcErr == nil {
+			schedResp, schedErr := gameClient.GetScheduleById(ctx, &gamepb.GetScheduleByIdRequest{
+				ScheduleId: draw.GameScheduleId,
+			})
+			if schedErr == nil && schedResp.Schedule != nil {
+				gameCode = schedResp.Schedule.GetGameCode()
+			}
+		}
+	}
+	if gameCode == "" {
+		gameCode = draw.GameName // last-resort fallback so the ticket service can store something
+	}
+
+	// ── 3. Ticket service client ─────────────────────────────────────────────
+	ticketClient, err := h.grpcManager.TicketServiceClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Ticket")
+	}
+
+	// ── 4. Create tickets concurrently (max 8 goroutines) ───────────────────
+	type entryResult struct {
+		Phone    string   `json:"phone"`
+		Name     string   `json:"name"`
+		Quantity int      `json:"quantity"`
+		Tickets  []string `json:"tickets"`
+		SMSSent  bool     `json:"sms_sent"`
+		Error    string   `json:"error,omitempty"`
+	}
+
+	results := make([]entryResult, len(req.Entries))
+	sem := make(chan struct{}, 8)
+	var mu sync.Mutex
+	totalCreated := 0
+
+	var wg sync.WaitGroup
+	for i, entry := range req.Entries {
+		if entry.Phone == "" {
+			results[i] = entryResult{Phone: entry.Phone, Error: "phone is required"}
+			continue
+		}
+		qty := entry.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+
+		wg.Add(1)
+		go func(idx int, phone, name string, quantity int) {
+			defer wg.Done()
+			var serials []string
+			var issueErr string
+
+			for q := 0; q < quantity; q++ {
+				sem <- struct{}{}
+				issueResp, err := ticketClient.IssueTicket(ctx, &ticketv1.IssueTicketRequest{
+					GameCode:       gameCode,
+					GameScheduleId: draw.GameScheduleId,
+					DrawNumber:     draw.DrawNumber,
+					BetLines: []*ticketv1.BetLine{
+						{LineNumber: 1, BetType: "RAFFLE", TotalAmount: 2000},
+					},
+					IssuerType:    "ADMIN",
+					IssuerId:      "admin-bulk-upload",
+					CustomerPhone: phone,
+					PaymentMethod: "external",
+				})
+				<-sem
+
+				if err != nil {
+					issueErr = err.Error()
+					break
+				}
+				if issueResp.Ticket != nil {
+					serial := issueResp.Ticket.SerialNumber
+					if serial == "" {
+						serial = issueResp.Ticket.Id
+					}
+					serials = append(serials, serial)
+				}
+			}
+
+			mu.Lock()
+			totalCreated += len(serials)
+			results[idx] = entryResult{
+				Phone:    phone,
+				Name:     name,
+				Quantity: quantity,
+				Tickets:  serials,
+				Error:    issueErr,
+			}
+			mu.Unlock()
+		}(i, entry.Phone, entry.Name, qty)
+	}
+	wg.Wait()
+
+	// ── 5. Send bulk SMS via notification service ────────────────────────────
+	notifClient, notifErr := h.grpcManager.NotificationServiceClient()
+	smsSentCount := 0
+
+	if notifErr == nil {
+		var smsReqs []*notificationv1.SendSMSRequest
+		for i, res := range results {
+			if len(res.Tickets) == 0 {
+				continue
+			}
+			ticketList := ""
+			for _, t := range res.Tickets {
+				ticketList += "\n" + t
+			}
+			name := res.Name
+			if name == "" {
+				name = "Customer"
+			}
+			msg := "Hi " + name + "! Your WinBig Africa ticket(s) for Draw #" +
+				strconv.Itoa(int(draw.DrawNumber)) + " (" + draw.GameName + "):" +
+				ticketList +
+				"\nDraw date: May 3, 2026. Good luck!"
+
+			smsReqs = append(smsReqs, &notificationv1.SendSMSRequest{
+				To:             res.Phone,
+				Content:        msg,
+				IdempotencyKey: "bulk-" + drawID + "-" + res.Phone,
+			})
+			_ = i
+		}
+
+		if len(smsReqs) > 0 {
+			bulkResp, smsErr := notifClient.SendBulkSMS(ctx, &notificationv1.SendBulkSMSRequest{
+				Requests: smsReqs,
+			})
+			if smsErr == nil {
+				smsSentCount = len(smsReqs)
+				_ = bulkResp
+			} else {
+				// Fallback: send one by one
+				for i, req := range smsReqs {
+					_, sErr := notifClient.SendSMS(ctx, req)
+					if sErr == nil {
+						smsSentCount++
+						results[i].SMSSent = true
+					}
+				}
+			}
+			if smsErr == nil {
+				for i := range results {
+					if len(results[i].Tickets) > 0 {
+						results[i].SMSSent = true
+					}
+				}
+			}
+		}
+	}
+
+	// ── 6. Return summary ────────────────────────────────────────────────────
+	return response.Success(w, http.StatusOK, "Bulk upload complete", map[string]interface{}{
+		"total_entries":   len(req.Entries),
+		"tickets_created": totalCreated,
+		"sms_sent":        smsSentCount,
+		"results":         results,
+	})
 }
 
 // GetAgentDrawHistory retrieves draw history for agents with summary statistics
