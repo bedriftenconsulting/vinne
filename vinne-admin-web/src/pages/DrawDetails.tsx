@@ -140,6 +140,7 @@ const DrawDetails: React.FC = () => {
   const [machineNumbers, setMachineNumbers] = useState<number[]>([])
   const [machineNumbersErrors, setMachineNumbersErrors] = useState(false)
   const [machineNumbersDuplicates, setMachineNumbersDuplicates] = useState(false)
+  const [selectedTicket, setSelectedTicket] = useState<Record<string, unknown> | null>(null)
 
   // Fetch draw details
   const { data: draw, isLoading: drawLoading } = useQuery({
@@ -711,6 +712,74 @@ const DrawDetails: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Player Details */}
+      {(ticket.customer_name || ticket.customer_phone || ticket.customer_email) && (
+        <div className="border-t pt-6 space-y-3">
+          <h4 className="font-medium text-sm text-muted-foreground mb-4">PLAYER DETAILS</h4>
+          <div className="rounded-md border">
+            <table className="w-full text-sm">
+              <tbody>
+                {ticket.customer_name && (
+                  <tr className="border-b">
+                    <td className="p-3 text-muted-foreground w-40">Name</td>
+                    <td className="p-3 font-medium">{ticket.customer_name as string}</td>
+                  </tr>
+                )}
+                {ticket.customer_phone && (
+                  <tr className="border-b">
+                    <td className="p-3 text-muted-foreground">Phone</td>
+                    <td className="p-3 font-mono">{ticket.customer_phone as string}</td>
+                  </tr>
+                )}
+                {ticket.customer_email && (
+                  <tr>
+                    <td className="p-3 text-muted-foreground">Email</td>
+                    <td className="p-3">{ticket.customer_email as string}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Payment / Transaction Details */}
+      {(ticket.payment_ref || ticket.payment_method || ticket.payment_status) && (
+        <div className="border-t pt-6 space-y-3">
+          <h4 className="font-medium text-sm text-muted-foreground mb-4">PAYMENT / TRANSACTION</h4>
+          <div className="rounded-md border">
+            <table className="w-full text-sm">
+              <tbody>
+                {ticket.payment_ref && (
+                  <tr className="border-b">
+                    <td className="p-3 text-muted-foreground w-40">Payment Ref</td>
+                    <td className="p-3 font-mono text-xs">{ticket.payment_ref as string}</td>
+                  </tr>
+                )}
+                {ticket.payment_method && (
+                  <tr className="border-b">
+                    <td className="p-3 text-muted-foreground">Method</td>
+                    <td className="p-3">
+                      <Badge variant="outline">{(ticket.payment_method as string).toUpperCase()}</Badge>
+                    </td>
+                  </tr>
+                )}
+                {ticket.payment_status && (
+                  <tr>
+                    <td className="p-3 text-muted-foreground">Payment Status</td>
+                    <td className="p-3">
+                      <Badge variant={(ticket.payment_status as string) === 'completed' ? 'default' : 'secondary'}>
+                        {ticket.payment_status as string}
+                      </Badge>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Technical Details */}
       <div className="border-t pt-6 space-y-6">
@@ -1806,7 +1875,7 @@ const DrawDetails: React.FC = () => {
                       </TableRow>
                     ) : (
                     tickets?.tickets?.map((ticket: Record<string, unknown>) => (
-                      <TableRow key={ticket.id as string} className="cursor-pointer hover:bg-muted/50">
+                      <TableRow key={ticket.id as string} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedTicket(ticket)}>
                             {/* Ticket Number */}
                             <TableCell className="font-mono">
                               {ticket.serial_number as string}
@@ -2023,23 +2092,9 @@ const DrawDetails: React.FC = () => {
                               </Badge>
                             </TableCell>
                             <TableCell onClick={e => e.stopPropagation()}>
-                              <Dialog>
-                                <DialogTrigger asChild>
-                                  <Button variant="outline" size="sm">
-                                    <Eye className="h-4 w-4" />
-                                  </Button>
-                                </DialogTrigger>
-                                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                                  <DialogHeader>
-                                    <DialogTitle>Ticket Details</DialogTitle>
-                                    <DialogDescription>
-                                      Complete information for ticket{' '}
-                                      {ticket.serial_number as string}
-                                    </DialogDescription>
-                                  </DialogHeader>
-                                  <TicketDetails ticket={ticket as unknown as Ticket} />
-                                </DialogContent>
-                              </Dialog>
+                              <Button variant="outline" size="sm" onClick={() => setSelectedTicket(ticket)}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
                             </TableCell>
                       </TableRow>
                     ))
@@ -2051,6 +2106,19 @@ const DrawDetails: React.FC = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Ticket Detail Dialog */}
+      <Dialog open={!!selectedTicket} onOpenChange={open => { if (!open) setSelectedTicket(null) }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Ticket Details</DialogTitle>
+            <DialogDescription>
+              Complete information for ticket {selectedTicket?.serial_number as string}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedTicket && <TicketDetails ticket={selectedTicket as unknown as Ticket} />}
+        </DialogContent>
+      </Dialog>
 
       {/* Restart Draw Dialog */}
       <Dialog open={restartDialogOpen} onOpenChange={setRestartDialogOpen}>

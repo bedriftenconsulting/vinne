@@ -28,7 +28,8 @@ export function isCompactFormat(betLine: BetLine): boolean {
 /**
  * Check if a bet type is a PERM bet
  */
-export function isPermBet(betType: string): boolean {
+export function isPermBet(betType: string | undefined | null): boolean {
+  if (!betType) return false
   const normalized = betType.toUpperCase().trim()
   return normalized.startsWith('PERM-') || normalized.startsWith('PERM ')
 }
@@ -36,7 +37,8 @@ export function isPermBet(betType: string): boolean {
 /**
  * Check if a bet type is a Banker bet
  */
-export function isBankerBet(betType: string): boolean {
+export function isBankerBet(betType: string | undefined | null): boolean {
+  if (!betType) return false
   const normalized = betType.toUpperCase().trim()
   return (
     normalized === 'BANKER' ||
@@ -49,7 +51,8 @@ export function isBankerBet(betType: string): boolean {
 /**
  * Extract PERM size from bet type (e.g., "PERM-2" -> 2)
  */
-export function getPermSize(betType: string): number | null {
+export function getPermSize(betType: string | undefined | null): number | null {
+  if (!betType) return null
   const match = betType.match(/PERM[-\s](\d+)/i)
   return match ? parseInt(match[1], 10) : null
 }

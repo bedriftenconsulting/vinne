@@ -158,7 +158,6 @@ func (h *drawHandler) ListDraws(w http.ResponseWriter, r *http.Request) error {
 	// Transform draws to include total_stakes field for frontend compatibility
 	transformedDraws := make([]map[string]interface{}, len(resp.Draws))
 	for i, draw := range resp.Draws {
-		// Convert draw to map
 		drawMap := map[string]interface{}{
 			"id":                     draw.Id,
 			"game_id":                draw.GameId,
@@ -173,7 +172,7 @@ func (h *drawHandler) ListDraws(w http.ResponseWriter, r *http.Request) error {
 			"nla_draw_reference":     draw.NlaDrawReference,
 			"nla_official_signature": draw.NlaOfficialSignature,
 			"total_tickets_sold":     draw.TotalTicketsSold,
-			"total_stakes":           draw.TotalPrizePool, // Map TotalPrizePool to total_stakes for frontend
+			"total_stakes":           draw.TotalPrizePool,
 			"total_prize_pool":       draw.TotalPrizePool,
 			"verification_hash":      draw.VerificationHash,
 			"stage":                  draw.Stage,
@@ -181,6 +180,38 @@ func (h *drawHandler) ListDraws(w http.ResponseWriter, r *http.Request) error {
 			"updated_at":             draw.UpdatedAt,
 		}
 		transformedDraws[i] = drawMap
+	}
+
+	// Fetch real paid ticket counts from the ticket service concurrently.
+	// total_tickets_sold on the draw record is stale for USSD purchases (Flask writes
+	// directly to the ticket DB, bypassing the draw service counter).
+	ticketClient, ticketConnErr := h.grpcManager.TicketServiceClient()
+	if ticketConnErr == nil {
+		var wg sync.WaitGroup
+		const nilUUID = "00000000-0000-0000-0000-000000000000"
+		for i, draw := range resp.Draws {
+			wg.Add(1)
+			go func(idx int, d *drawv1.Draw) {
+				defer wg.Done()
+				countCtx, countCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer countCancel()
+				filter := &ticketv1.TicketFilter{PaymentStatus: "completed"}
+				if d.GameScheduleId != "" && d.GameScheduleId != nilUUID {
+					filter.GameScheduleId = d.GameScheduleId
+				} else {
+					filter.DrawId = d.Id
+				}
+				countResp, err := ticketClient.ListTickets(countCtx, &ticketv1.ListTicketsRequest{
+					Filter:   filter,
+					Page:     1,
+					PageSize: 1,
+				})
+				if err == nil {
+					transformedDraws[idx]["total_tickets_sold"] = countResp.Total
+				}
+			}(i, draw)
+		}
+		wg.Wait()
 	}
 
 	// Build response with pagination metadata
