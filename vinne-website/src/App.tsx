@@ -13,6 +13,7 @@ import SignInPage from "./pages/SignInPage";
 import SignUpPage from "./pages/SignUpPage";
 import MyTicketsPage from "./pages/MyTicketsPage";
 import ProfilePage from "./pages/ProfilePage";
+import DrawReveal from "./pages/DrawReveal";
 
 const queryClient = new QueryClient();
 
@@ -32,6 +33,7 @@ const App = () => (
           <Route path="/sign-up" element={<SignUpPage />} />
           <Route path="/my-tickets" element={<MyTicketsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/draw-reveal" element={<DrawReveal />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
