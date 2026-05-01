@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	playerv1 "github.com/randco/randco-microservices/proto/player/v1"
 	jwtpkg "github.com/randco/randco-microservices/shared/common/jwt"
 	grpcpkg "github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
 	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	_ "github.com/lib/pq"
 )
@@ -424,9 +424,15 @@ func (h *OTPHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) erro
 
 	// Look up player directly in the player DB — avoids gRPC dependency
 	playerID, err := lookupPlayerByPhone(phone)
-	if err != nil || playerID == "" {
+	if err != nil {
+		fmt.Printf("[ForgotPassword] DB lookup error for %s: %v\n", phone, err)
 		return router.WriteJSON(w, http.StatusOK, successMsg)
 	}
+	if playerID == "" {
+		fmt.Printf("[ForgotPassword] No player found for %s\n", phone)
+		return router.WriteJSON(w, http.StatusOK, successMsg)
+	}
+	fmt.Printf("[ForgotPassword] Found player %s for %s\n", playerID, phone)
 
 	code, err := generate6DigitOTP()
 	if err != nil {
@@ -450,7 +456,9 @@ func (h *OTPHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) erro
 	return router.WriteJSON(w, http.StatusOK, successMsg)
 }
 
-// ResetPassword verifies the OTP and updates the player's password via the player service.
+// ResetPassword verifies the OTP (stored in shared Redis by ForgotPassword) and updates
+// the player's password directly in the player DB. Bypasses the player service gRPC which
+// would try to re-verify the OTP in its own Redis (a different store).
 func (h *OTPHandler) ResetPassword(w http.ResponseWriter, r *http.Request) error {
 	var req resetPasswordRequest
 	if err := router.ReadJSON(r, &req); err != nil {
@@ -483,20 +491,41 @@ func (h *OTPHandler) ResetPassword(w http.ResponseWriter, r *http.Request) error
 	}
 	playerID := parts[1]
 
+	playerDSN := os.Getenv("PLAYER_DB_DSN")
+	if playerDSN == "" {
+		playerDSN = "host=service-player-db port=5432 user=player password=#yerpla@333! dbname=player_service sslmode=disable"
+	}
+	pdb, err := sql.Open("postgres", playerDSN)
+	if err != nil {
+		return router.ErrorResponse(w, http.StatusInternalServerError, "Failed to update password")
+	}
+	defer pdb.Close()
+
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dbCancel()
+
+	var currentHash string
+	_ = pdb.QueryRowContext(dbCtx, `SELECT password_hash FROM players WHERE id = $1 LIMIT 1`, playerID).Scan(&currentHash)
+
+	// Check before consuming OTP so user can retry with a different password
+	if currentHash != "" {
+		if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.NewPassword)) == nil {
+			return router.ErrorResponse(w, http.StatusBadRequest, "Please choose a different password from your current one")
+		}
+	}
+
+	// New password is different — consume the OTP to prevent replay
 	h.redis.Del(ctx, redisKey)
 
-	// Player service handles bcrypt hashing
-	playerClient, err := h.grpcManager.PlayerServiceClient()
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return router.ErrorResponse(w, http.StatusInternalServerError, "Service unavailable")
+		return router.ErrorResponse(w, http.StatusInternalServerError, "Failed to update password")
 	}
-	grpcCtx, grpcCancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer grpcCancel()
-	_, err = playerClient.ConfirmPasswordReset(grpcCtx, &playerv1.ConfirmPasswordResetRequest{
-		SessionId:   playerID,
-		NewPassword: req.NewPassword,
-		Otp:         req.Code,
-	})
+
+	_, err = pdb.ExecContext(dbCtx,
+		`UPDATE players SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+		string(newHash), playerID,
+	)
 	if err != nil {
 		return router.ErrorResponse(w, http.StatusInternalServerError, "Failed to update password")
 	}

@@ -84,19 +84,13 @@ const HeroContent = ({ game }: { game: ApiGame }) => {
           loop 
           playsInline 
           preload="auto"
-          className="w-full h-full object-cover" 
-          style={{ mixBlendMode: "screen" }}
-          onLoadStart={() => console.log('Video loading started')}
-          onCanPlay={() => console.log('Video can play')}
-          onError={(e) => console.error('Video error:', e)}
-          key={`video-${Date.now()}`}
+          className="w-full h-full object-cover"
         >
-          <source src={`/large_2x.mp4?t=${Date.now()}`} type="video/mp4" />
-          Your browser does not support the video tag.
+          <source src="/large_2x.mp4" type="video/mp4" />
         </video>
-        <div className="absolute inset-0 bg-gradient-to-r from-[hsl(0_0%_4%)] via-[hsl(0_0%_4%/0.72)] to-[hsl(0_0%_4%/0.15)]" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[hsl(0_0%_4%)] via-transparent to-transparent" />
-        <div className="absolute inset-0 bg-[hsl(0_80%_45%/0.08)]" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[hsl(0_0%_4%/0.85)] via-[hsl(0_0%_4%/0.45)] to-[hsl(0_0%_4%/0.05)]" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[hsl(0_0%_4%/0.7)] via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-[hsl(0_80%_45%/0.05)]" />
       </motion.div>
 
       {SPARKLES.map((s, i) => <Sparkle key={i} {...s} />)}
