@@ -2183,7 +2183,7 @@ const DrawDetails: React.FC = () => {
                         onClick={async () => {
                           setBulkUploading(true)
                           try {
-                            const token = localStorage.getItem('admin_token')
+                            const token = localStorage.getItem('access_token')
                             const apiBase = import.meta.env.VITE_API_URL || '/api/v1'
                             const res = await fetch(`${apiBase}/admin/draws/${drawId}/tickets/bulk-upload`, {
                               method: 'POST',
