@@ -1080,11 +1080,16 @@ func (h *drawHandler) GetDrawStatistics(w http.ResponseWriter, r *http.Request) 
 	// are not valid draw entries and must not inflate the ticket count.
 	liveTicketCount := int64(draw.TotalTicketsSold)
 	liveTotalStakes := int64(0)
-	if draw.GameScheduleId != "" {
+	const nilUUID = "00000000-0000-0000-0000-000000000000"
+	scheduleIdForStats := draw.GameScheduleId
+	if scheduleIdForStats == nilUUID {
+		scheduleIdForStats = ""
+	}
+	if scheduleIdForStats != "" {
 		ticketClient, tcErr := h.grpcManager.TicketServiceClient()
 		if tcErr == nil {
 			paidFilter := &ticketv1.TicketFilter{
-				GameScheduleId: draw.GameScheduleId,
+				GameScheduleId: scheduleIdForStats,
 				PaymentStatus:  "completed",
 			}
 			ticketResp, tcErr := ticketClient.ListTickets(ctx, &ticketv1.ListTicketsRequest{
@@ -1375,8 +1380,9 @@ func (h *drawHandler) GetDrawTickets(w http.ResponseWriter, r *http.Request) err
 	// NOTE: We show ALL tickets here (including failed payments) so admins can see
 	// the full picture. The draw execution (Stage 3) separately enforces
 	// payment_status = "completed" when selecting eligible tickets.
+	const nilUUID = "00000000-0000-0000-0000-000000000000"
 	filter := &ticketv1.TicketFilter{}
-	if draw.GameScheduleId != "" {
+	if draw.GameScheduleId != "" && draw.GameScheduleId != nilUUID {
 		filter.GameScheduleId = draw.GameScheduleId
 		// Backfill draw_id on any tickets that are missing it for this schedule
 		go func() {
