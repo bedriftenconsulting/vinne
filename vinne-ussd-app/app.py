@@ -72,7 +72,7 @@ MNOTIFY_SMS_KEY   = "F9XhjQbbJnqKt2fy9lhPIQCSD"
 SMS_SENDER_ID     = "CARPARK"
 
 GAME_CODE        = "IPHONE17"
-GAME_NAME        = "iPhone 17 Pro Max"
+GAME_NAME        = "iPhone 17 Pro"
 GAME_SCHEDULE_ID = "8aaa6e8d-c01f-4e4e-8a1b-e9668f481e34"
 DRAW_NUMBER      = 1
 DRAW_DATE        = "2026-05-03"

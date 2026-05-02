@@ -20,7 +20,7 @@ export interface Competition {
 export const competitions: Competition[] = [
   {
     id: "iphone-17",
-    title: "Apple iPhone 17 Pro Max",
+    title: "Apple iPhone 17 Pro",
     image: prizeIphone,
     ticketPrice: 20.00,
     currency: "GHS",
@@ -29,7 +29,7 @@ export const competitions: Competition[] = [
     endsAt: new Date(Date.now() + 5 * 60 * 60 * 1000),
     tag: "LIVE",
     featured: true,
-    description: "The latest Apple iPhone 17 Pro Max with 256GB storage, A19 Pro chip, and titanium design. Win this flagship device!",
+    description: "The latest Apple iPhone 17 Pro with 256GB storage, A19 Pro chip, and titanium design. Win this flagship device!",
   },
   {
     id: "bmw-m3",

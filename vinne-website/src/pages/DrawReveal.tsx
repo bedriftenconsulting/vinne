@@ -282,7 +282,7 @@ export default function DrawReveal() {
 
                 <motion.img
                   src={prizeSrc}
-                  alt="iPhone 17 Pro Max"
+                  alt="iPhone 17 Pro"
                   className="w-48 h-48 object-cover rounded-2xl border-2 border-yellow-400/50 shadow-2xl"
                   animate={{ y: [0, -8, 0] }}
                   transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
@@ -427,7 +427,7 @@ export default function DrawReveal() {
                 className="text-3xl font-black"
                 style={{ background: 'linear-gradient(135deg, #ffffff, #fde047)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
               >
-                iPhone 17 Pro Max
+                iPhone 17 Pro
               </p>
             </div>
 
