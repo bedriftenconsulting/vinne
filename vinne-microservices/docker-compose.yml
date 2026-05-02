@@ -763,6 +763,7 @@ services:
       DRAW_SERVICE_URL: service-draw:51060
       PAYMENT_SERVICE_URL: service-payment:51061
       WALLET_SERVICE_URL: service-wallet:51059
+      BUSINESS_SERIAL_PREFIX: WB-ENT
     networks:
       - randco-net
     depends_on:
