@@ -392,14 +392,15 @@ func (h *drawHandler) BulkUploadTickets(w http.ResponseWriter, r *http.Request) 
 		for _, t := range res.Tickets {
 			ticketList += "\n" + t
 		}
-		name := res.Name
-		if name == "" {
-			name = "Customer"
+		entryLabel := "Entry"
+		if len(res.Tickets) > 1 {
+			entryLabel = "Entries"
 		}
-		msg := "Hi " + name + "! Your WinBig Africa ticket(s) for Draw #" +
-			strconv.Itoa(int(draw.DrawNumber)) + " (" + draw.GameName + "):" +
-			ticketList +
-			"\nDraw date: May 3, 2026. Good luck!"
+		drawDateLabel := "03 May 2026"
+		if draw.ScheduledTime != nil {
+			drawDateLabel = draw.ScheduledTime.AsTime().Format("02 Jan 2006")
+		}
+		msg := "CarPark payment confirmed!\nWinBig " + entryLabel + ":" + ticketList + "\nDraw: " + drawDateLabel + "\nGood luck!"
 
 		phone := bulkNormalisePhone(res.Phone)
 		if err := bulkSendMNotifySMS(phone, msg); err == nil {
