@@ -45,12 +45,26 @@ const ResultsPage = () => {
   const [tab, setTab] = useState<"draws" | "winners">("winners");
 
   useEffect(() => {
+    const base = import.meta.env.VITE_API_URL || "/api/v1";
     Promise.all([
-      fetch("/api/v1/public/winners").then(r => r.json()),
-      fetch("/api/v1/public/draws/completed").then(r => r.json()),
+      fetch(`${base}/public/winners?limit=20`).then(r => r.json()),
+      fetch(`${base}/public/draws/completed`).then(r => r.json()),
     ])
       .then(([wData, dData]) => {
-        setWinners(wData.winners || wData.data?.winners || []);
+        const rawWinners = wData.winners || wData.data?.winners || [];
+        // Normalise API field names to interface fields
+        setWinners(rawWinners.map((w: Record<string, any>) => ({
+          id: w.id || w.ticket_id,
+          player_name: w.player_name || w.name || '',
+          phone_number: w.phone_number || w.phone || '',
+          ticket_serial: w.ticket_serial || w.serial_number || '',
+          game_name: w.game_name || w.prize || '',
+          game_code: w.game_code || '',
+          prize_amount: w.prize_amount || w.winning_amount || 0,
+          prize_description: w.prize_description || w.prize || '',
+          draw_date: w.draw_date || w.won_at || '',
+          position: w.position || 1,
+        })));
         setDraws(dData.draws || dData.data?.draws || []);
       })
       .catch(() => {})

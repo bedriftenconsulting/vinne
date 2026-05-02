@@ -85,15 +85,30 @@ export default function DrawReveal() {
     const params = new URLSearchParams(window.location.search)
     const drawId = params.get('drawId')
     const url = drawId
-      ? `${BASE}/draws/${drawId}/tickets?status=won&page_size=1`
+      ? `${BASE}/draws/${drawId}/results`
       : `${BASE}/public/winners?limit=1`
 
     fetch(url)
       .then(r => r.json())
       .then(d => {
-        const tickets = d?.data?.tickets ?? d?.data ?? []
-        const list = Array.isArray(tickets) ? tickets : []
-        const won = list.find((t: Winner) => t.serial_number) ?? null
+        // /public/winners returns { data: { winners: [...] } }
+        // /draws/{id}/results returns { data: { winning_tickets: [...] } }
+        const winners = d?.data?.winners ?? d?.data?.winning_tickets ?? d?.data?.tickets ?? []
+        const list = Array.isArray(winners) ? winners : []
+        if (list.length === 0) {
+          setError('No draw results available yet.')
+          setStage('ready')
+          return
+        }
+        const raw = list[0]
+        // Normalise field names from both endpoints
+        const won: Winner = {
+          serial_number: raw.serial_number || raw.ticket_serial || raw.ticket_number,
+          game_name: raw.game_name || raw.prize || raw.game_code,
+          customer_phone: raw.customer_phone || raw.phone_number || raw.phone,
+          customer_name: raw.customer_name || raw.player_name || raw.name,
+          draw_number: raw.draw_number,
+        }
         setWinner(won)
         setStage('ready')
       })
