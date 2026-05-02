@@ -984,8 +984,8 @@ func (h *ticketHandler) ListPlayerTickets(w http.ResponseWriter, r *http.Request
 	return response.Success(w, http.StatusOK, "Player tickets retrieved successfully", result)
 }
 
-// fetchUSSDTickets looks up the player's phone and returns any tickets bought via USSD.
-// Returns nil silently on any error so the main ticket list is never affected.
+// fetchUSSDTickets looks up the player's phone and returns any tickets bought via USSD or
+// uploaded by admin on their behalf. Returns nil silently on any error.
 func (h *ticketHandler) fetchUSSDTickets(ctx context.Context, playerID string, ticketClient ticketv1.TicketServiceClient) []*ticketv1.Ticket {
 	playerClient, err := h.grpcManager.PlayerServiceClient()
 	if err != nil {
@@ -995,18 +995,39 @@ func (h *ticketHandler) fetchUSSDTickets(ctx context.Context, playerID string, t
 	if err != nil || profile.PhoneNumber == "" {
 		return nil
 	}
-	// Ticket DB stores phones as 233XXXXXXXXX (strip leading +)
 	phone := strings.TrimPrefix(profile.PhoneNumber, "+")
 
+	// Build all phone variants so we match regardless of how customer_phone was stored
+	phoneSet := map[string]bool{phone: true}
+	var base9 string
+	if strings.HasPrefix(phone, "233") && len(phone) > 3 {
+		base9 = phone[3:]
+	} else if strings.HasPrefix(phone, "0") && len(phone) > 1 {
+		base9 = phone[1:]
+	} else {
+		base9 = phone
+	}
+	phoneSet["0"+base9] = true
+	phoneSet["233"+base9] = true
+	phoneSet[base9] = true
+
+	// Fetch all completed tickets and match by customer_phone — covers USSD, admin-uploaded, external
 	resp, err := ticketClient.ListTickets(ctx, &ticketv1.ListTicketsRequest{
-		Filter:   &ticketv1.TicketFilter{IssuerType: "USSD", IssuerId: phone},
+		Filter:   &ticketv1.TicketFilter{PaymentStatus: "completed"},
 		Page:     1,
-		PageSize: 200,
+		PageSize: 500,
 	})
 	if err != nil {
 		return nil
 	}
-	return resp.Tickets
+	var matched []*ticketv1.Ticket
+	for _, t := range resp.Tickets {
+		tp := strings.TrimPrefix(t.CustomerPhone, "+")
+		if phoneSet[tp] {
+			matched = append(matched, t)
+		}
+	}
+	return matched
 }
 
 // GetPlayerTicket retrieves a specific ticket for a player with ownership validation

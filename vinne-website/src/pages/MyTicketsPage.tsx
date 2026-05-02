@@ -284,20 +284,46 @@ const MyTicketsPage = () => {
   useEffect(() => {
     if (!token || !resolvedPlayerId) { navigate("/sign-in"); return; }
 
-    // phone:-prefixed IDs are for admin-uploaded ticket holders with no player account
     const isPhoneId = resolvedPlayerId.startsWith("phone:")
-    const phone = isPhoneId ? resolvedPlayerId.slice("phone:".length) : null
+    const storedPhone = isPhoneId
+      ? resolvedPlayerId.slice("phone:".length)
+      : localStorage.getItem("player_phone")
 
-    const url = isPhoneId
-      ? `${BASE}/public/tickets/by-phone/${phone}`
-      : `${BASE}/players/${resolvedPlayerId}/tickets?page_size=100&page=1`
+    const fetches: Promise<PlayerTicket[]>[] = []
 
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(d => {
-        const raw = d?.data?.tickets ?? d?.tickets ?? []
-        setTickets(raw)
+    if (!isPhoneId) {
+      fetches.push(
+        fetch(`${BASE}/players/${resolvedPlayerId}/tickets?page_size=100&page=1`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then(r => r.json())
+          .then(d => d?.data?.tickets ?? d?.tickets ?? [])
+          .catch(() => [])
+      )
+    }
+
+    // Always also look up by phone — covers bulk-uploaded tickets that have no player_id
+    if (storedPhone) {
+      fetches.push(
+        fetch(`${BASE}/public/tickets/by-phone/${storedPhone}`)
+          .then(r => r.json())
+          .then(d => d?.data?.tickets ?? d?.tickets ?? [])
+          .catch(() => [])
+      )
+    }
+
+    Promise.all(fetches)
+      .then(results => {
+        const merged = results.flat()
+        const seen = new Set<string>()
+        return merged.filter(t => {
+          const key = t.id || t.serial_number
+          if (!key || seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
       })
+      .then(setTickets)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [navigate, token, resolvedPlayerId])
