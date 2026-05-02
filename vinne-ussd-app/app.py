@@ -68,11 +68,16 @@ WEB_NETWORK_MAP = {
 # ---------------------------------------------------------------------------
 WINBIG_UNIT_PRICE = 2000        # GHS 20 per draw entry (pesewas)
 
-def hubtel_fee_ghs(amount_ghs: float) -> float:
-    """Telecel/Hubtel fee: GHS 0.50 flat for amounts ≤ GHS 50, 1% for amounts > GHS 50."""
-    if amount_ghs <= 50.0:
+def hubtel_fee_ghs(amount_ghs: float, network: str = "mtn") -> float:
+    """Hubtel MoMo fee tiers — identical across MTN, Telecel, AirtelTigo for WinBig range (max GHS 200)."""
+    if amount_ghs <= 1.00:
+        return 0.01
+    if amount_ghs <= 10.00:
+        return 0.10
+    if amount_ghs <= 50.00:
         return 0.50
     return round(amount_ghs * 0.01, 2)
+
 MNOTIFY_SMS_KEY   = "F9XhjQbbJnqKt2fy9lhPIQCSD"
 SMS_SENDER_ID     = "CARPARK"
 
@@ -940,7 +945,7 @@ def handle_buy_entries(session_id, msisdn, qty, network="mtn"):
 
     _fire_momo_async(msisdn, amount, result["reference"], network=network)
     ticket_ghs = qty * 20
-    fee        = hubtel_fee_ghs(ticket_ghs)
+    fee        = hubtel_fee_ghs(ticket_ghs, network)
     total      = ticket_ghs + fee
     return (
         f"Processing payment...\r\n"
@@ -1098,7 +1103,7 @@ def ussd():
                 )
             qty        = int(qty_str)
             ticket_ghs = qty * 20
-            fee        = hubtel_fee_ghs(ticket_ghs)
+            fee        = hubtel_fee_ghs(ticket_ghs, network)
             total      = ticket_ghs + fee
             return resp(
                 f"Confirm Purchase:\r\n"
