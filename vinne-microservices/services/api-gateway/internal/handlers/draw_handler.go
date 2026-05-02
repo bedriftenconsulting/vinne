@@ -522,7 +522,7 @@ func (h *drawHandler) BulkUploadBySchedule(w http.ResponseWriter, r *http.Reques
 				issueResp, err := ticketClient.IssueTicket(ctx, &ticketv1.IssueTicketRequest{
 					GameCode:       gameCode,
 					GameScheduleId: scheduleID,
-					DrawNumber:     0, // will be set when draw is created
+					DrawNumber:     1, // default to draw 1; updated when draw is created
 					BetLines: []*ticketv1.BetLine{
 						{LineNumber: 1, BetType: "RAFFLE", TotalAmount: 2000},
 					},
