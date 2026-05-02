@@ -158,6 +158,13 @@ const DrawDetails: React.FC = () => {
   const [smsResults, setSmsResults] = useState<Record<string, boolean>>({})
 
   // Bulk upload state
+  const [entryMode, setEntryMode] = useState<'quick' | 'bulk'>('quick')
+  const [quickName, setQuickName] = useState('')
+  const [quickPhone, setQuickPhone] = useState('')
+  const [quickQty, setQuickQty] = useState(1)
+  const [quickSubmitting, setQuickSubmitting] = useState(false)
+  const [quickResult, setQuickResult] = useState<{ tickets: string[]; sms_sent: boolean } | null>(null)
+  const [quickError, setQuickError] = useState('')
   const [bulkRawText, setBulkRawText] = useState('')
   const [bulkParsed, setBulkParsed] = useState<{ phone: string; name: string; quantity: number }[]>([])
   const [bulkParseError, setBulkParseError] = useState('')
@@ -233,6 +240,31 @@ const DrawDetails: React.FC = () => {
       toast({ title: 'SMS Error', description: 'Failed to send SMS', variant: 'destructive' })
     } finally {
       setSmsSending(false)
+    }
+  }
+
+  const handleQuickAdd = async () => {
+    if (!quickPhone.trim()) { setQuickError('Phone number is required'); return }
+    setQuickSubmitting(true)
+    setQuickError('')
+    setQuickResult(null)
+    try {
+      const token = localStorage.getItem('access_token')
+      const apiBase = import.meta.env.VITE_API_URL || '/api/v1'
+      const res = await fetch(`${apiBase}/admin/draws/${drawId}/tickets/bulk-upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ entries: [{ phone: quickPhone.trim(), name: quickName.trim(), quantity: quickQty }] }),
+      })
+      const data = await res.json()
+      const result = (data?.data?.results ?? data?.results)?.[0]
+      if (!res.ok || !result) { setQuickError(data?.message || 'Failed to create entries'); return }
+      setQuickResult({ tickets: result.tickets || [], sms_sent: result.sms_sent })
+      toast({ title: 'Entries Created', description: `${result.tickets?.length} entr${result.tickets?.length === 1 ? 'y' : 'ies'} sent to ${quickPhone.trim()}` })
+    } catch (err) {
+      setQuickError('Network error: ' + String(err))
+    } finally {
+      setQuickSubmitting(false)
     }
   }
 
@@ -2360,201 +2392,259 @@ const DrawDetails: React.FC = () => {
           </Card>
         </TabsContent>
 
-        {/* ── Bulk Upload Tab ─────────────────────────────────────────── */}
+        {/* ── Entry Management Tab ─────────────────────────────────────── */}
         <TabsContent value="bulk-upload">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <Upload className="h-4 w-4" />
-                Bulk Ticket Upload
+                <Upload className="h-4 w-4" /> Entry Management
               </CardTitle>
-              <CardDescription>
-                Paste a list of phone numbers (one per line). Optional: add name and quantity separated by commas.
-                <br />
-                <span className="font-mono text-xs">Format: phone, name, quantity — e.g. <strong>0241234567, John Doe, 2</strong></span>
-              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
 
-              {/* Input area */}
-              {!bulkResult && (
-                <>
-                  <Textarea
-                    placeholder={`0241234567, John Doe, 2\n0279876543, Jane Smith\n0501112233`}
-                    className="font-mono text-sm min-h-[200px]"
-                    value={bulkRawText}
-                    onChange={e => {
-                      setBulkRawText(e.target.value)
-                      setBulkParsed([])
-                      setBulkParseError('')
-                    }}
-                  />
+              {/* Mode toggle */}
+              <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit">
+                {(['quick', 'bulk'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setEntryMode(mode)}
+                    className={`px-5 py-1.5 rounded-md text-sm font-medium transition-colors ${entryMode === mode ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {mode === 'quick' ? 'Quick Add' : 'Bulk Import'}
+                  </button>
+                ))}
+              </div>
 
-                  {bulkParseError && (
-                    <p className="text-destructive text-sm flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5" /> {bulkParseError}
-                    </p>
-                  )}
-
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const lines = bulkRawText.split('\n').map(l => l.trim()).filter(Boolean)
-                        if (lines.length === 0) { setBulkParseError('Paste at least one phone number'); return }
-                        const parsed = lines.map((line, i) => {
-                          const parts = line.split(',').map(p => p.trim())
-                          const phone = parts[0]
-                          if (!phone) { setBulkParseError(`Line ${i + 1}: phone number is missing`); return null }
-                          return { phone, name: parts[1] || '', quantity: parseInt(parts[2] || '1', 10) || 1 }
-                        }).filter(Boolean) as { phone: string; name: string; quantity: number }[]
-                        setBulkParsed(parsed)
-                        setBulkParseError('')
-                      }}
-                    >
-                      Preview ({bulkRawText.split('\n').filter(l => l.trim()).length} lines)
-                    </Button>
-
-                    {bulkParsed.length > 0 && (
-                      <Button
-                        disabled={bulkUploading}
-                        onClick={async () => {
-                          setBulkUploading(true)
-                          try {
-                            const token = localStorage.getItem('access_token')
-                            const apiBase = import.meta.env.VITE_API_URL || '/api/v1'
-                            const res = await fetch(`${apiBase}/admin/draws/${drawId}/tickets/bulk-upload`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                              body: JSON.stringify({ entries: bulkParsed }),
-                            })
-                            const text = await res.text()
-                            let data: Record<string, unknown>
-                            try {
-                              data = JSON.parse(text)
-                            } catch {
-                              setBulkParseError(`Server error (HTTP ${res.status}): ${text.slice(0, 200)}`)
-                              return
-                            }
-                            if (!res.ok) {
-                              setBulkParseError((data?.message as string) || `Upload failed with status ${res.status}`)
-                              return
-                            }
-                            setBulkResult((data?.data ?? data) as typeof bulkResult)
-                          } catch (err) {
-                            setBulkParseError('Network error: ' + String(err))
-                          } finally {
-                            setBulkUploading(false)
-                          }
-                        }}
-                      >
-                        {bulkUploading ? (
-                          <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Uploading…</>
-                        ) : (
-                          <><MessageSquare className="h-4 w-4 mr-2" /> Create Tickets & Send SMS ({bulkParsed.length})</>
-                        )}
-                      </Button>
-                    )}
-                  </div>
-
-                  {/* Preview table */}
-                  {bulkParsed.length > 0 && (
-                    <div className="rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>#</TableHead>
-                            <TableHead>Phone</TableHead>
-                            <TableHead>Name</TableHead>
-                            <TableHead className="text-center">Tickets</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {bulkParsed.map((entry, i) => (
-                            <TableRow key={i}>
-                              <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
-                              <TableCell className="font-mono text-sm">{entry.phone}</TableCell>
-                              <TableCell className="text-sm">{entry.name || <span className="text-muted-foreground italic">—</span>}</TableCell>
-                              <TableCell className="text-center">
-                                <Badge variant="secondary">{entry.quantity}</Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                      <div className="p-3 border-t bg-muted/30 text-sm text-muted-foreground">
-                        <strong>{bulkParsed.reduce((s, e) => s + e.quantity, 0)}</strong> total tickets across <strong>{bulkParsed.length}</strong> recipients
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Results view */}
-              {bulkResult && (
+              {/* ── Quick Add ── */}
+              {entryMode === 'quick' && (
                 <div className="space-y-4">
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="rounded-lg border bg-card p-4 text-center">
-                      <p className="text-2xl font-bold text-green-500">{bulkResult.tickets_created}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Tickets Created</p>
-                    </div>
-                    <div className="rounded-lg border bg-card p-4 text-center">
-                      <p className="text-2xl font-bold text-blue-500">{bulkResult.sms_sent}</p>
-                      <p className="text-xs text-muted-foreground mt-1">SMS Sent</p>
-                    </div>
-                    <div className="rounded-lg border bg-card p-4 text-center">
-                      <p className="text-2xl font-bold">{bulkResult.total_entries}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Total Recipients</p>
-                    </div>
-                  </div>
+                  {!quickResult ? (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="space-y-1.5">
+                          <Label>Phone <span className="text-destructive">*</span></Label>
+                          <Input
+                            placeholder="0241234567"
+                            value={quickPhone}
+                            onChange={e => { setQuickPhone(e.target.value); setQuickError('') }}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Name <span className="text-xs text-muted-foreground">(optional)</span></Label>
+                          <Input
+                            placeholder="John Doe"
+                            value={quickName}
+                            onChange={e => setQuickName(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Entries</Label>
+                          <div className="flex items-center gap-2">
+                            <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => setQuickQty(q => Math.max(1, q - 1))}>−</Button>
+                            <span className="w-8 text-center font-bold text-lg">{quickQty}</span>
+                            <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => setQuickQty(q => Math.min(10, q + 1))}>+</Button>
+                            <span className="text-sm text-muted-foreground">= GHS {quickQty * 20}</span>
+                          </div>
+                        </div>
+                      </div>
 
-                  {/* Per-entry results */}
-                  <div className="rounded-md border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Phone</TableHead>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Tickets</TableHead>
-                          <TableHead className="text-center">SMS</TableHead>
-                          <TableHead>Status</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {bulkResult.results?.map((r, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="font-mono text-sm">{r.phone}</TableCell>
-                            <TableCell className="text-sm">{r.name || '—'}</TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap gap-1">
-                                {r.tickets?.map((t, j) => (
-                                  <Badge key={j} variant="outline" className="font-mono text-xs">{t}</Badge>
-                                ))}
-                                {(!r.tickets || r.tickets.length === 0) && <span className="text-muted-foreground text-xs">—</span>}
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              {r.sms_sent
-                                ? <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
-                                : <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />}
-                            </TableCell>
-                            <TableCell>
-                              {r.error
-                                ? <span className="text-destructive text-xs">{r.error}</span>
-                                : <span className="text-green-600 text-xs">OK</span>}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                      {quickError && (
+                        <p className="text-destructive text-sm flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5" /> {quickError}
+                        </p>
+                      )}
 
-                  <Button variant="outline" onClick={() => { setBulkResult(null); setBulkRawText(''); setBulkParsed([]) }}>
-                    Upload Another Batch
-                  </Button>
+                      <Button onClick={handleQuickAdd} disabled={quickSubmitting || !quickPhone.trim()} className="gap-2">
+                        {quickSubmitting
+                          ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating…</>
+                          : <><Send className="h-4 w-4" /> Create & Send SMS</>}
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="rounded-xl border-2 border-green-200 bg-green-50 p-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <CheckCircle className="h-5 w-5 text-green-500" />
+                          <span className="font-semibold text-green-800">
+                            {quickQty} {quickQty === 1 ? 'Entry' : 'Entries'} Created
+                          </span>
+                          <Badge className={`ml-auto ${quickResult.sms_sent ? 'bg-green-500 hover:bg-green-500' : 'bg-red-500 hover:bg-red-500'} text-white`}>
+                            {quickResult.sms_sent ? 'SMS Sent ✓' : 'SMS Failed'}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-green-700 mb-3">
+                          <strong>{quickName || quickPhone}</strong>{quickName ? ` · ${quickPhone}` : ''}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {quickResult.tickets.map((t, i) => (
+                            <span key={i} className="font-mono text-sm bg-white border border-green-300 rounded-md px-2.5 py-1">{t}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <Button variant="outline" onClick={() => { setQuickResult(null); setQuickPhone(''); setQuickName(''); setQuickQty(1) }}>
+                        Add Another Person
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* ── Bulk Import ── */}
+              {entryMode === 'bulk' && (
+                <div className="space-y-4">
+                  {!bulkResult ? (
+                    <>
+                      <div className="rounded-lg bg-muted/50 border px-4 py-2.5 text-sm text-muted-foreground">
+                        One per line: <span className="font-mono text-foreground font-medium">phone, name, quantity</span>
+                        <span className="ml-2 text-xs">— name and quantity optional</span>
+                      </div>
+                      <Textarea
+                        placeholder={`0241234567, John Doe, 2\n0279876543, Jane Smith\n0501112233`}
+                        className="font-mono text-sm min-h-[160px]"
+                        value={bulkRawText}
+                        onChange={e => { setBulkRawText(e.target.value); setBulkParsed([]); setBulkParseError('') }}
+                      />
+
+                      {bulkParseError && (
+                        <p className="text-destructive text-sm flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5" /> {bulkParseError}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={() => {
+                          const lines = bulkRawText.split('\n').map(l => l.trim()).filter(Boolean)
+                          if (!lines.length) { setBulkParseError('Paste at least one phone number'); return }
+                          const parsed = lines.map((line, i) => {
+                            const parts = line.split(',').map(p => p.trim())
+                            if (!parts[0]) { setBulkParseError(`Line ${i + 1}: phone number missing`); return null }
+                            return { phone: parts[0], name: parts[1] || '', quantity: parseInt(parts[2] || '1', 10) || 1 }
+                          }).filter(Boolean) as { phone: string; name: string; quantity: number }[]
+                          setBulkParsed(parsed)
+                          setBulkParseError('')
+                        }}>
+                          Preview ({bulkRawText.split('\n').filter(l => l.trim()).length} lines)
+                        </Button>
+
+                        {bulkParsed.length > 0 && (
+                          <Button disabled={bulkUploading} onClick={async () => {
+                            setBulkUploading(true)
+                            try {
+                              const token = localStorage.getItem('access_token')
+                              const apiBase = import.meta.env.VITE_API_URL || '/api/v1'
+                              const res = await fetch(`${apiBase}/admin/draws/${drawId}/tickets/bulk-upload`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                                body: JSON.stringify({ entries: bulkParsed }),
+                              })
+                              const text = await res.text()
+                              let data: Record<string, unknown>
+                              try { data = JSON.parse(text) } catch { setBulkParseError(`Server error (${res.status}): ${text.slice(0, 200)}`); return }
+                              if (!res.ok) { setBulkParseError((data?.message as string) || `Upload failed (${res.status})`); return }
+                              setBulkResult((data?.data ?? data) as typeof bulkResult)
+                            } catch (err) {
+                              setBulkParseError('Network error: ' + String(err))
+                            } finally {
+                              setBulkUploading(false)
+                            }
+                          }} className="gap-2">
+                            {bulkUploading
+                              ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating…</>
+                              : <><Send className="h-4 w-4" /> Create & Send SMS ({bulkParsed.reduce((s, e) => s + e.quantity, 0)} entries)</>}
+                          </Button>
+                        )}
+                      </div>
+
+                      {bulkParsed.length > 0 && (
+                        <div className="rounded-md border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/40">
+                                <TableHead className="w-8">#</TableHead>
+                                <TableHead>Phone</TableHead>
+                                <TableHead>Name</TableHead>
+                                <TableHead className="text-center">Qty</TableHead>
+                                <TableHead className="text-right">Amount</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {bulkParsed.map((entry, i) => (
+                                <TableRow key={i}>
+                                  <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                                  <TableCell className="font-mono text-sm">{entry.phone}</TableCell>
+                                  <TableCell className="text-sm">{entry.name || <span className="text-muted-foreground">—</span>}</TableCell>
+                                  <TableCell className="text-center"><Badge variant="secondary">{entry.quantity}</Badge></TableCell>
+                                  <TableCell className="text-right text-sm">GHS {entry.quantity * 20}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                          <div className="px-4 py-2.5 border-t bg-muted/30 text-sm flex justify-between items-center">
+                            <span className="text-muted-foreground">{bulkParsed.length} recipients</span>
+                            <span className="font-semibold">Total: GHS {bulkParsed.reduce((s, e) => s + e.quantity * 20, 0)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="rounded-xl border bg-card p-4 text-center">
+                          <p className="text-3xl font-bold text-green-500">{bulkResult.tickets_created}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Entries Created</p>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 text-center">
+                          <p className="text-3xl font-bold text-blue-500">{bulkResult.sms_sent}</p>
+                          <p className="text-xs text-muted-foreground mt-1">SMS Sent</p>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 text-center">
+                          <p className="text-3xl font-bold">{bulkResult.total_entries}</p>
+                          <p className="text-xs text-muted-foreground mt-1">Recipients</p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-md border overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/40">
+                              <TableHead>Phone</TableHead>
+                              <TableHead>Name</TableHead>
+                              <TableHead>Entry Numbers</TableHead>
+                              <TableHead className="text-center w-16">SMS</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {bulkResult.results?.map((r, i) => (
+                              <TableRow key={i} className={r.error ? 'bg-red-50' : ''}>
+                                <TableCell className="font-mono text-sm">{r.phone}</TableCell>
+                                <TableCell className="text-sm">{r.name || '—'}</TableCell>
+                                <TableCell>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {r.tickets?.map((t, j) => (
+                                      <span key={j} className="font-mono text-xs bg-muted rounded px-2 py-0.5">{t}</span>
+                                    ))}
+                                    {!r.tickets?.length && <span className="text-destructive text-xs">{r.error || 'Failed'}</span>}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  {r.sms_sent
+                                    ? <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
+                                    : <XCircle className="h-4 w-4 text-red-400 mx-auto" />}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      <Button variant="outline" onClick={() => { setBulkResult(null); setBulkRawText(''); setBulkParsed([]) }}>
+                        Import Another Batch
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </CardContent>
           </Card>
         </TabsContent>
