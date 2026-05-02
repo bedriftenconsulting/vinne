@@ -291,7 +291,7 @@ func lookupUSSDPlayer(e164Phone string) (string, error) {
 	// Phone has tickets — get the player UUID from player_service
 	playerDSN := os.Getenv("PLAYER_DB_DSN")
 	if playerDSN == "" {
-		playerDSN = "host=service-player-db port=5432 user=player password=#yerpla@333! dbname=player_service sslmode=disable"
+		playerDSN = "host=service-player-db port=5432 user=player password=player123 dbname=player_service sslmode=disable"
 	}
 	pdb, err := sql.Open("postgres", playerDSN)
 	if err != nil {
@@ -319,7 +319,7 @@ func lookupPlayerByPhone(e164Phone string) (string, error) {
 
 	playerDSN := os.Getenv("PLAYER_DB_DSN")
 	if playerDSN == "" {
-		playerDSN = "host=service-player-db port=5432 user=player password=#yerpla@333! dbname=player_service sslmode=disable"
+		playerDSN = "host=service-player-db port=5432 user=player password=player123 dbname=player_service sslmode=disable"
 	}
 	pdb, err := sql.Open("postgres", playerDSN)
 	if err != nil {
@@ -500,7 +500,7 @@ func (h *OTPHandler) ResetPassword(w http.ResponseWriter, r *http.Request) error
 
 	playerDSN := os.Getenv("PLAYER_DB_DSN")
 	if playerDSN == "" {
-		playerDSN = "host=service-player-db port=5432 user=player password=#yerpla@333! dbname=player_service sslmode=disable"
+		playerDSN = "host=service-player-db port=5432 user=player password=player123 dbname=player_service sslmode=disable"
 	}
 	pdb, err := sql.Open("postgres", playerDSN)
 	if err != nil {
