@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	gamepb "github.com/randco/randco-microservices/proto/game/v1"
-	ticketpb "github.com/randco/randco-microservices/proto/ticket/v1"
+	ticketv1 "github.com/randco/randco-microservices/proto/ticket/v1"
 	"github.com/randco/randco-microservices/services/api-gateway/internal/grpc"
 	"github.com/randco/randco-microservices/services/api-gateway/internal/response"
 	"github.com/randco/randco-microservices/services/api-gateway/internal/router"
@@ -824,12 +827,28 @@ func (h *gameHandler) GetGameSchedule(w http.ResponseWriter, r *http.Request) er
 		schedules = []*gamepb.GameSchedule{}
 	}
 
-	// Get ticket client to fetch sold counts per schedule
-	ticketClient, ticketErr := h.grpcManager.TicketServiceClient()
+	// Get ticket client for paid counts — use gRPC (same as draw handler) to avoid direct-DB issues
+	ticketClient, ticketClientErr := h.grpcManager.TicketServiceClient()
 
 	// Transform protobuf schedules to proper JSON objects
 	transformedSchedules := make([]map[string]interface{}, 0, len(schedules))
 	for _, schedule := range schedules {
+		var ticketsSold int64
+		if ticketClientErr == nil {
+			const nilUUID = "00000000-0000-0000-0000-000000000000"
+			filter := &ticketv1.TicketFilter{PaymentStatus: "completed"}
+			if schedule.Id != "" && schedule.Id != nilUUID {
+				filter.GameScheduleId = schedule.Id
+			} else if schedule.GameCode != "" {
+				filter.GameCode = schedule.GameCode
+			}
+			if countResp, err := ticketClient.ListTickets(ctx, &ticketv1.ListTicketsRequest{
+				Filter: filter, Page: 1, PageSize: 1,
+			}); err == nil {
+				ticketsSold = countResp.Total
+			}
+		}
+
 		scheduleMap := map[string]interface{}{
 			"id":              schedule.Id,
 			"game_id":         schedule.GameId,
@@ -846,20 +865,7 @@ func (h *gameHandler) GetGameSchedule(w http.ResponseWriter, r *http.Request) er
 			"draw_result_id":  schedule.DrawResultId,
 			"logo_url":        schedule.LogoUrl,
 			"brand_color":     schedule.BrandColor,
-			"tickets_sold":    int64(0),
-		}
-
-		// Fetch tickets sold count for this schedule
-		if ticketErr == nil && schedule.Id != "" {
-			scheduleID := schedule.Id
-			ticketResp, err := ticketClient.ListTickets(ctx, &ticketpb.ListTicketsRequest{
-				Filter:   &ticketpb.TicketFilter{GameScheduleId: scheduleID},
-				Page:     1,
-				PageSize: 1,
-			})
-			if err == nil {
-				scheduleMap["tickets_sold"] = ticketResp.Total
-			}
+			"tickets_sold":    ticketsSold,
 		}
 
 		// Handle timestamps properly
@@ -1369,20 +1375,10 @@ func (h *gameHandler) GetActiveGames(w http.ResponseWriter, r *http.Request) err
 		games = []*gamepb.Game{} // Return empty array if nil
 	}
 
-	// Fetch sold ticket counts per game from ticket service (best-effort, non-blocking)
+	// Fetch sold ticket counts per game directly from ticket DB
 	soldMap := make(map[string]int64)
-	ticketClient, ticketErr := h.grpcManager.TicketServiceClient()
-	if ticketErr == nil {
-		for _, game := range games {
-			tResp, tErr := ticketClient.ListTickets(ctx, &ticketpb.ListTicketsRequest{
-				Filter:   &ticketpb.TicketFilter{GameCode: game.Code},
-				Page:     1,
-				PageSize: 1,
-			})
-			if tErr == nil {
-				soldMap[game.Code] = tResp.Total
-			}
-		}
+	for _, game := range games {
+		soldMap[game.Code] = countTicketsSoldByGameCode(game.Code)
 	}
 
 	// Filter out sensitive admin data - only return what retailers need
@@ -1623,9 +1619,6 @@ func (h *gameHandler) GetScheduledGamesForPlayer(w http.ResponseWriter, r *http.
 		schedules = []*gamepb.GameSchedule{}
 	}
 
-	// Try to get ticket client for sold_tickets counts (best-effort, non-blocking)
-	ticketClient, _ := h.grpcManager.TicketServiceClient()
-
 	playerSchedules := make([]map[string]any, 0)
 	for _, schedule := range schedules {
 		// Only return active schedules with status "scheduled" or "in_progress"
@@ -1636,19 +1629,6 @@ func (h *gameHandler) GetScheduledGamesForPlayer(w http.ResponseWriter, r *http.
 		status := strings.ToLower(schedule.Status)
 		if status != "scheduled" && status != "in_progress" {
 			continue
-		}
-
-		// Fetch sold ticket count for this schedule from the ticket service
-		soldTickets := int64(0)
-		if ticketClient != nil && schedule.Id != "" {
-			ticketResp, ticketErr := ticketClient.ListTickets(ctx, &ticketpb.ListTicketsRequest{
-				Filter:   &ticketpb.TicketFilter{GameScheduleId: schedule.Id},
-				Page:     1,
-				PageSize: 1,
-			})
-			if ticketErr == nil {
-				soldTickets = ticketResp.Total
-			}
 		}
 
 		scheduleMap := map[string]any{
@@ -1664,7 +1644,7 @@ func (h *gameHandler) GetScheduledGamesForPlayer(w http.ResponseWriter, r *http.
 			"status":          schedule.Status,
 			"logo_url":        schedule.LogoUrl,
 			"brand_color":     schedule.BrandColor,
-			"sold_tickets":    soldTickets,
+			"sold_tickets":    countTicketsSoldByGameCode(schedule.GameCode),
 		}
 
 		// Handle timestamps properly
@@ -2022,5 +2002,30 @@ func transformGameToMap(game *gamepb.Game) map[string]interface{} {
 	// No remapping needed — it comes directly from the Game.draw_date proto field
 
 	return m
+}
+
+func countTicketsSoldByGameCode(gameCode string) int64 {
+	if gameCode == "" {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	dsn := os.Getenv("TICKET_DB_DSN")
+	if dsn == "" {
+		dsn = "host=service-ticket-db port=5432 user=ticket password=#kettic@333! dbname=ticket_service sslmode=disable"
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	var count int64
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tickets WHERE game_code = $1 AND payment_status = 'completed'`,
+		gameCode,
+	).Scan(&count); err != nil {
+		return 0
+	}
+	return count
 }
 
