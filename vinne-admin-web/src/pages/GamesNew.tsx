@@ -66,6 +66,12 @@ function BulkUploadTab() {
     s && s.id && !['COMPLETED', 'CANCELLED'].includes(s.status?.toUpperCase())
   )
 
+  const selectedSchedule = schedules.find((s: any) => s.id === selectedScheduleId)
+  const drawTime = selectedSchedule?.scheduled_draw
+    ? new Date(selectedSchedule.scheduled_draw)
+    : null
+  const cutoffPassed = drawTime ? drawTime < new Date() : false
+
   const handlePreview = () => {
     const lines = bulkRawText.split('\n').map(l => l.trim()).filter(Boolean)
     if (lines.length === 0) { setBulkParseError('Paste at least one phone number'); return }
@@ -119,6 +125,15 @@ function BulkUploadTab() {
       </CardHeader>
       <CardContent className="space-y-5">
 
+        {/* Cutoff warning */}
+        {cutoffPassed && (
+          <Alert className="border-orange-500 bg-orange-50">
+            <AlertCircle className="h-4 w-4 text-orange-600" />
+            <AlertDescription className="text-orange-800 font-medium">
+              ⏰ Draw time has passed ({drawTime?.toLocaleString()}) — ticket uploads are now closed for this schedule.
+            </AlertDescription>
+          </Alert>
+        )}
         {/* Game + Schedule selector */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -148,7 +163,12 @@ function BulkUploadTab() {
                 {schedules.length === 0 && <SelectItem value="_none" disabled>No schedules found</SelectItem>}
                 {schedules.map((s: any) => (
                   <SelectItem key={s.id} value={s.id}>
-                    {s.game_name || 'Schedule'} — {s.scheduled_draw ? new Date(s.scheduled_draw).toLocaleDateString() : s.id?.slice(0, 8)}
+                    {s.game_name || 'Schedule'} — {s.scheduled_draw
+                      ? new Date(s.scheduled_draw).toLocaleString()
+                      : s.id?.slice(0, 8)}
+                    {s.scheduled_draw && new Date(s.scheduled_draw) < new Date()
+                      ? ' ⛔ Closed'
+                      : ' ✅ Open'}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -164,6 +184,7 @@ function BulkUploadTab() {
                 placeholder={`0241234567, Kwame Mensah, 2\n0279876543, Ama Owusu\n0501112233`}
                 className="font-mono text-sm min-h-[180px]"
                 value={bulkRawText}
+                disabled={cutoffPassed}
                 onChange={e => { setBulkRawText(e.target.value); setBulkParsed([]); setBulkParseError('') }}
               />
             </div>
@@ -176,12 +197,12 @@ function BulkUploadTab() {
             )}
 
             <div className="flex gap-2">
-              <Button variant="outline" onClick={handlePreview} disabled={!bulkRawText.trim()}>
+              <Button variant="outline" onClick={handlePreview} disabled={!bulkRawText.trim() || cutoffPassed}>
                 Preview ({bulkRawText.split('\n').filter(l => l.trim()).length} lines)
               </Button>
               {bulkParsed.length > 0 && (
                 <Button
-                  disabled={bulkUploading || !selectedScheduleId}
+                  disabled={bulkUploading || !selectedScheduleId || cutoffPassed}
                   onClick={handleUpload}
                 >
                   {bulkUploading

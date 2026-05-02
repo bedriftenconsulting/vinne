@@ -417,8 +417,8 @@ func (h *drawHandler) BulkUploadTickets(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// BulkUploadBySchedule is like BulkUploadTickets but takes a game_schedule_id
-// instead of a draw_id. It finds the active/scheduled draw for the schedule automatically.
+// BulkUploadBySchedule creates tickets directly for a game schedule — no draw required.
+// The draw is only needed at draw execution time, not at ticket creation time.
 // POST /api/v1/admin/schedules/{scheduleId}/tickets/bulk-upload
 func (h *drawHandler) BulkUploadBySchedule(w http.ResponseWriter, r *http.Request) error {
 	scheduleID := router.GetParam(r, "scheduleId")
@@ -426,51 +426,170 @@ func (h *drawHandler) BulkUploadBySchedule(w http.ResponseWriter, r *http.Reques
 		return response.ValidationError(w, "scheduleId is required", nil)
 	}
 
+	// Parse request body
+	var req struct {
+		Entries []struct {
+			Phone    string `json:"phone"`
+			Name     string `json:"name"`
+			Quantity int    `json:"quantity"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return response.ValidationError(w, "invalid request body", nil)
+	}
+	if len(req.Entries) == 0 {
+		return response.ValidationError(w, "entries list is empty", nil)
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
-	// Find the draw for this schedule — list all draws and filter by schedule ID
-	drawConn, err := h.grpcManager.GetConnection("draw")
-	if err != nil {
-		return response.ServiceUnavailableError(w, "Draw")
-	}
-	drawClient := drawv1.NewDrawServiceClient(drawConn)
-	listResp, err := drawClient.ListDraws(ctx, &drawv1.ListDrawsRequest{
-		Page:    1,
-		PerPage: 100,
-	})
-	if err != nil || listResp == nil || len(listResp.Draws) == 0 {
-		return response.NotFoundError(w, "No draws found")
+	// ── 1. Resolve game_code from the schedule via an existing ticket or game service ──
+	const nilUUID = "00000000-0000-0000-0000-000000000000"
+	gameCode := ""
+
+	// Try game service first
+	gameClient, gcErr := h.grpcManager.GameServiceClient()
+	if gcErr == nil {
+		schedResp, schedErr := gameClient.GetScheduleById(ctx, &gamepb.GetScheduleByIdRequest{
+			ScheduleId: scheduleID,
+		})
+		if schedErr == nil && schedResp.Schedule != nil {
+			gameCode = schedResp.Schedule.GetGameCode()
+		}
 	}
 
-	// Filter by schedule ID and pick the most relevant draw
-	var selectedDraw *drawv1.Draw
-	for _, d := range listResp.Draws {
-		if d.GameScheduleId != scheduleID {
+	// Fallback: look up an existing ticket for this schedule
+	if gameCode == "" {
+		ticketClient, tcErr := h.grpcManager.TicketServiceClient()
+		if tcErr == nil {
+			existingResp, existingErr := ticketClient.ListTickets(ctx, &ticketv1.ListTicketsRequest{
+				Filter:   &ticketv1.TicketFilter{GameScheduleId: scheduleID},
+				Page:     1,
+				PageSize: 1,
+			})
+			if existingErr == nil && len(existingResp.Tickets) > 0 {
+				gameCode = existingResp.Tickets[0].GameCode
+			}
+		}
+	}
+
+	if gameCode == "" {
+		return response.ValidationError(w, "could not resolve game code for this schedule", nil)
+	}
+
+	// ── 2. Ticket service client ─────────────────────────────────────────────
+	ticketClient, err := h.grpcManager.TicketServiceClient()
+	if err != nil {
+		return response.ServiceUnavailableError(w, "Ticket")
+	}
+
+	// ── 3. Create tickets concurrently (max 8 goroutines) ───────────────────
+	type entryResult struct {
+		Phone    string   `json:"phone"`
+		Name     string   `json:"name"`
+		Quantity int      `json:"quantity"`
+		Tickets  []string `json:"tickets"`
+		SMSSent  bool     `json:"sms_sent"`
+		Error    string   `json:"error,omitempty"`
+	}
+
+	results := make([]entryResult, len(req.Entries))
+	sem := make(chan struct{}, 8)
+	var mu sync.Mutex
+	totalCreated := 0
+
+	var wg sync.WaitGroup
+	for i, entry := range req.Entries {
+		if entry.Phone == "" {
+			results[i] = entryResult{Phone: entry.Phone, Error: "phone is required"}
 			continue
 		}
-		s := d.Status.String()
-		if s == "DRAW_STATUS_SCHEDULED" || s == "DRAW_STATUS_IN_PROGRESS" {
-			selectedDraw = d
-			break
+		qty := entry.Quantity
+		if qty <= 0 {
+			qty = 1
 		}
-		if selectedDraw == nil {
-			selectedDraw = d // keep first match as fallback
-		}
+		name := entry.Name
+
+		wg.Add(1)
+		go func(idx int, phone, entryName string, quantity int) {
+			defer wg.Done()
+			var serials []string
+			var issueErr string
+
+			for q := 0; q < quantity; q++ {
+				sem <- struct{}{}
+				issueResp, err := ticketClient.IssueTicket(ctx, &ticketv1.IssueTicketRequest{
+					GameCode:       gameCode,
+					GameScheduleId: scheduleID,
+					DrawNumber:     0, // will be set when draw is created
+					BetLines: []*ticketv1.BetLine{
+						{LineNumber: 1, BetType: "RAFFLE", TotalAmount: 2000},
+					},
+					IssuerType:    "ADMIN",
+					IssuerId:      "admin-bulk:" + entryName,
+					CustomerPhone: phone,
+					PaymentMethod: "external",
+				})
+				<-sem
+
+				if err != nil {
+					issueErr = err.Error()
+					break
+				}
+				if issueResp.Ticket != nil {
+					serial := issueResp.Ticket.SerialNumber
+					if serial == "" {
+						serial = issueResp.Ticket.Id
+					}
+					serials = append(serials, serial)
+				}
+			}
+
+			mu.Lock()
+			totalCreated += len(serials)
+			results[idx] = entryResult{
+				Phone:    phone,
+				Name:     entryName,
+				Quantity: quantity,
+				Tickets:  serials,
+				Error:    issueErr,
+			}
+			mu.Unlock()
+		}(i, entry.Phone, name, qty)
 	}
-	if selectedDraw == nil {
-		return response.NotFoundError(w, "No draw found for this game schedule")
+	wg.Wait()
+
+	// ── 4. Send SMS via mNotify ──────────────────────────────────────────────
+	smsSentCount := 0
+	for i, res := range results {
+		if len(res.Tickets) == 0 {
+			continue
+		}
+		ticketList := ""
+		for _, t := range res.Tickets {
+			ticketList += "\n" + t
+		}
+		name := res.Name
+		if name == "" {
+			name = "Customer"
+		}
+		msg := "Hi " + name + "! Your WinBig Africa ticket(s) for " + gameCode + ":" +
+			ticketList + "\nGood luck!"
+
+		phone := bulkNormalisePhone(res.Phone)
+		if err := bulkSendMNotifySMS(phone, msg); err == nil {
+			smsSentCount++
+			results[i].SMSSent = true
+		}
 	}
 
-	// Inject the draw ID as a URL param so BulkUploadTickets can read it
-	existingParams, _ := r.Context().Value(router.ContextParams).(map[string]string)
-	newParams := make(map[string]string)
-	for k, v := range existingParams {
-		newParams[k] = v
-	}
-	newParams["id"] = selectedDraw.Id
-	r2 := r.WithContext(context.WithValue(r.Context(), router.ContextParams, newParams))
-	return h.BulkUploadTickets(w, r2)
+	return response.Success(w, http.StatusOK, "Bulk upload complete", map[string]interface{}{
+		"total_entries":   len(req.Entries),
+		"tickets_created": totalCreated,
+		"sms_sent":        smsSentCount,
+		"results":         results,
+	})
 }
 
 // GetAgentDrawHistory retrieves draw history for agents with summary statistics
