@@ -294,6 +294,7 @@ DATABASE_URL: postgresql://ticket:%23kettic%40333%21@service-ticket-db:5432/tick
 | `cmd/server/main.go` | ~700 | All route registrations |
 | `internal/handlers/draw_handler.go` | ~2047 | Full draw lifecycle |
 | `internal/handlers/game_handler.go` | ~2063 | Game CRUD, scheduling, prizes |
+| `services/service-game/internal/services/game_schedule_service.go` | — | Schedule generation; uses `HasScheduleForGameInRange` to skip per-game if a schedule already exists for the week — prevents duplicate schedules |
 | `internal/handlers/player_handler.go` | ~1364 | Player auth, wallet, entries |
 | `internal/handlers/ticket_handler.go` | ~1180 | Entry CRUD, analytics |
 | `internal/handlers/wallet_handler.go` | ~1283 | Wallet ops, commissions |
@@ -434,7 +435,7 @@ PUT    /games/{id}/prize-structure
 POST   /games/{id}/logo
 GET    /games/{id}/schedule
 GET    /games/{id}/statistics
-POST   /scheduling/weekly/generate
+POST   /scheduling/weekly/generate          → GenerateWeeklySchedule (idempotent — skips per-game if schedule already exists for that week)
 GET    /scheduling/weekly
 DELETE /scheduling/weekly/clear
 
@@ -590,7 +591,7 @@ const isCommerceOnly = userRoles.length === 0 ||
 | Path | Page file | Notes |
 |---|---|---|
 | `/dashboard` | `Dashboard.tsx` | Analytics overview, revenue metrics |
-| `/games` | `Games.tsx` | Game list + create wizard |
+| `/games` | `Games.tsx` | Game list + create wizard; Resume/Delete actions on each row |
 | `/game/:gameId` | `GameConfiguration.tsx` | Edit game, prize structure, schedule |
 | `/draws` | `Draws.tsx` | Draw list with real entry counts |
 | `/draw/:drawId` | `DrawDetails.tsx` | Full draw management (3 tabs) |
@@ -616,6 +617,7 @@ const isCommerceOnly = userRoles.length === 0 ||
 - Draw execution flow UI: stages 1–5 with progress indicators and action buttons
 - Machine numbers entry dialog
 - Restart draw button + dialog
+- **Winner Exclusions card** — per-draw list of phone numbers excluded from winning (e.g. organizers). Stored in `localStorage` as `draw_exclusions_${drawId}`. Phones shown as red pills with remove button. Passed to `executeGoogleRNGSelection` / `executeCryptographicSelection` as `excludedPhones` — excluded phones are removed from the eligible pool before RNG runs, so they cannot be selected.
 
 *Entries tab:*
 - Shows only `payment_status=completed` entries
@@ -635,6 +637,7 @@ const isCommerceOnly = userRoles.length === 0 ||
 - Auto-selects first active draw; dropdown appears if multiple active draws
 - Quick Add shows session history (all entries created this browser session)
 - Both flows require a confirmation step before entries are created (see Admin Entry Upload Flow)
+- Dropdown filters out cancelled/completed/failed draws; labels include draw number: `"${gameName} — Draw #N"`
 
 **`/transactions` — TransactionsModule:**
 - Fetches all entries (`payment_status=completed`) and groups them into "transactions" by `payment_ref`
@@ -654,6 +657,13 @@ const isCommerceOnly = userRoles.length === 0 ||
 - Shows "Unlimited" when `total_tickets` is 0 or null
 - Prizes tab: first-place prize highlighted in gold
 - Resets to Overview tab each time dialog opens (via `useEffect` on `isOpen`)
+
+**`/games` — Game List (`GameList.tsx`):**
+- Row actions (icon buttons): ⭐ Set Default | 👁 View Details | ✏️ Edit | 🎨 Branding | status-dependent action | 🗑 Delete
+- Status-dependent action: `ACTIVE` → Pause (suspend), `SUSPENDED` → PlayCircle (resume), `DRAFT`/`APPROVED` → Play (activate)
+- **Resume** calls `gameService.activateGame(id)` — same as activate, shown only for SUSPENDED games
+- **Delete** calls `gameService.deleteGame(id)` — destructive confirmation dialog (red "Delete" button); permanent, removes all schedules
+- `gameService.deleteGame(id)` → `DELETE /admin/games/{id}`
 
 **`/admin/audit-logs` — Audit Logs:**
 - Color-coded action badges: green=create, blue=update, red=delete, purple=login, gray=logout, orange=assign
@@ -692,8 +702,10 @@ const isCommerceOnly = userRoles.length === 0 ||
 - Metrics: gross revenue, entries sold, payouts, win rates, commissions
 
 **`src/services/winnerSelectionService.ts`** — winner selection:
-- `executeGoogleRNGSelection(drawId, totalEntries, maxWinners)` — uses random.org API (key in `.env`)
-- `executeCryptographicSelection(drawId, totalEntries, maxWinners)` — local CSPRNG
+- `executeGoogleRNGSelection(drawId, totalEntries, maxWinners, excludedPhones?)` — uses random.org API (key in `.env`)
+- `executeCryptographicSelection(drawId, totalEntries, maxWinners, excludedPhones?)` — local CSPRNG
+- When `excludedPhones` is non-empty: fetches full ticket list, builds eligible positions pool (excluding those phones), picks from [1, eligible_count] via RNG, maps back to original positions. Phone normalization via `_normalizePhone()`.
+- Internal helpers: `_getRngNumbers(min, max, count)`, `_cryptoPickInRange(min, max, count)`, `_normalizePhone(phone)`
 
 **`src/lib/bet-utils.ts`:**
 - `isPermBet(betType)`, `isBankerBet(betType)` — null-safe (return `false` for undefined/null)
@@ -730,6 +742,13 @@ ssh -i "C:\Users\Suraj\.ssh\google_compute_engine" -o StrictHostKeyChecking=no s
 | `/sign-up` | `SignUpPage` | |
 | `/my-tickets` | `MyTicketsPage` | Player's purchased entries |
 | `/profile` | `ProfilePage` | |
+
+**Draw cutoff enforcement (`CompetitionDetail.tsx`):**
+- Schedule picker only selects `status === "SCHEDULED"` schedules — will NOT pick a COMPLETED/CANCELLED one
+- `isClosed` = true when: no SCHEDULED schedule found, OR `schedule.status !== "SCHEDULED"`, OR `salesCutoffDate <= now`, OR countdown reaches 0
+- `salesCutoffDate` derived from `schedule.scheduled_end` (the actual sales cutoff, typically 2h before draw)
+- When closed: "LIVE" badge → "DRAW ENDED" (gray), buy button → "DRAW CLOSED" (disabled), message shown
+- `CompetitionsPage` card: "CLOSES IN 00:00:00" → "DRAW ENDED" gray badge once `useCountdown.total === 0`
 
 **OTP login flow:**
 1. Enter Ghana phone → `POST /api/v1/players/verify-otp` (sends OTP via mNotify)
@@ -874,6 +893,19 @@ created_at, paid_at, updated_at
 UPDATE games SET name = 'iPhone 17 Pro' WHERE code = 'IPHONE17';
 -- In ticket_service DB (updates ~256 rows):
 UPDATE tickets SET game_name = 'iPhone 17 Pro' WHERE game_code = 'IPHONE17';
+
+-- Restored deleted schedule UUID (was lost when GenerateWeeklySchedule blanket-deleted schedules).
+-- New schedule 114b4d22-... was renamed to original 8aaa6e8d-... so all tickets/Draw#2 still match:
+-- In game_service DB:
+UPDATE game_schedules SET id = '8aaa6e8d-c01f-4e4e-8a1b-e9668f481e34'
+  WHERE id = '114b4d22-e4ab-4668-80a8-c4ff7609fc29';
+
+-- Reactivate game after accidental suspension:
+UPDATE games SET status = 'ACTIVE', updated_at = NOW() WHERE code = 'IPHONE17';
+
+-- Cancel duplicate Draw #3 (created when schedule was regenerated):
+-- In draw_service DB:
+UPDATE draws SET status = 'cancelled' WHERE id = 'd4db69f0-...';
 ```
 
 **Manually recovering a stuck payment:**
@@ -959,6 +991,13 @@ ssh -i "C:\Users\Suraj\.ssh\google_compute_engine" -o StrictHostKeyChecking=no s
 | `game_code` / `game_schedule_id` missing from ListDraws response | ✅ Fixed | Added both fields to `transformedDraws` map in `draw_handler.go` |
 | Game name inconsistency (Pro Max vs Pro) | ✅ Fixed | Renamed to "iPhone 17 Pro" in game_service DB + 256 ticket records updated via SQL |
 | Quick Add / Bulk Import — no confirmation before creating entries | ✅ Fixed | Added inline review card (Quick Add) and Dialog (Bulk Import) confirmation step |
+| QuickAddEntry dropdown showed cancelled/duplicate draws | ✅ Fixed | Explicitly filters out cancelled/completed/failed; labels include draw number |
+| Website allowed ticket purchase after draw ended | ✅ Fixed | `CompetitionDetail` blocks after `scheduled_end`; shows "DRAW ENDED" badge |
+| Website "CLOSES IN 00:00:00" after draw expired | ✅ Fixed | `CompetitionsPage` card shows "DRAW ENDED" once countdown hits 0 |
+| Winner exclusions (organizers can't win) | ✅ Done | Per-draw phone exclusion list in DrawDetails overview; excluded from RNG pool |
+| Schedule deduplication — duplicate created on regenerate | ✅ Fixed | `game_schedule_service.go` checks per-game before creating; skips if exists |
+| Game list missing Resume/Delete actions | ✅ Fixed | Resume (PlayCircle) for suspended; Delete (Trash2) with destructive confirm |
+| Schedule UUID `8aaa6e8d-...` lost after regenerate | ✅ Fixed | Renamed new `114b4d22-...` to original UUID via SQL UPDATE in game_service DB |
 | Admin JWT in localStorage | ⚠️ Open | Should migrate to httpOnly cookie |
 | `wallet123` password not rotated | ⚠️ Open | Low urgency, internal only |
 | mNotify key hardcoded in app.py | ⚠️ Open | Move to env var |
