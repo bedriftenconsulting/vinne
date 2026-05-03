@@ -46,8 +46,9 @@ const CompetitionDetail = () => {
       })
       .then(schedules => {
         if (!schedules) return;
-        const s = (schedules as ApiSchedule[]).find(s => s.status === "SCHEDULED")
-          ?? null;
+        const s = (schedules as ApiSchedule[]).find(
+            s => s.status === "SCHEDULED" || s.status === "IN_PROGRESS"
+          ) ?? null;
         setSchedule(s);
       })
       .catch(console.error)
@@ -180,7 +181,11 @@ const CompetitionDetail = () => {
   const total      = (qty * price).toFixed(2);
   const maxQty     = game.max_tickets_per_player || 10;
   const hasSchedule = !!schedule;
-  const isClosed = !schedule || schedule.status !== "SCHEDULED" || salesClosed;
+  const isClosed = !schedule
+    || schedule.status === "COMPLETED"
+    || schedule.status === "CANCELLED"
+    || schedule.status === "FAILED"
+    || salesClosed;
   const timeLeft   = days > 0
     ? `${days}d ${String(hours).padStart(2,"0")}h`
     : `${String(hours).padStart(2,"0")}:${String(minutes).padStart(2,"0")}:${String(seconds).padStart(2,"0")}`;

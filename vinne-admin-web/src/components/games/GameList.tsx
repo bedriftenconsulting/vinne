@@ -43,6 +43,8 @@ import {
   XCircle,
   RefreshCw,
   Star,
+  Trash2,
+  PlayCircle,
 } from 'lucide-react'
 import { gameService, type Game } from '@/services/games'
 import { formatInGhanaTime } from '@/lib/date-utils'
@@ -76,6 +78,7 @@ export function GameList({
     title: string
     description: string
     action: () => void
+    destructive?: boolean
   }>({ open: false, title: '', description: '', action: () => {} })
 
   const queryClient = useQueryClient()
@@ -209,6 +212,18 @@ export function GameList({
     },
   })
 
+  const deleteGameMutation = useMutation({
+    mutationFn: (gameId: string) => gameService.deleteGame(gameId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['games'] })
+      queryClient.invalidateQueries({ queryKey: ['games-list'] })
+      toast({ title: 'Game deleted' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to delete game', variant: 'destructive' })
+    },
+  })
+
   const { toast } = useToast()
 
   const handleApproveGame = (game: Game) => {
@@ -247,6 +262,31 @@ export function GameList({
     if (reason) {
       suspendGameMutation.mutate({ gameId: game.id, reason })
     }
+  }
+
+  const handleResumeGame = (game: Game) => {
+    setConfirmDialog({
+      open: true,
+      title: 'Resume Game',
+      description: `Resume "${game.name}"? It will go back to Active and be visible to players.`,
+      action: () => {
+        activateGameMutation.mutate(game.id)
+        setConfirmDialog(prev => ({ ...prev, open: false }))
+      },
+    })
+  }
+
+  const handleDeleteGame = (game: Game) => {
+    setConfirmDialog({
+      open: true,
+      title: `Delete "${game.name}"?`,
+      description: `This is permanent and cannot be undone. All schedules and data for this game will be removed.`,
+      destructive: true,
+      action: () => {
+        deleteGameMutation.mutate(game.id)
+        setConfirmDialog(prev => ({ ...prev, open: false }))
+      },
+    })
   }
 
   const handleSetDefault = async (game: Game) => {
@@ -456,6 +496,26 @@ export function GameList({
                             <Pause className="h-4 w-4" />
                           </Button>
                         )}
+                        {game.status.toUpperCase() === 'SUSPENDED' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-green-600 hover:text-green-700"
+                            title="Resume Game"
+                            onClick={() => handleResumeGame(game)}
+                          >
+                            <PlayCircle className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-red-500 hover:text-red-600"
+                          title="Delete Game"
+                          onClick={() => handleDeleteGame(game)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -478,7 +538,12 @@ export function GameList({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDialog.action}>Confirm</AlertDialogAction>
+            <AlertDialogAction
+              onClick={confirmDialog.action}
+              className={confirmDialog.destructive ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
+            >
+              {confirmDialog.destructive ? 'Delete' : 'Confirm'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
