@@ -39,12 +39,14 @@ const WinnerSelectionConfig: React.FC = () => {
   const { data: currentConfig, isLoading } = useQuery({
     queryKey: ['winner-selection-config'],
     queryFn: () => winnerSelectionService.getWinnerSelectionConfig(),
-    onSuccess: (data) => {
-      if (data) {
-        setConfig(data)
-      }
-    }
   })
+
+  // Sync fetched config into form state
+  React.useEffect(() => {
+    if (currentConfig) {
+      setConfig(currentConfig)
+    }
+  }, [currentConfig])
 
   // Test Google RNG connection
   const testConnectionMutation = useMutation({
